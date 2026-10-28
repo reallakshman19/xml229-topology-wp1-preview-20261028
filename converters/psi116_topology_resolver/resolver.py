@@ -13,6 +13,7 @@ from .analysis import (
     _finding_factory,
 )
 from .geometry_analysis import _analyze_overlaps, _analyze_pipe_carriers
+from .connectivity_audit import _analyze_connection_gaps
 from .models import Finding, Psi116Document, ResolutionResult, ResolverConfig
 from .parser import read_psi116_xml
 from .planner import _build_fix_actions
@@ -28,6 +29,7 @@ def analyze_document(document: Psi116Document, config: ResolverConfig | None = N
     _analyze_rigids(document, add)
     _analyze_pipe_carriers(document, config, add)
     _analyze_overlaps(document, config, add)
+    _analyze_connection_gaps(document, config, add)
     findings.sort(key=lambda item: (item.branch_name, item.node_numbers, item.code, item.finding_id))
     normalized = tuple(
         Finding(
