@@ -99,7 +99,7 @@ try{
  if(!result.batchPreview.includes('66 eligible XML-changing actions')||
     !result.batchPreview.includes('conflict-free actions'))
    throw Error('Batch preview missing eligible and excluded count');
- const selected=Number(result.batchPreview.match(/(\\d+) conflict-free actions/)?.[1]);
+ const selected=Number(result.batchPreview.match(/([0-9]+) conflict-free actions/)?.[1]);
  if(!Number.isInteger(selected)||selected<1||selected>66)
    throw Error('Invalid conflict-free action count');
  await page.locator('[data-run-auto-fix-all]').click();
