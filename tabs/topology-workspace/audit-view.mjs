@@ -123,7 +123,8 @@ export function buildAudit(findings,actions){
    return score(a)-score(b)||b.items.length-a.items.length||a.title.localeCompare(b.title);
  }),items,counts};
 }
-function itemHTML(item){
+function itemHTML(item,reviews={}){
+ const saved=reviews[item.finding.finding_id]||null;
  const {finding:f,action:a,fix}=item;
  const nodes=(f.node_numbers||[]).slice(0,7).join(", ");
  const detail=(f.node_keys||[]).slice(0,12).join(", ");
@@ -142,6 +143,19 @@ function itemHTML(item){
   (a?'<div class="audit-controls"><button data-audit-action="'+esc(a.action_id)+'">Locate on canvas</button>'+
     (fix.kind==="auto"?'<button class="audit-primary" data-auto-fix="'+esc(a.action_id)+'">Auto fix · validated copy</button>':'')+
     '</div>':'')+
+  (item.category==="gaps"?'<div class="audit-review">'+
+    '<strong>Engineering review (session only, not acceptance)</strong>'+
+    (saved?'<p class="audit-review-saved">Reviewer-marked: '+esc(saved.disposition==='intentional'?'Intentional termination':saved.disposition==='repair'?'Connection correction needed':'Still unresolved')+
+       ' · evidence: '+esc(saved.note)+'</p>':'')+
+    '<label>Disposition<select data-gap-review-choice>'+
+       '<option value="">Select review outcome</option>'+
+       '<option value="intentional"'+(saved?.disposition==='intentional'?' selected':'')+'>Intended end (requires evidence)</option>'+
+       '<option value="repair"'+(saved?.disposition==='repair'?' selected':'')+'>Missing connection / repair needed</option>'+
+       '<option value="unresolved"'+(saved?.disposition==='unresolved'?' selected':'')+'>Unresolved / investigate</option>'+
+    '</select></label>'+
+    '<label>Drawing, P&ID or reasoning reference<input data-gap-review-note type="text" maxlength="250" placeholder="Evidence required" value="'+esc(saved?.note||'')+'"></label>'+
+    '<button data-save-gap-review="'+esc(f.finding_id)+'">Save review note</button>'+
+    '</div>':'')+
   '<details class="audit-proof"><summary>Rule evidence and technical IDs</summary>'+
   '<p><strong>Rule:</strong> '+esc(f.code)+' · <strong>Finding:</strong> '+esc(f.finding_id)+
   (a?' · <strong>Action:</strong> '+esc(a.action_id)+' · <strong>Disposition:</strong> '+esc(a.disposition):'')+'</p>'+
@@ -150,7 +164,7 @@ function itemHTML(item){
   (a?.authority?'<p><strong>Authority:</strong> '+esc(a.authority)+'</p>':'')+
   '</details></article>';
 }
-export function renderAuditHTML(audit,{search="",filter="all",category="all"}={}){
+export function renderAuditHTML(audit,{search="",filter="all",category="all",reviews={}}={}){
  const q=search.trim().toLowerCase();
  const match=i=>[i.title,i.rule,i.finding.code,i.finding.message,i.finding.branch_name,
   i.action?.action_id,i.action?.disposition,...(i.finding.node_numbers||[]),
@@ -172,7 +186,7 @@ export function renderAuditHTML(audit,{search="",filter="all",category="all"}={}
       '<span class="audit-rule-stats">'+matches.length+' findings · '+esc(sev)+
       (autos?' · '+autos+' Auto fix actions':'')+(manuals?' · '+manuals+' manual':'')+'</span></summary>'+
       '<p class="audit-rule-why"><strong>Why this rule flags a finding:</strong> '+esc(g.rule)+'</p>'+
-      matches.slice(0,200).map(itemHTML).join("")+
+      matches.slice(0,200).map(i=>itemHTML(i,reviews)).join("")+
       (matches.length>200?'<p>Showing 200 findings; narrow search.</p>':'')+'</details>';
    }).filter(Boolean);
    if(!groupHTML.length)return "";
