@@ -54,3 +54,20 @@
 .audit-review select,.audit-review input{width:100%;padding:6px;border-radius:5px;border:1px solid #60758d;background:#0b1625;color:#e2e8f0;font-size:11px}
 .audit-review button{width:auto!important;font-size:11px;justify-self:start}
 .audit-review-saved{color:#b9f9dd!important;font-size:11px!important}
+
+.audit-filters button{display:flex;align-items:center;justify-content:center;font-weight:650;white-space:nowrap}
+.audit-bulk{border:1px solid #35786c;background:#12332e;padding:10px;border-radius:8px;margin:7px 0 12px}
+.audit-bulk>button{background:#075f50;border-color:#21ad97;color:#fff;font-weight:750}
+.audit-bulk button:disabled{opacity:.5;cursor:not-allowed}
+.audit-bulk p{font-size:11px;color:#c1eadf!important;line-height:1.4;margin:5px 0}
+[data-batch-confirm]{font-size:12px;color:#e5f4f5;line-height:1.55}
+[data-batch-confirm] button{margin:8px 6px 0 0;width:auto!important;font-size:12px;padding:7px}
+.audit-item-title{font-size:13px;line-height:1.4;color:#fff;margin:2px 0 7px;font-weight:750}
+.audit-impact,.audit-evidence{color:#d1deeb!important;font-size:12px!important;line-height:1.55;margin:5px 0}
+.audit-evidence{padding:7px;background:#192b43;border-left:2px solid #699fc8;border-radius:4px}
+.audit-source{font-size:11px;color:#dbeafe;margin:7px 0}
+.audit-source summary{cursor:pointer}
+.audit-source ul{padding-left:16px;list-style:disc;margin:6px 0;color:#c1d6ed}
+.audit-source li{margin:4px 0;overflow-wrap:anywhere}
+.audit-empty{border:1px dashed #7588a0;padding:14px;border-radius:8px;background:#1b2639;font-size:12px}
+.audit-empty p{font-size:12px;color:#c6d7eb!important}
