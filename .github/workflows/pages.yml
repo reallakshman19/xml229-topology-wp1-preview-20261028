@@ -45,7 +45,8 @@ jobs:
         run: |
           node --check tabs/topology-workspace/audit-view.mjs
           node --check tabs/topology-workspace/workspace-app.mjs
-          node --test tests/audit-view.test.mjs
+          node --check tabs/topology-workspace/batch-plan.mjs
+          node --test tests/audit-view.test.mjs tests/batch-plan.test.mjs
       - name: Test PSI116 Python connection-gap candidate semantics
         shell: bash
         run: |
