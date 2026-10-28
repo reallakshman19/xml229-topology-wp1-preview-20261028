@@ -31,6 +31,18 @@ try{
  result.ruleGroups=await page.locator('.audit-rule').count();
  result.autofixCandidates=await page.locator('[data-auto-fix]').count();
  result.warningFound=await page.locator('.audit-severity.warning').count();
+ result.gapCoverage=await page.locator('.audit-coverage').textContent();
+ if(!result.gapCoverage.includes('NOT IMPLEMENTED'))throw Error('Missing explicit gap coverage status');
+ result.categories=await page.locator('.audit-category').count();
+ if(result.categories<2)throw Error('Issue categories missing');
+ await page.locator('[data-audit-category]').selectOption('overlap');
+ result.overlapGroups=await page.locator('.audit-rule').count();
+ if(!result.overlapGroups)throw Error('Expected overlap findings in reference fixture');
+ const overlapLabel=await page.locator('.audit-category h3').first().textContent();
+ if(!overlapLabel.includes('Overlaps'))throw Error('Overlap filter mixed wrong categories');
+ await page.locator('[data-audit-category]').selectOption('non_topology');
+ result.nonTopologyGroups=await page.locator('.audit-rule').count();
+ await page.locator('[data-audit-category]').selectOption('all');
  if(!result.ruleGroups||!result.warningFound||!result.autofixCandidates)throw Error('Audit missing grouping, severity or Auto fix controls');
  await page.locator('[data-audit-filter="manual"]').click();
  result.manualFilter=await page.locator('.audit-rule').count();
