@@ -181,7 +181,7 @@ export function renderAuditHTML(audit,{search="",filter="all",category="all",rev
      const sev=matches.some(i=>i.severity==="ERROR")?"ERROR":matches.some(i=>i.severity==="WARNING")?"WARNING":"INFO";
      const autos=new Set(matches.filter(i=>i.fix.kind==="auto").map(i=>i.action?.action_id).filter(Boolean)).size;
      const manuals=matches.filter(i=>i.fix.kind==="manual").length;
-     return '<details class="audit-rule" '+(sev!=="INFO"?'open':'')+'><summary>'+
+     return '<details class="audit-rule" '+(sev!=="INFO"||g.category==="gaps"?'open':'')+'><summary>'+
       '<span class="audit-rule-title">'+esc(g.title)+'</span>'+
       '<span class="audit-rule-stats">'+matches.length+' findings · '+esc(sev)+
       (autos?' · '+autos+' Auto fix actions':'')+(manuals?' · '+manuals+' manual':'')+'</span></summary>'+
