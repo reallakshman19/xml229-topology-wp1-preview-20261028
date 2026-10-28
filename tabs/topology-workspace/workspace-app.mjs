@@ -73,6 +73,8 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     summary.textContent=renderAuditSummary(audit);
     const visible=renderAuditHTML(audit,{search:state.search,filter:state.filter,category:state.category,reviews:Object.fromEntries(state.gapReviews)});
     panel.innerHTML=visible.html;
+    const receiptButton=query(root,'[data-download-gap-review]');
+    if(receiptButton)receiptButton.disabled=!state.gapReviews.size;
     getNodes(root,'[data-audit-filter]').forEach(button=>{
       button.setAttribute('aria-pressed',String(button.dataset.auditFilter===state.filter));
     });
