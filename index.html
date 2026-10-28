@@ -61,13 +61,16 @@
           </select>
         </label>
         <div class="audit-filters" role="group" aria-label="Filter findings">
-          <button data-audit-filter="all" aria-pressed="true">All findings</button>
-          <button data-audit-filter="error" aria-pressed="false">Errors</button>
-          <button data-audit-filter="warning" aria-pressed="false">Warnings</button>
-          <button data-audit-filter="auto" aria-pressed="false">Auto fix</button>
-          <button data-audit-filter="manual" aria-pressed="false">Manual fix</button>
-          <button data-audit-filter="evidence" aria-pressed="false">No XML change</button>
+          <button data-audit-filter="all" data-audit-label="All findings" aria-pressed="true">All findings (0)</button>
+          <button data-audit-filter="error" data-audit-label="Errors" aria-pressed="false">Errors (0)</button>
+          <button data-audit-filter="warning" data-audit-label="Warnings" aria-pressed="false">Warnings (0)</button>
+          <button data-audit-filter="auto" data-audit-label="Auto fix" aria-pressed="false">Auto fix (0)</button>
+          <button data-audit-filter="manual" data-audit-label="Manual fix" aria-pressed="false">Manual fix (0)</button>
+          <button data-audit-filter="evidence" data-audit-label="No XML change" aria-pressed="false">No XML change (0)</button>
         </div>
+        <div class="audit-bulk"><button type="button" data-auto-fix-all disabled>Autofix-All (0 actions)</button>
+          <p>Applies eligible, nonconflicting XML changes to a copy. Requires a second confirmation and full PSI116 validation; skips manual and evidence-only findings.</p>
+          <div data-batch-confirm aria-live="polite"></div></div>
         <div data-fix-result class="audit-fix-status" aria-live="polite"></div>
         <div data-issues class="audit-groups"></div></section>
       <section class="topo-group"><h2>Source occurrences</h2>
