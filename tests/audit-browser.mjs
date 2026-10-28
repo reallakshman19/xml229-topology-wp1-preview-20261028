@@ -39,6 +39,8 @@ try{
  if(result.gapItems<1)throw Error('Reference file must show evidence-qualified open ends');
  if(await page.locator('[data-audit-category]').inputValue()!=='gaps')throw Error('Gap filter did not activate');
  if(await page.locator('.audit-item [data-auto-fix]').count())throw Error('Gap candidates must not receive auto-join control');
+ const gapRule=page.locator('.audit-rule').first();
+ if(!(await gapRule.evaluate(el=>el.open)))await gapRule.locator('summary').click();
  const review=page.locator('.audit-item').first();
  await review.locator('[data-gap-review-choice]').selectOption('intentional');
  await review.locator('[data-gap-review-note]').fill('P&ID-TEST-001: owner review labels this endpoint as intentional');
