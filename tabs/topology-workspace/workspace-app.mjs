@@ -67,6 +67,8 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     if(!plan){
       summary.textContent='Analyze XML to see findings grouped by engineering rule.';
       panel.innerHTML='';
+      const receiptButton=query(root,'[data-download-gap-review]');
+      if(receiptButton)receiptButton.disabled=true;
       return;
     }
     const audit=buildAudit(state.findings,plan.actions||[]);
@@ -119,10 +121,10 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
         rawSha256:state.source.rawSha256},
       status:'REVIEWER_ANNOTATIONS_ONLY_NOT_CONNECTION_CERTIFICATION',
       reviewedAt:new Date().toISOString(),decisions};
-    const url=URL.createObjectURL(new Blob([JSON.stringify(receipt,null,2)+'\\n'],
+    const url=URL.createObjectURL(new Blob([JSON.stringify(receipt,null,2)+'\n'],
       {type:'application/json'}));
     const a=document.createElement('a');
-    a.href=url;a.download=(state.source.name.replace(/\\.xml$/i,'')||'input')+'.gap-review.json';
+    a.href=url;a.download=(state.source.name.replace(/\.xml$/i,'')||'input')+'.gap-review.json';
     document.body.appendChild(a);a.click();a.remove();
     window.setTimeout(()=>URL.revokeObjectURL(url),1000);
   }
