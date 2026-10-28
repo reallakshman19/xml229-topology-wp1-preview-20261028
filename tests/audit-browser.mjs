@@ -39,6 +39,24 @@ try{
  if(result.gapItems<1)throw Error('Reference file must show evidence-qualified open ends');
  if(await page.locator('[data-audit-category]').inputValue()!=='gaps')throw Error('Gap filter did not activate');
  if(await page.locator('.audit-item [data-auto-fix]').count())throw Error('Gap candidates must not receive auto-join control');
+ const review=page.locator('.audit-item').first();
+ await review.locator('[data-gap-review-choice]').selectOption('intentional');
+ await review.locator('[data-gap-review-note]').fill('P&ID-TEST-001: owner review labels this endpoint as intentional');
+ await review.locator('[data-save-gap-review]').click();
+ result.reviewLabel=await page.locator('.audit-review-saved').first().textContent();
+ if(!result.reviewLabel.includes('Intentional termination'))throw Error('Manual termination choice not saved');
+ if(await page.locator('[data-download-gap-review]').isDisabled())throw Error('Review receipt not offered');
+ const downloading=page.waitForEvent('download');
+ await page.locator('[data-download-gap-review]').click();
+ const reviewFile=await downloading;
+ const reviewJson=JSON.parse(await readFile(await reviewFile.path(),'utf8'));
+ if(reviewJson?.schema!=='xml229-preview-gap-review/v1'||
+    reviewJson.source?.sha256!=='feee5a5a6399207337e63bc56c8afb001fe37ab30c6a7a9283333ec60f6eea38'||
+    reviewJson.decisions?.length!==1||
+    reviewJson.decisions[0]?.disposition!=='intentional'||
+    reviewJson.status!=='REVIEWER_ANNOTATIONS_ONLY_NOT_CONNECTION_CERTIFICATION')
+   throw Error('Gap review receipt not linked to original XML or carries invalid authority');
+ result.reviewReceipt='PASS: source-qualified, not engineering certification';
  await page.locator('[data-audit-category]').selectOption('all');
  result.categories=await page.locator('.audit-category').count();
  if(result.categories<2)throw Error('Issue categories missing');
