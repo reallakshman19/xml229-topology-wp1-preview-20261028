@@ -65,11 +65,11 @@ test('one proposed action may witness multiple distinct rule findings',()=>{
 
 test('subject categories never masquerade as severity or gap verification',()=>{
  const m=buildAudit(findings,actions);
- assert.deepEqual(m.counts.categories,{connection:2,overlap:1,component:1,non_topology:0,unclassified:0});
+ assert.deepEqual(m.counts.categories,{gaps:0,connection:2,overlap:1,component:1,non_topology:0,unclassified:0});
  assert.equal(renderAuditHTML(m,{category:'connection'}).shown,2);
  assert.equal(renderAuditHTML(m,{category:'overlap'}).shown,1);
  assert.equal(renderAuditHTML(m,{category:'non_topology'}).shown,0);
- assert.match(renderAuditSummary(m),/Open gaps\/disconnected ends: NOT CHECKED/);
+ assert.match(renderAuditSummary(m),/3D near-miss and branch-end screening performed/);
  assert.match(renderAuditHTML(m).html,/Connection topology &amp; node identity/);
  assert.match(renderAuditHTML(m).html,/Overlaps &amp; duplicate geometry/);
  assert.match(renderAuditHTML(m).html,/Component topology &amp; ports/);
@@ -88,4 +88,27 @@ test('unknown PSI116 rule is unclassified rather than guessed into topology or o
   blocking:false,message:'No category authority',node_keys:['B0:N9:S0']}],[]);
  assert.equal(m.counts.categories.unclassified,1);
  assert.equal(renderAuditHTML(m,{category:'unclassified'}).shown,1);
+});
+
+test('possible pipe gaps and branch ends are never shown as Auto fix',()=>{
+ const gaps=[
+  {finding_id:'GAP-1',code:'NEAR_MISS_PIPE_JOINT',severity:'WARNING',blocking:false,
+   message:'2 mm near miss',node_keys:['B0:N20:S1','B0:N30:S2']},
+  {finding_id:'END-1',code:'BRANCH_END_UNVERIFIED',severity:'INFO',blocking:false,
+   message:'Unknown termination',node_keys:['B0:N10:S0']}
+ ];
+ const fixes=[
+  {action_id:'ACT-G1',finding_ids:['GAP-1'],disposition:'REVIEW_CONNECTION',status:'PROPOSED',
+   confidence:0,proposed_changes:[],blockers:[]},
+  {action_id:'ACT-G2',finding_ids:['END-1'],disposition:'REVIEW_CONNECTION',status:'PROPOSED',
+   confidence:0,proposed_changes:[],blockers:[]}
+ ];
+ const a=buildAudit(gaps,fixes);
+ assert.equal(a.counts.categories.gaps,2);
+ assert.equal(a.counts.manual,2);
+ assert.equal(renderAuditHTML(a,{category:'gaps'}).shown,2);
+ assert.match(renderAuditHTML(a).html,/Potential gaps &amp; open ends/);
+ assert.match(renderAuditHTML(a).html,/Manual fix steps/);
+ assert.doesNotMatch(renderAuditHTML(a).html,/data-auto-fix=/);
+ assert.equal(renderAuditHTML(a,{category:'overlap'}).shown,0);
 });
