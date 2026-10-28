@@ -2,6 +2,7 @@
 import {runXmlCii2019StandaloneEngineJob} from '../xml-cii-2019-standalone/xml-cii-workflow-engine-client.js';
 import {parseOccurrenceScene, affectedOccurrenceIds, escapeValue as esc} from './occurrence-scene.mjs';
 import {createTopologyCanvas} from './projected-canvas.mjs';
+import {buildAudit,renderAuditHTML,renderAuditSummary} from './audit-view.mjs';
 
 async function sha256(bytes) {
   const digest=await crypto.subtle.digest('SHA-256',bytes);
@@ -37,7 +38,7 @@ function actionButton(action) {
 export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneEngineJob}={}) {
   if(!root)throw Error('Topology workspace root is required');
   const state={epoch:0,source:null,scene:null,plan:null,findings:[],result:null,
-    selected:new Set(),search:'',busy:false};
+    selected:new Set(),search:'',filter:'all',fix:null,busy:false};
   const canvas=createTopologyCanvas(query(root,'[data-canvas]'),onHits);
   const updateStatus=message=>{query(root,'[data-status]').textContent=message;};
   const displayMessage=message=>{query(root,'[data-hits]').textContent=message;};
@@ -60,20 +61,103 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
       (matching.length>350?'<p>Showing first 350 matches. Narrow the search.</p>':'');
   }
   function renderActions() {
-    const actions=state.plan?.actions||[];
-    const keep=actions.filter(a=>a.disposition==='KEEP');
-    const shown=actions.filter(a=>a.disposition!=='KEEP');
-    const blocked=shown.filter(a=>a.status==='BLOCKED'||a.blockers?.length);
+    const plan=state.plan;
     const summary=query(root,'[data-plan-summary]');
-    summary.textContent=state.plan?actions.length+' total · '+keep.length+
-      ' KEEP (unchanged) · '+blocked.length+' blocked/exception · '+shown.length+
-      ' visible non-KEEP actions. All entries are read-only.':'Real engine findings appear after analysis. KEEP is summarized.';
-    const q=state.search.toLowerCase();
-    const matches=shown.filter(a=>[a.action_id,a.disposition,a.message,a.branch_name,
-      ...(a.node_numbers||[]),...(a.component_ref_nos||[])].some(v=>
-      String(v||'').toLowerCase().includes(q)));
-    query(root,'[data-issues]').innerHTML=matches.slice(0,250).map(actionButton).join('')+
-      (matches.length>250?'<p>Showing first 250 actions; narrow the search.</p>':'');
+    const panel=query(root,'[data-issues]');
+    if(!plan){
+      summary.textContent='Analyze XML to see findings grouped by engineering rule.';
+      panel.innerHTML='';
+      return;
+    }
+    const audit=buildAudit(state.findings,plan.actions||[]);
+    summary.textContent=renderAuditSummary(audit);
+    const visible=renderAuditHTML(audit,{search:state.search,filter:state.filter});
+    panel.innerHTML=visible.html;
+    getNodes(root,'[data-audit-filter]').forEach(button=>{
+      button.setAttribute('aria-pressed',String(button.dataset.auditFilter===state.filter));
+    });
+  }
+  function setFixStatus(message,kind='info',actionId=''){
+    const panel=query(root,'[data-fix-result]');
+    if(!panel)return;
+    panel.setAttribute('data-result',kind);
+    panel.textContent=message;
+    if(kind==='ready'&&state.fix?.actionId===actionId){
+      const button=document.createElement('button');
+      button.type='button';button.setAttribute('data-download-fix','');
+      button.textContent='Download validated corrected XML';
+      panel.appendChild(button);
+    }
+  }
+  function downloadFix(){
+    if(!state.fix||state.fix.sourceSha256!==state.source?.sourceSha256)return;
+    const blob=new Blob([state.fix.xml],{type:'application/xml;charset=utf-8'});
+    const url=URL.createObjectURL(blob);
+    const anchor=document.createElement('a');
+    anchor.href=url;anchor.download=state.fix.name;
+    document.body.appendChild(anchor);anchor.click();anchor.remove();
+    window.setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }
+  async function autoFix(actionId){
+    const action=state.plan?.actions?.find(a=>a.action_id===actionId);
+    const linked=state.findings.filter(f=>(action?.finding_ids||[]).includes(f.finding_id));
+    const eligible=action&&linked.length>0&&!linked.some(f=>f.blocking)&&
+      action.status==='PROPOSED'&&!(action.blockers||[]).length&&
+      Number(action.confidence)>=.95&&
+      new Set(['ALIAS_COINCIDENT_NODE','CONTRACT_PRESERVE_OWNER',
+        'SAFE_DROP_PIPE_GEOMETRY','REMOVE_FALSE_RIGID']).has(action.disposition)&&
+      (action.proposed_changes||[]).length>0;
+    if(!eligible||!state.source||state.busy){
+      setFixStatus('Not authorized for Auto fix. Review this finding manually or wait for analysis.','rejected');
+      return;
+    }
+    const generation=state.epoch,source=state.source;
+    state.busy=true;state.fix=null;refresh();
+    setFixStatus('Running PSI116 transactional Auto fix for '+actionId+' on a copy. Original XML remains untouched.');
+    try{
+      const result=await runEngine({sourceKind:'xml',sourceText:source.sourceText,
+        sourceName:source.name,topologyPreFinalOnly:true,
+        options:{outputMode:'enriched-only',analyzeTopology:true,
+          generateTopoFix:true,useTopoFixForCii:false,topologyActionIds:[actionId]}});
+      if(generation!==state.epoch)return;
+      if(result?.ok!==true||result.outputKind!=='topology-sidecars'||
+         result.acceptedFinalTransferred!==false||result.nativeCiiReleaseAuthorized!==false||
+         result.ciiText||result.enrichedText||result.topoFixCommitted!==true||
+         !result.topoFixXmlText||!result.topoFixLineageText||
+         !result.topoFixPreFinalHandoffText)
+        throw Error('PSI116 transaction did not authorize a corrected copy'+
+          (result?.error?': '+result.error:''));
+      const txn=JSON.parse(result.topoFixTransactionText||'null');
+      const validation=JSON.parse(result.topoFixValidationText||'null');
+      if(txn?.schema!=='psi116-topofix-transaction/v1'||
+         validation?.schema!=='psi116-topofix-validation/v1'||
+         txn.source?.sha256!==source.sourceSha256||
+         validation.sourceSha256!==source.sourceSha256||
+         txn.sourceXmlMutated!==false||txn.committed!==true||validation.committed!==true||
+         txn.selectedActions?.length!==1||txn.selectedActions[0]!==actionId||
+         txn.rejectReasons?.length||validation.rejectReasons?.length||
+         validation.summary?.blockingFailureCount!==0||
+         !Array.isArray(validation.checks)||
+         validation.checks.some(check=>check.blocking&&!check.passed))
+        throw Error('Transaction identity or validation receipt rejected');
+      const fixedSha=await sha256(new TextEncoder().encode(result.topoFixXmlText));
+      if(generation!==state.epoch)return;
+      if(txn.fixedXmlSha256!==fixedSha||validation.fixedXmlSha256!==fixedSha)
+        throw Error('Corrected XML digest mismatch');
+      state.fix={sourceSha256:source.sourceSha256,actionId,
+        xml:result.topoFixXmlText,
+        name:(source.name.replace(/\.xml$/i,'')||'input')+'.'+actionId+'.validated.topofix.xml'};
+      setFixStatus('Auto fix PASSED for '+actionId+' · '+validation.checks.length+
+        ' validation checks · output SHA256 '+fixedSha+
+        '. Download the corrected copy for review; original XML was not modified.',
+        'ready',actionId);
+    }catch(error){
+      if(generation===state.epoch)setFixStatus('Auto fix NOT applied: '+
+        (error?.message||String(error))+
+        '. No corrected copy is available; inspect or manually review the finding.','rejected');
+    }finally{
+      if(generation===state.epoch){state.busy=false;refresh();}
+    }
   }
   function refresh() {
     renderRecords();renderActions();renderSelection();
@@ -100,10 +184,10 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
   }
   async function load(file) {
     const generation=++state.epoch;
-    state.source=null;state.scene=null;state.plan=null;state.findings=[];state.result=null;
+    state.source=null;state.scene=null;state.plan=null;state.findings=[];state.result=null;state.fix=null;
     state.selected.clear();state.busy=false;canvas.setScene(null);
     query(root,'[data-source-meta]').textContent='Reading '+file.name+'…';
-    displayMessage('');refresh();
+    displayMessage('');setFixStatus('');refresh();
     try {
       const raw=new Uint8Array(await file.arrayBuffer());
       const sourceText=new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(raw);
@@ -128,7 +212,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
   async function analyze() {
     if(!state.source||state.busy)return;
     const generation=state.epoch,source=state.source;state.busy=true;
-    state.plan=null;state.findings=[];refresh();updateStatus('Running authoritative PSI116 topology analysis…');
+    state.plan=null;state.findings=[];state.fix=null;setFixStatus('');refresh();updateStatus('Running authoritative PSI116 topology analysis…');
     try {
       const result=await runEngine({sourceKind:'xml',sourceText:source.sourceText,
         sourceName:source.name,topologyPreFinalOnly:true,
@@ -163,6 +247,17 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
       updateStatus('Pending analysis result invalidated. Original source remains available.');}
     else if(target.hasAttribute('data-occ-id')){select([target.dataset.occId],event.shiftKey);displayMessage('');}
     else if(target.hasAttribute('data-hit-id')){select([target.dataset.hitId],event.shiftKey);displayMessage('');}
+    else if(target.hasAttribute('data-audit-filter')){
+      state.filter=target.dataset.auditFilter;renderActions();
+    }
+    else if(target.hasAttribute('data-download-fix'))downloadFix();
+    else if(target.hasAttribute('data-auto-fix'))autoFix(target.dataset.autoFix);
+    else if(target.hasAttribute('data-audit-action')){
+      const action=state.plan?.actions.find(a=>a.action_id===target.dataset.auditAction);
+      const ids=affectedOccurrenceIds(action,state.findings,state.scene);
+      if(ids.length){select(ids);canvas.focus(ids);displayMessage('Source-qualified witnesses: '+ids.length);}
+      else displayMessage('No authoritative node keys; no guessed location.');
+    }
     else if(target.hasAttribute('data-action-id')){
       const action=state.plan?.actions.find(a=>a.action_id===target.dataset.actionId);
       const ids=affectedOccurrenceIds(action,state.findings,state.scene);
