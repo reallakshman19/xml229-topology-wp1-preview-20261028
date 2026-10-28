@@ -44,3 +44,13 @@
 .audit-category[data-category-id="overlap"]{border-color:#c58b3f}
 .audit-category[data-category-id="non_topology"]{border-color:#8290ae}
 .audit-category[data-category-id="component"]{border-color:#45a6a4}
+
+.audit-category[data-category-id="gaps"]{border-color:#eab308}
+.audit-review-toolbar{border:1px solid #3a5a71;border-radius:7px;padding:8px;margin:8px 0;color:#cbd5e1}
+.audit-review-toolbar button{font-size:11px}
+.audit-review-toolbar p{font-size:11px;color:#b7cee2!important;margin:5px 0}
+.audit-review{border:1px dashed #64748b;border-radius:7px;padding:8px;margin:9px 0;background:#152136;font-size:11px;display:grid;gap:7px}
+.audit-review label{display:grid;gap:4px;font-size:11px}
+.audit-review select,.audit-review input{width:100%;padding:6px;border-radius:5px;border:1px solid #60758d;background:#0b1625;color:#e2e8f0;font-size:11px}
+.audit-review button{width:auto!important;font-size:11px;justify-self:start}
+.audit-review-saved{color:#b9f9dd!important;font-size:11px!important}
