@@ -1,0 +1,35 @@
+.audit-intro{margin:7px 0 10px;color:#bac9df;font-size:12px}
+.audit-filters{display:flex;flex-wrap:wrap;gap:5px;margin:10px 0 12px}
+.audit-filters button{font-size:12px;padding:6px 8px;min-width:0;width:auto}
+.audit-filters button[aria-pressed=true]{background:#164e63;color:#fff;border-color:#38bdf8}
+[data-issues].audit-groups{display:block;max-height:none;overflow:visible}
+.audit-rule{margin:0 0 9px;border:1px solid #334155;border-radius:9px;background:#111e32;overflow:hidden}
+.audit-rule>summary{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:11px 9px;cursor:pointer;list-style:auto}
+.audit-rule-title{font-size:13px;font-weight:700;flex:1;color:#e2e8f0}
+.audit-rule-stats{font-size:11px;color:#b3c1d8;text-align:right}
+.audit-rule-why{padding:0 10px 9px;margin:0;font-size:12px;color:#bfd5e5!important}
+.audit-item{margin:5px 8px 9px;border-top:1px solid #344256;padding:10px 2px 5px;overflow-wrap:anywhere}
+.audit-item-top{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.audit-severity,.audit-resolution{display:inline-block;font-size:10px;font-weight:750;letter-spacing:.025em;border-radius:5px;padding:4px 6px}
+.audit-severity.error{background:#752d38;color:#ffe1e5}
+.audit-severity.warning{background:#6e4e18;color:#fff2c7}
+.audit-severity.info{background:#264c72;color:#d6ebff}
+.audit-resolution.auto{background:#155e50;color:#dbfcef}
+.audit-resolution.manual{background:#643c29;color:#ffead3}
+.audit-resolution.evidence,.audit-resolution.keep{background:#334155;color:#e1eaf6}
+.audit-item .audit-plain{font-size:12px;color:#f1f5f9!important;margin:8px 0 5px}
+.audit-item .audit-remedy{font-size:12px;color:#d7e6f4!important;margin:4px 0 7px}
+.audit-item .audit-context{font-size:11px;color:#a7b9cb!important;margin:5px 0 8px}
+.audit-controls{display:flex;gap:6px;flex-wrap:wrap}
+.audit-controls button{font-size:11px;width:auto!important;padding:6px 8px}
+.audit-controls .audit-primary{background:#075e55;border-color:#2dd4bf;color:#fff}
+.audit-proof{margin-top:10px;color:#a9c2d1;font-size:11px}
+.audit-proof summary{cursor:pointer;text-decoration:underline}
+.audit-proof p{font-size:11px;overflow-wrap:anywhere;color:#b9cadb!important}
+.audit-fix-status{margin:8px 0;border:1px solid #476276;background:#162d40;border-radius:8px;padding:10px;font-size:12px;line-height:1.45;overflow-wrap:anywhere}
+.audit-fix-status[data-result=ready]{border-color:#2dd4bf}
+.audit-fix-status[data-result=rejected]{border-color:#efb656}
+.audit-fix-status button{margin-top:7px;display:inline-block;width:auto;font-size:12px}
+.audit-policy{font-size:12px;color:#c5d6e4!important}
+.topo-side{scrollbar-width:thin}
+@media(min-width:1000px){.topo-grid{grid-template-columns:minmax(335px,30%) minmax(350px,1fr) minmax(230px,21%)}}
