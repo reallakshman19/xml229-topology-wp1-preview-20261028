@@ -3,7 +3,8 @@ import {chromium} from 'playwright';
 import {createServer} from 'node:http';
 import {readFile,writeFile,mkdir} from 'node:fs/promises';
 import path from 'node:path';
-const root=process.cwd();
+const sourceRoot=process.cwd();
+const root=path.join(sourceRoot,'dist');
 const mime={'.html':'text/html;charset=utf-8','.mjs':'text/javascript;charset=utf-8','.js':'text/javascript;charset=utf-8','.css':'text/css;charset=utf-8','.json':'application/json','.py':'text/plain;charset=utf-8','.wasm':'application/wasm','.zip':'application/zip'};
 const server=createServer(async(req,res)=>{
  try{
@@ -21,7 +22,7 @@ const pageErrors=[];page.on('pageerror',e=>pageErrors.push(String(e)));page.on('
 const result={};
 try{
  await page.goto('http://127.0.0.1:'+port+'/index.html');
- await page.locator('[data-file]').setInputFiles(path.join(root,'tests','FirstpassXML'));
+ await page.locator('[data-file]').setInputFiles(path.join(sourceRoot,'tests','FirstpassXML'));
  await page.waitForFunction(()=>document.querySelector('[data-occ-summary]')?.textContent?.includes('216 of 216'),null,{timeout:30000});
  result.loaded=true;
  await page.locator('[data-analyze]').click();
@@ -40,14 +41,14 @@ try{
  result.fixMessage=await page.locator('[data-fix-result]').textContent();
  if(result.fixState==='ready' && !(await page.locator('[data-download-fix]').count()))throw Error('Missing validated XML download action');
  result.originalOccurrences=await page.locator('[data-occ-summary]').textContent();
- await mkdir(path.join(root,'preview-test-results'),{recursive:true});
- await page.screenshot({path:path.join(root,'preview-test-results','rule-audit.png'),fullPage:true});
+ await mkdir(path.join(sourceRoot,'preview-test-results'),{recursive:true});
+ await page.screenshot({path:path.join(sourceRoot,'preview-test-results','rule-audit.png'),fullPage:true});
  if(pageErrors.length)throw Error('Browser errors: '+pageErrors.join(' | '));
  result.status='PASS';
 }catch(e){result.status='FAIL';result.error=String(e);throw e;}
 finally{
  result.pageErrors=pageErrors;
- await writeFile(path.join(root,'preview-test-results.json'),JSON.stringify(result,null,2)+'\n');
+ await writeFile(path.join(sourceRoot,'preview-test-results.json'),JSON.stringify(result,null,2)+'\n');
  await browser.close();await new Promise(resolve=>server.close(resolve));
  console.log(JSON.stringify(result,null,2));
 }
