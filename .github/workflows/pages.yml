@@ -1,0 +1,46 @@
+name: XML229 standalone WP1 preview
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: xml229-preview-pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble exact-source preview with pinned Pyodide binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          tar --exclude='./.git' --exclude='./.github' --exclude='./dist' -cf - . | tar -xf - -C dist
+          mkdir -p dist/vendor/pyodide
+          root='https://raw.githubusercontent.com/reallakshman19/3D_Converters/cba348152faa9c2077d5c91a5f85b4b81d2e8e25/vendor/pyodide'
+          curl --fail --location --retry 3 "$root/pyodide.asm.wasm" --output dist/vendor/pyodide/pyodide.asm.wasm
+          curl --fail --location --retry 3 "$root/python_stdlib.zip" --output dist/vendor/pyodide/python_stdlib.zip
+          test "$(git hash-object dist/vendor/pyodide/pyodide.asm.wasm)" = 27b9cadfe2f52a4f76ada365cba6d891848838bd
+          test "$(git hash-object dist/vendor/pyodide/python_stdlib.zip)" = e4c642f5824d41f36bf99aa9c761a2576620fa7c
+          test -f dist/index.html
+          test -f dist/converters/psi116_topology_resolver/__init__.py
+          test -f dist/.nojekyll
+          echo "Pinned runtime binary checks PASS"
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./dist
+      - id: deployment
+        uses: actions/deploy-pages@v4
