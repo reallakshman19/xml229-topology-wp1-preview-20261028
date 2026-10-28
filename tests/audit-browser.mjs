@@ -3,6 +3,7 @@ import {chromium} from 'playwright';
 import {createServer} from 'node:http';
 import {readFile,writeFile,mkdir} from 'node:fs/promises';
 import path from 'node:path';
+import {createHash} from 'node:crypto';
 const sourceRoot=process.cwd();
 const root=path.join(sourceRoot,'dist');
 const mime={'.html':'text/html;charset=utf-8','.mjs':'text/javascript;charset=utf-8','.js':'text/javascript;charset=utf-8','.css':'text/css;charset=utf-8','.json':'application/json','.py':'text/plain;charset=utf-8','.wasm':'application/wasm','.zip':'application/zip'};
@@ -113,10 +114,29 @@ try{
  await page.locator('[data-download-fix]').click();
  const output=await dl;
  result.batchOutputName=output.suggestedFilename();
- if(!result.batchOutputName.includes('.batch-'+selected+'.validated.topofix.xml'))
-   throw Error('Batch output lacks specific selected action count');
+ result.batchApplied=Number(result.batchOutputName.match(
+  /[.]batch-([0-9]+)[.]validated[.]topofix[.]xml/)?.[1]);
+ if(!Number.isInteger(result.batchApplied)||result.batchApplied<1||
+    result.batchApplied>selected)
+   throw Error('Batch output does not reflect actual validated action count');
  const xml=await readFile(await output.path(),'utf8');
  if(!xml.includes('PipeStressExport'))throw Error('Batch fixed XML missing expected source root');
+ const reportDownload=page.waitForEvent('download');
+ await page.locator('[data-download-batch-report]').click();
+ const reportFile=await reportDownload;
+ const report=JSON.parse(await readFile(await reportFile.path(),'utf8'));
+ const sha=createHash('sha256').update(xml).digest('hex');
+ if(report.schema!=='xml229-preview-batch-topofix/v1'||
+    report.status!=='VALIDATED_COPY_NOT_ENGINEERING_ACCEPTANCE'||
+    report.source?.sha256!=='feee5a5a6399207337e63bc56c8afb001fe37ab30c6a7a9283333ec60f6eea38'||
+    report.fixedXmlSha256!==sha||
+    report.selectedActionIds.length!==result.batchApplied||
+    report.excludedActions.length!==66-result.batchApplied||
+    new Set(report.selectedActionIds).size!==result.batchApplied)
+   throw Error('Batch audit receipt does not reconcile 66 proposals, applied actions and exclusions');
+ result.batchExcluded=report.excludedActions.length;
+ result.batchSourceSha=report.source.sha256;
+ result.batchOutputSha=sha;
  result.originalOccurrences=await page.locator('[data-occ-summary]').textContent();
  await mkdir(path.join(sourceRoot,'preview-test-results'),{recursive:true});
  await page.screenshot({path:path.join(sourceRoot,'preview-test-results','rule-audit.png'),fullPage:true});
