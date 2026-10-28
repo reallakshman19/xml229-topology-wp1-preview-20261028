@@ -18,6 +18,34 @@ const RULES=Object.freeze({
  DUPLICATE_ROUTE_SPAN:["Repeated route span","The same route geometry appears multiple times without sufficient proof that one is expendable."],
  COLLINEAR_ROUTE_OVERLAP:["Overlapping pipe spans","Route segments overlap on the same line; overlap alone does not establish which span may be removed."],
 });
+// Engineering subject classification is separate from solver severity and repair eligibility.
+// No source rule currently establishes that an open end/gap/disconnection has been checked.
+const CATEGORIES=Object.freeze({
+ connection:{title:"Connection topology & node identity",explain:"Coincident identities and zero/short route relationships. These findings do NOT prove a gap or a disconnected pipe."},
+ overlap:{title:"Overlaps & duplicate geometry",explain:"Duplicate or collinear pipe runs and generated pipe-carrier overlaps. Not every overlapping representation is defective."},
+ component:{title:"Component topology & ports",explain:"Elbow, tee, OLET, support and component-port ownership or integrity; not automatically a physical pipe disconnection."},
+ non_topology:{title:"Non-topology engineering data",explain:"Rigid classification and other engineering attributes, not pipe connectivity or overlap."},
+ unclassified:{title:"Unclassified rule — review",explain:"New PSI116 rules must be mapped explicitly; the preview will not infer an engineering category."}
+});
+const CATEGORY_BY_RULE=Object.freeze({
+ COINCIDENT_NODE_ALIAS_CANDIDATE:"connection",
+ COINCIDENT_NODE_IDENTITY_AMBIGUOUS:"connection",
+ ZERO_LENGTH_ROUTE_SPAN:"connection",
+ SHORT_ROUTE_SPAN:"connection",
+ DUPLICATE_ROUTE_SPAN:"overlap",
+ COLLINEAR_ROUTE_OVERLAP:"overlap",
+ AUTO_PIPE_INLINE_COMPONENT_CARRIER:"overlap",
+ COMPONENT_PORTS_COINCIDENT:"component",
+ ZERO_LENGTH_COMPONENT_SPAN:"component",
+ SHORT_INLINE_COMPONENT_SPAN:"component",
+ ELBO_OWNER_ENDPOINT_MISSING:"component",
+ ELBO_HELPER_PORTS_MISSING:"component",
+ JUNCTION_OWNER_INFERRED_FROM_PORT_SET:"component",
+ SUPPORT_ON_PIPE_CARRIER:"component",
+ JUNCTION_ON_PIPE_CARRIER:"component",
+ NON_RIGID_COMPONENT_CLASSIFIED_RIGID:"non_topology",
+ INSTRUMENT_RIGID_EVIDENCE_REQUIRED:"non_topology"
+});
 const MANUAL_GUIDE=Object.freeze({
  COINCIDENT_NODE_IDENTITY_AMBIGUOUS:"Inspect the original branch connection and component port records. Confirm which nodes truly connect in the 3D source, correct the owner/link upstream, and re-run the audit. Do not merge by XYZ alone.",
  ZERO_LENGTH_COMPONENT_SPAN:"Inspect the fitting's endpoint mapping and physical length. Correct the authoritative component geometry or helper ports upstream; do not delete the component to silence the error.",
@@ -66,13 +94,18 @@ export function buildAudit(findings,actions){
    const effective=linked.find(a=>a.disposition!=="KEEP")||linked[0]||null;
    const fix=resolution(effective,f);
    const [title,rule]=RULES[f.code]||[String(f.code||"Unclassified rule").replaceAll("_"," ").toLowerCase(),f.message||"Review original source evidence."];
-   const item={finding:f,action:effective,linked,fix,severity:severity(f),title,rule};
+   const category=CATEGORY_BY_RULE[f.code]||"unclassified";
+   const item={finding:f,action:effective,linked,fix,severity:severity(f),title,rule,category};
    items.push(item);
-   if(!groups.has(f.code))groups.set(f.code,{code:f.code,title,rule,items:[]});
+   if(!groups.has(f.code))groups.set(f.code,{code:f.code,title,rule,category,items:[]});
    groups.get(f.code).items.push(item);
  }
  const counts={ERROR:0,WARNING:0,INFO:0,auto:0,manual:0,evidence:0,keep:0};
- for(const item of items){counts[item.severity]++;counts[item.fix.kind]++;}
+ counts.categories={connection:0,overlap:0,component:0,non_topology:0,unclassified:0};
+ for(const item of items){
+   counts[item.severity]++;counts[item.fix.kind]++;
+   counts.categories[item.category]++;
+ }
  counts.autoActions=new Set(items.filter(i=>i.fix.kind==="auto")
    .map(i=>i.action?.action_id).filter(Boolean)).size;
  return {groups:[...groups.values()].sort((a,b)=>{
@@ -107,34 +140,49 @@ function itemHTML(item){
   (a?.authority?'<p><strong>Authority:</strong> '+esc(a.authority)+'</p>':'')+
   '</details></article>';
 }
-export function renderAuditHTML(audit,{search="",filter="all"}={}){
+export function renderAuditHTML(audit,{search="",filter="all",category="all"}={}){
  const q=search.trim().toLowerCase();
  const match=i=>[i.title,i.rule,i.finding.code,i.finding.message,i.finding.branch_name,
   i.action?.action_id,i.action?.disposition,...(i.finding.node_numbers||[]),
   ...(i.finding.node_keys||[])].some(s=>String(s??"").toLowerCase().includes(q));
- const relevant=i=>match(i)&&(filter==="all"||filter===i.severity.toLowerCase()||filter===i.fix.kind);
+ const relevant=i=>match(i)&&(category==="all"||category===i.category)&&
+  (filter==="all"||filter===i.severity.toLowerCase()||filter===i.fix.kind);
  let shown=0;
- const html=audit.groups.map(g=>{
-   const matches=g.items.filter(relevant);
-   if(!matches.length)return "";
-   shown+=matches.length;
-   const sev=matches.some(i=>i.severity==="ERROR")?"ERROR":matches.some(i=>i.severity==="WARNING")?"WARNING":"INFO";
-   const autos=matches.filter(i=>i.fix.kind==="auto").length;
-   const manuals=matches.filter(i=>i.fix.kind==="manual").length;
-   return '<details class="audit-rule" '+(sev!=="INFO"?'open':'')+'><summary>'+
-    '<span class="audit-rule-title">'+esc(g.title)+'</span>'+
-    '<span class="audit-rule-stats">'+matches.length+' findings · '+esc(sev)+
-    (autos?' · '+autos+' auto fix':'')+(manuals?' · '+manuals+' manual':'')+'</span></summary>'+
-    '<p class="audit-rule-why"><strong>Why this rule flags a finding:</strong> '+esc(g.rule)+'</p>'+
-    matches.slice(0,200).map(itemHTML).join("")+
-    (matches.length>200?'<p>Showing 200 findings; narrow search.</p>':'')+'</details>';
- }).join("");
- return {shown,html:html||'<p>No findings match this filter. Try All findings or clear search.</p>'};
+ const sections=Object.keys(CATEGORIES).map(categoryId=>{
+   const categoryGroups=audit.groups.filter(g=>g.category===categoryId);
+   const groupHTML=categoryGroups.map(g=>{
+     const matches=g.items.filter(relevant);
+     if(!matches.length)return "";
+     shown+=matches.length;
+     const sev=matches.some(i=>i.severity==="ERROR")?"ERROR":matches.some(i=>i.severity==="WARNING")?"WARNING":"INFO";
+     const autos=new Set(matches.filter(i=>i.fix.kind==="auto").map(i=>i.action?.action_id).filter(Boolean)).size;
+     const manuals=matches.filter(i=>i.fix.kind==="manual").length;
+     return '<details class="audit-rule" '+(sev!=="INFO"?'open':'')+'><summary>'+
+      '<span class="audit-rule-title">'+esc(g.title)+'</span>'+
+      '<span class="audit-rule-stats">'+matches.length+' findings · '+esc(sev)+
+      (autos?' · '+autos+' Auto fix actions':'')+(manuals?' · '+manuals+' manual':'')+'</span></summary>'+
+      '<p class="audit-rule-why"><strong>Why this rule flags a finding:</strong> '+esc(g.rule)+'</p>'+
+      matches.slice(0,200).map(itemHTML).join("")+
+      (matches.length>200?'<p>Showing 200 findings; narrow search.</p>':'')+'</details>';
+   }).filter(Boolean);
+   if(!groupHTML.length)return "";
+   const count=categoryGroups.flatMap(g=>g.items).filter(relevant).length;
+   const info=CATEGORIES[categoryId];
+   return '<section class="audit-category" data-category-id="'+categoryId+'">'+
+     '<h3>'+esc(info.title)+' <span class="audit-category-count">'+count+'</span></h3>'+
+     '<p class="audit-category-explain">'+esc(info.explain)+'</p>'+
+     groupHTML.join("")+'</section>';
+ }).filter(Boolean);
+ return {shown,html:sections.join("")||
+  '<p>No findings match this filter. Try All findings or clear search.</p>'};
 }
 export function renderAuditSummary(audit){
  const c=audit.counts;
  return audit.items.length+' findings under '+audit.groups.length+' engineering rules · '+
  c.ERROR+' errors · '+c.WARNING+' warnings · '+c.INFO+' informational · '+
  c.auto+' findings linked to '+c.autoActions+' distinct Auto fix actions · '+c.manual+' manual fix / review · '+c.evidence+' evidence-only · '+
- c.keep+' preserve. Source remains unchanged until an explicitly selected validated copy is exported.';
+ c.keep+' preserve. By class: '+
+ c.categories.connection+' connection/identity, '+c.categories.overlap+' overlap, '+
+ c.categories.component+' component topology, '+c.categories.non_topology+' non-topology.'+
+ ' Open gaps/disconnected ends: NOT CHECKED (no dedicated rule). Original source unchanged.';
 }
