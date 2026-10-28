@@ -70,6 +70,11 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
       panel.innerHTML='';
       const receiptButton=query(root,'[data-download-gap-review]');
       if(receiptButton)receiptButton.disabled=true;
+      getNodes(root,'[data-audit-filter]').forEach(button=>{
+        button.textContent=button.dataset.auditLabel+' (0)';
+      });
+      const allButton=query(root,'[data-auto-fix-all]');
+      if(allButton){allButton.disabled=true;allButton.textContent='Autofix-All (0 actions)';}
       return;
     }
     const audit=buildAudit(state.findings,plan.actions||[]);
