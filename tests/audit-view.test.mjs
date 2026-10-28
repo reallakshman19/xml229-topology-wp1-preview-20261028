@@ -1,0 +1,64 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {buildAudit,renderAuditHTML,renderAuditSummary} from '../tabs/topology-workspace/audit-view.mjs';
+
+const findings=[
+ {finding_id:'FND-1',code:'COINCIDENT_NODE_ALIAS_CANDIDATE',
+ severity:'WARNING',blocking:false,message:'Verified candidate',node_keys:['B0:N1750:S0'],node_numbers:[1750]},
+ {finding_id:'FND-2',code:'COINCIDENT_NODE_IDENTITY_AMBIGUOUS',
+ severity:'ERROR',blocking:true,message:'No proven owner',node_keys:['B0:N1900:S1'],node_numbers:[1900]},
+ {finding_id:'FND-3',code:'AUTO_PIPE_INLINE_COMPONENT_CARRIER',
+ severity:'WARNING',blocking:false,message:'Evidence-only carrier',node_keys:['B0:N1920:S2'],node_numbers:[1920]},
+ {finding_id:'FND-4',code:'SHORT_INLINE_COMPONENT_SPAN',
+ severity:'INFO',blocking:false,message:'Retain short gasket',node_keys:['B0:N1950:S3'],node_numbers:[1950]},
+];
+const actions=[
+ {action_id:'ACT-1',finding_ids:['FND-1'],disposition:'ALIAS_COINCIDENT_NODE',status:'PROPOSED',confidence:1,proposed_changes:[{operation:'ALIAS_NODE'}],blockers:[]},
+ {action_id:'ACT-2',finding_ids:['FND-2'],disposition:'BLOCK_AMBIGUOUS',status:'BLOCKED',confidence:0,blockers:['NO_CONNECTION_AUTHORITY']},
+ {action_id:'ACT-3',finding_ids:['FND-3'],disposition:'MERGE_CARRIER_WITH_COMPONENT',status:'PROPOSED',confidence:.95,blockers:[]},
+ {action_id:'ACT-4',finding_ids:['FND-4'],disposition:'KEEP',status:'PROPOSED',confidence:1,blockers:[]}
+];
+test('findings inherit exact PSI116 severity and grouped rule, rather than inferred action severity',()=>{
+ const m=buildAudit(findings,actions);
+ assert.equal(m.groups.length,4);
+ assert.deepEqual([m.counts.ERROR,m.counts.WARNING,m.counts.INFO],[1,2,1]);
+ assert.equal(m.groups[0].code,'COINCIDENT_NODE_IDENTITY_AMBIGUOUS');
+ assert.match(renderAuditSummary(m),/4 engineering rules/);
+});
+test('Auto fix is not offered for blocked, low-confidence, missing changes, or evidence-only actions',()=>{
+ const m=buildAudit(findings,actions);
+ assert.deepEqual([m.counts.auto,m.counts.manual,m.counts.evidence,m.counts.keep],[1,1,1,1]);
+ const {html}=renderAuditHTML(m);
+ assert.match(html,/data-auto-fix="ACT-1"/);
+ assert.doesNotMatch(html,/data-auto-fix="ACT-2"/);
+ assert.doesNotMatch(html,/data-auto-fix="ACT-3"/);
+ assert.doesNotMatch(html,/data-auto-fix="ACT-4"/);
+ const weak=buildAudit(findings,[{...actions[0],confidence:.8},...actions.slice(1)]);
+ assert.equal(weak.counts.auto,0);
+ const missing=buildAudit(findings,[{...actions[0],proposed_changes:[]},...actions.slice(1)]);
+ assert.equal(missing.counts.auto,0);
+});
+test('filters and search cover actual finding and occurrence keys',()=>{
+ const m=buildAudit(findings,actions);
+ assert.equal(renderAuditHTML(m,{filter:'error'}).shown,1);
+ assert.equal(renderAuditHTML(m,{filter:'warning'}).shown,2);
+ assert.equal(renderAuditHTML(m,{filter:'manual'}).shown,1);
+ assert.equal(renderAuditHTML(m,{filter:'auto'}).shown,1);
+ assert.equal(renderAuditHTML(m,{search:'B0:N1750:S0'}).shown,1);
+});
+test('engine messages and rule references are HTML escaped',()=>{
+ const m=buildAudit([{finding_id:'X',code:'X_UNKNOWN',severity:'WARNING',
+ blocking:true,message:'<img src=x onerror=alert(1)>',node_keys:['<unsafe>']}],[]);
+ const h=renderAuditHTML(m).html;
+ assert.match(h,/&lt;img/);
+ assert.doesNotMatch(h,/<img/);
+ assert.match(h,/&lt;unsafe&gt;/);
+});
+test('one proposed action may witness multiple distinct rule findings',()=>{
+ const more=[...findings,{...findings[0],finding_id:'FND-5',code:'ZERO_LENGTH_ROUTE_SPAN',message:'Same linked action'}];
+ const modified=[{...actions[0],finding_ids:['FND-1','FND-5']},...actions.slice(1)];
+ const m=buildAudit(more,modified);
+ assert.equal(m.items.length,5);
+ assert.equal(m.counts.auto,2);
+ assert.equal((renderAuditHTML(m).html.match(/data-auto-fix="ACT-1"/g)||[]).length,2);
+});
