@@ -3,7 +3,7 @@ import {runXmlCii2019StandaloneEngineJob} from '../xml-cii-2019-standalone/xml-c
 import {parseOccurrenceScene, affectedOccurrenceIds, escapeValue as esc} from './occurrence-scene.mjs';
 import {createTopologyCanvas} from './projected-canvas.mjs';
 import {buildAudit,renderAuditHTML,renderAuditSummary,filterCounts} from './audit-view.mjs';
-import {eligibleActions,previewBatchPlan} from './batch-plan.mjs';
+import {eligibleActions,previewBatchPlan,explicitlyRejectedActionIds} from './batch-plan.mjs';
 
 async function sha256(bytes) {
   const digest=await crypto.subtle.digest('SHA-256',bytes);
@@ -108,6 +108,12 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
       button.type='button';button.setAttribute('data-download-fix','');
       button.textContent='Download validated corrected XML';
       panel.appendChild(button);
+      if(state.fix.report){
+        const receipt=document.createElement('button');
+        receipt.type='button';receipt.dataset.downloadBatchReport='';
+        receipt.textContent='Download bulk audit / excluded actions';
+        panel.appendChild(receipt);
+      }
     }
   }
   function saveGapReview(button){
@@ -145,6 +151,17 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     document.body.appendChild(a);a.click();a.remove();
     window.setTimeout(()=>URL.revokeObjectURL(url),1000);
   }
+  function downloadBatchReport(){
+    const fix=state.fix;
+    if(!fix?.report||fix.sourceSha256!==state.source?.sourceSha256)return;
+    const filename=(state.source.name.replace(/\\.xml$/i,'')||'input')+
+      '.autofix-batch-report.json';
+    const url=URL.createObjectURL(new Blob([JSON.stringify(fix.report,null,2)],
+      {type:'application/json'}));
+    const a=document.createElement('a');
+    a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();
+    window.setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }
   function downloadFix(){
     if(!state.fix||state.fix.sourceSha256!==state.source?.sourceSha256)return;
     const blob=new Blob([state.fix.xml],{type:'application/xml;charset=utf-8'});
@@ -156,7 +173,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
   }
   function planAutoFixAll(){
     if(state.busy||!state.plan||!state.source)return;
-    const plan=previewBatchPlan(state.findings,state.plan.actions||[]);
+    const plan=previewBatchPlan(state.findings,state.plan.actions||[],state.scene?.byKey);
     state.batch={...plan,sourceSha256:state.source.sourceSha256,epoch:state.epoch};
     const panel=query(root,'[data-batch-confirm]');
     const excluded=plan.notEligible;
@@ -181,62 +198,92 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
   async function runFix(actionIds,receiptKey='single'){
     const allowed=new Set(eligibleActions(state.findings,state.plan?.actions||[])
       .map(a=>a.action_id));
-    const ids=[...new Set(actionIds)].sort();
+    let ids=[...new Set(actionIds)].sort();
     if(!state.source||state.busy||!ids.length||ids.some(id=>!allowed.has(id))){
       setFixStatus('Auto fix is not authorized for this selection. No XML was modified.','rejected');
       return;
     }
-    const generation=state.epoch,source=state.source;
-    const batch=receiptKey==='batch',skipped=batch?(state.batch?.skipped?.length||0):0;
+    const generation=state.epoch,source=state.source,batch=receiptKey==='batch';
+    const skippedByPlan=batch?[...(state.batch?.skipped||[])]:[];
+    const skippedByEngine=[];
     state.busy=true;state.fix=null;refresh();
-    setFixStatus('Running '+ids.length+' selected PSI116 Auto fix action(s) on a copy. '+
-      'Original XML stays unchanged; output requires an all-or-nothing validation receipt.');
+    setFixStatus('Applying '+ids.length+' selected PSI116 action(s) to an isolated copy. '+
+      'Any rejected action will be excluded from the next full validation attempt.');
     try{
-      const result=await runEngine({sourceKind:'xml',sourceText:source.sourceText,
-        sourceName:source.name,topologyPreFinalOnly:true,
-        options:{outputMode:'enriched-only',analyzeTopology:true,
-          generateTopoFix:true,useTopoFixForCii:false,topologyActionIds:ids}});
+      let result=null,txn=null,validation=null,reasons=[];
+      for(let attempt=0;attempt<=ids.length&&attempt<25;attempt++){
+        result=await runEngine({sourceKind:'xml',sourceText:source.sourceText,
+          sourceName:source.name,topologyPreFinalOnly:true,
+          options:{outputMode:'enriched-only',analyzeTopology:true,
+            generateTopoFix:true,useTopoFixForCii:false,topologyActionIds:ids}});
+        if(generation!==state.epoch)return;
+        txn=JSON.parse(result?.topoFixTransactionText||'null');
+        validation=JSON.parse(result?.topoFixValidationText||'null');
+        reasons=[...(txn?.rejectReasons||[]),...(validation?.rejectReasons||[])];
+        if(result?.ok!==true||result.outputKind!=='topology-sidecars'||
+           result.acceptedFinalTransferred!==false||
+           result.nativeCiiReleaseAuthorized!==false||
+           result.ciiText||result.enrichedText||
+           txn?.source?.sha256!==source.sourceSha256||
+           validation?.sourceSha256!==source.sourceSha256||
+           txn.sourceXmlMutated!==false)
+          throw Error('Pre-Final source custody or execution contract rejected: '+
+            (reasons.join(', ')||result?.error||'contract failure'));
+        if(result.topoFixCommitted===true)break;
+        const rejected=batch?explicitlyRejectedActionIds(reasons)
+          .filter(id=>ids.includes(id)):[];
+        if(!rejected.length||ids.length<=rejected.length)
+          throw Error('PSI116 rejected the transaction: '+
+            (reasons.join(', ')||result?.error||'not committed'));
+        for(const id of rejected)skippedByEngine.push({actionId:id,
+          reason:reasons.find(reason=>reason.includes('Action '+id))||'ENGINE_REJECTED'});
+        const removed=new Set(rejected);
+        ids=ids.filter(id=>!removed.has(id));
+        setFixStatus('PSI116 rejected '+skippedByEngine.length+
+          ' source action(s). Rechecking the remaining '+ids.length+
+          ' as a fresh, all-or-nothing XML transaction. No output released yet.');
+      }
       if(generation!==state.epoch)return;
-      const txn=JSON.parse(result?.topoFixTransactionText||'null');
-      const validation=JSON.parse(result?.topoFixValidationText||'null');
-      const reasons=[...(txn?.rejectReasons||[]),...(validation?.rejectReasons||[])];
-      if(result?.ok!==true||result.outputKind!=='topology-sidecars'||
-         result.acceptedFinalTransferred!==false||result.nativeCiiReleaseAuthorized!==false||
-         result.ciiText||result.enrichedText||result.topoFixCommitted!==true||
-         !result.topoFixXmlText||!result.topoFixLineageText||
-         !result.topoFixPreFinalHandoffText)
-        throw Error('PSI116 rejected the batch or could not produce all required lineage: '+
-          (reasons.join(', ')||result?.error||'transaction not committed'));
+      if(!result||result.topoFixCommitted!==true||!result.topoFixXmlText||
+         !result.topoFixLineageText||!result.topoFixPreFinalHandoffText)
+        throw Error('No fully validated XML and source lineage were produced');
       const selected=[...(txn?.selectedActions||[])].sort();
       if(txn?.schema!=='psi116-topofix-transaction/v1'||
          validation?.schema!=='psi116-topofix-validation/v1'||
-         txn.source?.sha256!==source.sourceSha256||
-         validation.sourceSha256!==source.sourceSha256||
-         txn.sourceXmlMutated!==false||txn.committed!==true||validation.committed!==true||
+         txn.committed!==true||validation.committed!==true||
          selected.length!==ids.length||selected.some((v,i)=>v!==ids[i])||
          reasons.length||validation.summary?.blockingFailureCount!==0||
          !Array.isArray(validation.checks)||!validation.checks.length||
          validation.checks.some(c=>c.blocking&&!c.passed)||
          !Array.isArray(txn.operations)||!txn.operations.length)
-        throw Error('Selected IDs, lineage, or validation receipt failed: '+
+        throw Error('Selected IDs, validation or lineage receipt failed: '+
           (reasons.join(', ')||'receipt consistency'));
       const fixedSha=await sha256(new TextEncoder().encode(result.topoFixXmlText));
       if(generation!==state.epoch)return;
       if(txn.fixedXmlSha256!==fixedSha||validation.fixedXmlSha256!==fixedSha)
         throw Error('Corrected XML digest mismatch');
       const suffix=batch?'batch-'+ids.length:ids[0];
+      const excluded=[...skippedByPlan,...skippedByEngine];
       state.fix={sourceSha256:source.sourceSha256,receiptKey,actionIds:ids,
         xml:result.topoFixXmlText,
-        name:(source.name.replace(/\\.xml$/i,'')||'input')+'.'+suffix+'.validated.topofix.xml'};
-      setFixStatus('Auto fix PASSED: '+ids.length+' selected action(s), '+
+        name:(source.name.replace(/\\.xml$/i,'')||'input')+'.'+suffix+
+          '.validated.topofix.xml',
+        report:batch?{schema:'xml229-preview-batch-topofix/v1',
+          status:'VALIDATED_COPY_NOT_ENGINEERING_ACCEPTANCE',
+          source:{name:source.name,sha256:source.sourceSha256},
+          fixedXmlSha256:fixedSha,
+          proposedMutationCount:eligibleActions(state.findings,state.plan.actions).length,
+          selectedActionIds:ids,excludedActions:excluded,
+          validationChecks:validation.checks}:null};
+      setFixStatus('Auto fix PASSED: '+ids.length+' action(s), '+
         validation.checks.length+' validation checks, output SHA256 '+fixedSha+
-        (batch?' · '+skipped+' candidate action(s) excluded because of shared source occurrences.':'')+
-        '. Download the corrected copy for review. No change to the uploaded original; '+
-        'not engineering acceptance or connectivity certification.','ready',receiptKey);
+        (batch?' · '+excluded.length+' excluded from bulk; see batch report.':'')+
+        '. Download the validated copy for review. Original unchanged; '+
+        'not connectivity certification or engineering acceptance.','ready',receiptKey);
     }catch(error){
       if(generation===state.epoch)setFixStatus('Auto fix NOT applied: '+
-        (error?.message||String(error))+'. No corrected batch XML is available; '+
-        'review or apply actions individually. Original remains unchanged.','rejected');
+        (error?.message||String(error))+'. No corrected XML is available. '+
+        'Original remains unchanged.','rejected');
     }finally{
       if(generation===state.epoch){state.busy=false;state.batch=null;
         query(root,'[data-batch-confirm]').textContent='';refresh();}
@@ -348,6 +395,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     else if(target.hasAttribute('data-audit-filter')){
       state.filter=target.dataset.auditFilter;renderActions();
     }
+    else if(target.hasAttribute('data-download-batch-report'))downloadBatchReport();
     else if(target.hasAttribute('data-download-fix'))downloadFix();
     else if(target.hasAttribute('data-auto-fix'))autoFix(target.dataset.autoFix);
     else if(target.hasAttribute('data-audit-action')){
