@@ -18,6 +18,17 @@ const actions=[
  {action_id:'ACT-3',finding_ids:['FND-3'],disposition:'MERGE_CARRIER_WITH_COMPONENT',status:'PROPOSED',confidence:.95,blockers:[]},
  {action_id:'ACT-4',finding_ids:['FND-4'],disposition:'KEEP',status:'PROPOSED',confidence:1,blockers:[]}
 ];
+test('Preservation review shows source-specific manual instructions without Auto fix',()=>{
+ const message='Preserve PIPE B0:N10:S0 with ComponentRefNo UNIQUE-KEEP-REF; verify owner B0:N20:S1, re-export and rerun TopoFix.';
+ const action={...actions[0],disposition:'REVIEW_SOURCE_RECORD',confidence:0,proposed_changes:[],message};
+ const audit=buildAudit([findings[0]],[action]);
+ assert.equal(audit.counts.manual,1);
+ const {html}=renderAuditHTML(audit);
+ assert.match(html,/UNIQUE-KEEP-REF/);
+ assert.match(html,/B0:N20:S1/);
+ assert.match(html,/re-export and rerun/);
+ assert.doesNotMatch(html,/data-auto-fix=/);
+});
 test('findings inherit exact PSI116 severity and grouped rule, rather than inferred action severity',()=>{
  const m=buildAudit(findings,actions);
  assert.equal(m.groups.length,4);

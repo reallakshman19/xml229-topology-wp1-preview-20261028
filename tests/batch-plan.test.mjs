@@ -61,3 +61,14 @@ test('Only explicit per-action PSI116 application rejection permits a retry',()=
  ]),['ACT-000030']);
  assert.deepEqual(explicitlyRejectedActionIds(['VALIDATION_FAILED:SHOULD_NOT_SKIP']),[]);
 });
+
+test('Reference-bearing or unavailable-reference records cannot enter bulk deletion',()=>{
+ const safe={nodeNumber:20,type:'PIPE',nodeName:'',refNo:'',restraint:false,weight:0};
+ const removal={...actions[0],disposition:'SAFE_DROP_PIPE_GEOMETRY',absorbed_node_numbers:[20]};
+ for(const record of [{...safe,refNo:'UNIQUE-KEEP-REF'},{...safe,refNo:undefined}]){
+  const plan=previewBatchPlan(findings,[removal],new Map([['B0:N20:S1',record]]));
+  assert.deepEqual(plan.actionIds,[]);
+  assert.equal(plan.skipped[0].reason,'PLAIN_PIPE_REMOVAL_NOT_PROVEN_FROM_ORIGINAL_SOURCE');
+ }
+ assert.deepEqual(previewBatchPlan(findings,[removal],new Map([['B0:N20:S1',safe]])).actionIds,['A1']);
+});
