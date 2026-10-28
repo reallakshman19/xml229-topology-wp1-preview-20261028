@@ -38,6 +38,33 @@ jobs:
           test -f dist/converters/psi116_topology_resolver/__init__.py
           test -f dist/.nojekyll
           echo "Pinned runtime binary checks PASS"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test rule grouping and validate preview module syntax
+        run: |
+          node --check tabs/topology-workspace/audit-view.mjs
+          node --check tabs/topology-workspace/workspace-app.mjs
+          node --test tests/audit-view.test.mjs
+      - name: Run real PSI116 browser audit against pinned FirstpassXML
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 'https://raw.githubusercontent.com/reallakshman19/3D_Converters/cba348152faa9c2077d5c91a5f85b4b81d2e8e25/Benchmarks/1885Sjson/FirstpassXML' -o tests/FirstpassXML
+          echo 'feee5a5a6399207337e63bc56c8afb001fe37ab30c6a7a9283333ec60f6eea38  tests/FirstpassXML' | sha256sum -c -
+          npm install --no-save --ignore-scripts --package-lock=false playwright@1.52.0
+          npx playwright install --with-deps chromium
+          node tests/audit-browser.mjs
+      - name: Retain real browser audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xml229-rule-audit-browser-evidence
+          path: |
+            preview-test-results.json
+            preview-test-results/
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Upload standalone preview build for independent testing
         uses: actions/upload-artifact@v4
         with:
