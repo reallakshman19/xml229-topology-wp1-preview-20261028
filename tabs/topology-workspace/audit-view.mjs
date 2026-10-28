@@ -73,6 +73,8 @@ export function buildAudit(findings,actions){
  }
  const counts={ERROR:0,WARNING:0,INFO:0,auto:0,manual:0,evidence:0,keep:0};
  for(const item of items){counts[item.severity]++;counts[item.fix.kind]++;}
+ counts.autoActions=new Set(items.filter(i=>i.fix.kind==="auto")
+   .map(i=>i.action?.action_id).filter(Boolean)).size;
  return {groups:[...groups.values()].sort((a,b)=>{
    const score=g=>g.items.some(i=>i.severity==="ERROR")?0:g.items.some(i=>i.severity==="WARNING")?1:2;
    return score(a)-score(b)||b.items.length-a.items.length||a.title.localeCompare(b.title);
@@ -133,6 +135,6 @@ export function renderAuditSummary(audit){
  const c=audit.counts;
  return audit.items.length+' findings under '+audit.groups.length+' engineering rules · '+
  c.ERROR+' errors · '+c.WARNING+' warnings · '+c.INFO+' informational · '+
- c.auto+' auto-fix candidates · '+c.manual+' manual review · '+c.evidence+' evidence-only · '+
+ c.auto+' findings linked to '+c.autoActions+' distinct Auto fix actions · '+c.manual+' manual fix / review · '+c.evidence+' evidence-only · '+
  c.keep+' preserve. Source remains unchanged until an explicitly selected validated copy is exported.';
 }
