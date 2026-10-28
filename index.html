@@ -44,10 +44,11 @@
       <section class="topo-group" aria-label="Rule-based engineering audit"><h2>Engineering audit · grouped by rule</h2>
         <p class="audit-intro">Findings are classified by PSI116 severity, not by action name. Auto fix creates a checked copy only; Manual review means no automatic edit is authorized.</p>
         <p data-plan-summary>Analyze the XML to see error, warning and informational findings.</p>
-        <p class="audit-coverage" role="status"><strong>Gap / disconnection checking: NOT IMPLEMENTED.</strong> This analyzer does not independently find open pipe ends or missing connections. No gap warnings is not evidence of connectivity.</p>
+        <p class="audit-coverage" role="status"><strong>Gap screening: ACTIVE (review candidates only).</strong> PSI116 checks small 3D PIPE-end separations and surfaces unverified branch terminations. This is not a complete solver graph, and no gap or termination is certified without engineering connection/design evidence.</p>
         <label class="audit-category-label">Engineering issue class
           <select data-audit-category aria-label="Filter engineering issue class">
             <option value="all">All engineering issue classes</option>
+            <option value="gaps">Potential gaps / open ends</option>
             <option value="connection">Connection topology / node identity</option>
             <option value="overlap">Overlaps / duplicate geometry</option>
             <option value="component">Component topology / ports</option>
