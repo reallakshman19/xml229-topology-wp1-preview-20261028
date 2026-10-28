@@ -62,3 +62,30 @@ test('one proposed action may witness multiple distinct rule findings',()=>{
  assert.equal(m.counts.auto,2);
  assert.equal((renderAuditHTML(m).html.match(/data-auto-fix="ACT-1"/g)||[]).length,2);
 });
+
+test('subject categories never masquerade as severity or gap verification',()=>{
+ const m=buildAudit(findings,actions);
+ assert.deepEqual(m.counts.categories,{connection:2,overlap:1,component:1,non_topology:0,unclassified:0});
+ assert.equal(renderAuditHTML(m,{category:'connection'}).shown,2);
+ assert.equal(renderAuditHTML(m,{category:'overlap'}).shown,1);
+ assert.equal(renderAuditHTML(m,{category:'non_topology'}).shown,0);
+ assert.match(renderAuditSummary(m),/Open gaps\/disconnected ends: NOT CHECKED/);
+ assert.match(renderAuditHTML(m).html,/Connection topology &amp; node identity/);
+ assert.match(renderAuditHTML(m).html,/Overlaps &amp; duplicate geometry/);
+ assert.match(renderAuditHTML(m).html,/Component topology &amp; ports/);
+});
+test('non-topology rigid rule cannot be classified as a pipe connectivity failure',()=>{
+ const f={finding_id:'RIGID-1',code:'NON_RIGID_COMPONENT_CLASSIFIED_RIGID',severity:'ERROR',
+  blocking:false,message:'Rigid=2 incompatible with component',node_keys:['B0:N7:S5'],node_numbers:[7]};
+ const m=buildAudit([f],[]);
+ assert.equal(m.counts.categories.non_topology,1);
+ assert.equal(m.counts.categories.connection,0);
+ assert.equal(m.counts.ERROR,1);
+ assert.equal(renderAuditHTML(m,{category:'non_topology'}).shown,1);
+});
+test('unknown PSI116 rule is unclassified rather than guessed into topology or overlap',()=>{
+ const m=buildAudit([{finding_id:'F-NEW',code:'NEW_UNRECOGNIZED_RULE',severity:'WARNING',
+  blocking:false,message:'No category authority',node_keys:['B0:N9:S0']}],[]);
+ assert.equal(m.counts.categories.unclassified,1);
+ assert.equal(renderAuditHTML(m,{category:'unclassified'}).shown,1);
+});
