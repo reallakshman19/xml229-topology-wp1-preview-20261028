@@ -38,6 +38,13 @@ jobs:
           test -f dist/converters/psi116_topology_resolver/__init__.py
           test -f dist/.nojekyll
           echo "Pinned runtime binary checks PASS"
+      - name: Upload standalone preview build for independent testing
+        uses: actions/upload-artifact@v4
+        with:
+          name: xml229-wp1-static-preview
+          path: ./dist
+          include-hidden-files: true
+          retention-days: 7
       - uses: actions/configure-pages@v5
         with:
           enablement: true
