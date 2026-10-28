@@ -32,7 +32,14 @@ try{
  result.autofixCandidates=await page.locator('[data-auto-fix]').count();
  result.warningFound=await page.locator('.audit-severity.warning').count();
  result.gapCoverage=await page.locator('.audit-coverage').textContent();
- if(!result.gapCoverage.includes('NOT IMPLEMENTED'))throw Error('Missing explicit gap coverage status');
+ if(!result.gapCoverage.includes('ACTIVE')||!result.gapCoverage.includes('not a complete solver graph'))throw Error('Gap coverage must be bounded and honest');
+ await page.locator('[data-audit-category]').selectOption('gaps');
+ result.gapGroups=await page.locator('.audit-rule').count();
+ result.gapItems=await page.locator('.audit-item').count();
+ if(result.gapItems<1)throw Error('Reference file must show evidence-qualified open ends');
+ if(await page.locator('[data-audit-category]').inputValue()!=='gaps')throw Error('Gap filter did not activate');
+ if(await page.locator('.audit-item [data-auto-fix]').count())throw Error('Gap candidates must not receive auto-join control');
+ await page.locator('[data-audit-category]').selectOption('all');
  result.categories=await page.locator('.audit-category').count();
  if(result.categories<2)throw Error('Issue categories missing');
  await page.locator('[data-audit-category]').selectOption('overlap');
