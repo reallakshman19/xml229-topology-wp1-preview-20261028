@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>XML229 · Standalone Topology Inspection</title>
+<link rel="stylesheet" href="./tabs/topology-workspace/workspace.css">
+</head>
+<body>
+<main id="xml229-topology-workspace">
+  <header class="topo-head">
+    <div><p class="topo-eyebrow">XML229 / STANDALONE</p>
+      <h1>Topology inspection</h1>
+      <p>Source-bound PSI116 read-only topology review. No masters, O1, Final or native CII required.</p></div>
+    <a href="./index.html">Back to 3D Converters</a>
+  </header>
+  <section class="topo-admission" aria-label="Load XML and analyze">
+    <label>Original PSI116 XML <input data-file type="file" accept=".xml,application/xml,text/xml"></label>
+    <button data-analyze type="button" disabled>Analyze topology</button>
+    <button data-cancel type="button" disabled>Cancel view request</button>
+    <span data-source-meta role="status">Choose an original XML file; no stored source will be used.</span>
+  </section>
+  <div class="topo-toolbar" role="toolbar" aria-label="Canvas navigation">
+    <button data-mode="select" aria-pressed="true">Select</button>
+    <button data-mode="pan" aria-pressed="false">Pan</button>
+    <button data-mode="orbit" aria-pressed="false">Orbit</button>
+    <button data-view="iso">Iso</button>
+    <button data-view="top">Top</button>
+    <button data-view="front">Front</button>
+    <button data-view="right">Right</button>
+    <button data-zoom="1.2">Zoom +</button>
+    <button data-zoom=".8333333333333">Zoom −</button>
+    <button data-fit>Fit model</button>
+    <button data-focus>Focus selected</button>
+    <label><input data-helpers type="checkbox" checked> Helpers / supports</label>
+    <label><input data-labels type="checkbox" checked> Labels</label>
+  </div>
+  <div class="topo-grid">
+    <aside class="topo-side" aria-label="Findings and original occurrences">
+      <label>Find node, branch, component or reference
+        <input data-search type="search" placeholder="e.g. 2050, BR-1, RIGID">
+      </label>
+      <section class="topo-group"><h2>Topology actions</h2>
+        <p data-plan-summary>Real engine findings appear after analysis. KEEP is summarized, not selected.</p>
+        <div data-issues class="topo-items"></div></section>
+      <section class="topo-group"><h2>Source occurrences</h2>
+        <p data-occ-summary>Load XML to inspect every source record.</p>
+        <div data-occurrences class="topo-items"></div></section>
+    </aside>
+    <section class="topo-viewport" aria-label="Projected three-dimensional source topology">
+      <div class="topo-canvas-top"><strong>Original source geometry</strong>
+        <span>Projected Canvas 2D · Source-order route strokes are illustrative, never solver connectivity</span></div>
+      <canvas data-canvas tabindex="0" aria-label="Original XML topology with occurrence picking"></canvas>
+      <div data-hits class="topo-hits" aria-live="polite"></div>
+      <p data-status role="status">No XML loaded.</p>
+    </section>
+    <aside class="topo-detail" aria-label="Occurrence inspector">
+      <h2>Source inspector</h2>
+      <p data-selection>Choose a node on the canvas or in the occurrence list.</p>
+      <div data-inspector></div>
+    </aside>
+  </div>
+  <footer>WP1 is inspection only. Preview, action batching, commits and Weight review remain unavailable here.</footer>
+</main>
+<script type="module" src="./tabs/topology-workspace/workspace-app.mjs"></script>
+</body></html>

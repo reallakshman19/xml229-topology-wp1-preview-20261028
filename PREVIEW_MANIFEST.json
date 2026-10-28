@@ -1,0 +1,16 @@
+{
+  "purpose": "XML229 standalone topology read-only preview",
+  "source_repository": "reallakshman19/3D_Converters",
+  "source_commit": "cba348152faa9c2077d5c91a5f85b4b81d2e8e25",
+  "standalone_only": true,
+  "originals_uploaded_to_repository": false,
+  "user_xml_included": false,
+  "weight_masters_included": false,
+  "o1_or_accepted_final_included": false,
+  "native_cii_release": false,
+  "deployment_note": "GitHub Pages build downloads immutable Pyodide wasm/stdlb bytes from the source commit and verifies exact Git blob hashes",
+  "pyodide_binary_git_blobs": {
+    "pyodide.asm.wasm": "27b9cadfe2f52a4f76ada365cba6d891848838bd",
+    "python_stdlib.zip": "e4c642f5824d41f36bf99aa9c761a2576620fa7c"
+  }
+}
