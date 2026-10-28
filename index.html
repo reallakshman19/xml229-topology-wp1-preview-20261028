@@ -45,6 +45,10 @@
         <p class="audit-intro">Findings are classified by PSI116 severity, not by action name. Auto fix creates a checked copy only; Manual review means no automatic edit is authorized.</p>
         <p data-plan-summary>Analyze the XML to see error, warning and informational findings.</p>
         <p class="audit-coverage" role="status"><strong>Gap screening: ACTIVE (review candidates only).</strong> PSI116 checks small 3D PIPE-end separations and surfaces unverified branch terminations. This is not a complete solver graph, and no gap or termination is certified without engineering connection/design evidence.</p>
+        <div class="audit-review-toolbar">
+          <button type="button" data-download-gap-review disabled>Download gap review receipt</button>
+          <p data-gap-review-status aria-live="polite">Review potential gaps and branch ends against design drawings. No review decisions recorded.</p>
+        </div>
         <label class="audit-category-label">Engineering issue class
           <select data-audit-category aria-label="Filter engineering issue class">
             <option value="all">All engineering issue classes</option>
