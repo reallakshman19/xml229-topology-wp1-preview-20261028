@@ -38,7 +38,7 @@ function actionButton(action) {
 export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneEngineJob}={}) {
   if(!root)throw Error('Topology workspace root is required');
   const state={epoch:0,source:null,scene:null,plan:null,findings:[],result:null,
-    selected:new Set(),search:'',filter:'all',fix:null,busy:false};
+    selected:new Set(),search:'',filter:'all',category:'all',fix:null,busy:false};
   const canvas=createTopologyCanvas(query(root,'[data-canvas]'),onHits);
   const updateStatus=message=>{query(root,'[data-status]').textContent=message;};
   const displayMessage=message=>{query(root,'[data-hits]').textContent=message;};
@@ -71,7 +71,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     }
     const audit=buildAudit(state.findings,plan.actions||[]);
     summary.textContent=renderAuditSummary(audit);
-    const visible=renderAuditHTML(audit,{search:state.search,filter:state.filter});
+    const visible=renderAuditHTML(audit,{search:state.search,filter:state.filter,category:state.category});
     panel.innerHTML=visible.html;
     getNodes(root,'[data-audit-filter]').forEach(button=>{
       button.setAttribute('aria-pressed',String(button.dataset.auditFilter===state.filter));
@@ -275,6 +275,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
   };
   const changed=event=>{
     if(event.target.matches('[data-file]')&&event.target.files?.[0])load(event.target.files[0]);
+    if(event.target.matches('[data-audit-category]')){state.category=event.target.value;renderActions();}
     if(event.target.matches('[data-helpers]'))canvas.setShowHelpers(event.target.checked);
     if(event.target.matches('[data-labels]'))canvas.setShowLabels(event.target.checked);
   };
