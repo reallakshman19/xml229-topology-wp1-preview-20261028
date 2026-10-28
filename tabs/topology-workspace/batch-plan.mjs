@@ -60,7 +60,7 @@ export function previewBatchPlan(findings=[],actions=[],sourceByKey=null){
 export function explicitlyRejectedActionIds(reasons=[]){
  const rejected=new Set();
  for(const reason of reasons){
-   const match=String(reason).match(/^APPLY_FAILED:Action (ACT-[0-9]+)\\b/);
+   const match=String(reason).match(/^APPLY_FAILED:Action (ACT-[0-9]+)(?:[^0-9]|$)/);
    if(match)rejected.add(match[1]);
  }
  return [...rejected].sort();
