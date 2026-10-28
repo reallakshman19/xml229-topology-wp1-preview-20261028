@@ -112,3 +112,25 @@ test('possible pipe gaps and branch ends are never shown as Auto fix',()=>{
  assert.doesNotMatch(renderAuditHTML(a).html,/data-auto-fix=/);
  assert.equal(renderAuditHTML(a,{category:'overlap'}).shown,0);
 });
+
+test('manual evidence notes distinguish intended termination from repair needed only after review',()=>{
+ const finding={finding_id:'END-Q',code:'BRANCH_END_UNVERIFIED',severity:'INFO',blocking:false,
+   message:'Unknown whether open end intended',node_keys:['B3:N1600:S2']};
+ const action={action_id:'ACT-Q',finding_ids:['END-Q'],disposition:'REVIEW_CONNECTION',
+   status:'PROPOSED',confidence:0,proposed_changes:[],blockers:[]};
+ const audit=buildAudit([finding],[action]);
+ const plain=renderAuditHTML(audit,{category:'gaps'}).html;
+ assert.match(plain,/data-gap-review-choice/);
+ assert.match(plain,/Evidence required/);
+ assert.doesNotMatch(plain,/Reviewer-marked:/);
+ const reviewed=renderAuditHTML(audit,{category:'gaps',reviews:{
+   'END-Q':{disposition:'intentional',note:'P&ID-100 line ends at approved cap'}
+ }}).html;
+ assert.match(reviewed,/Reviewer-marked: Intentional termination/);
+ assert.match(reviewed,/P&amp;ID-100/);
+ assert.doesNotMatch(reviewed,/data-auto-fix/);
+ const unresolved=renderAuditHTML(audit,{reviews:{
+   'END-Q':{disposition:'repair',note:'Drawing D-200 identifies missing tie-in'}
+ }}).html;
+ assert.match(unresolved,/Connection correction needed/);
+});
