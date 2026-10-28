@@ -1,5 +1,8 @@
 /** Human-readable PSI116 rule audit. Presentation only: all severities and witnesses come from findings. */
 const RULES=Object.freeze({
+ NEAR_MISS_PIPE_JOINT:["Possible pipe-joint gap","Adjacent source PIPE occurrences have separated ends within the 3D near-miss screening range. Verify intended connection; source ordering alone is not proof."],
+ NEAR_MISS_BRANCH_ENDS:["Possible gap between branch ends","Pipe endpoints in different branches nearly meet but do not coincide within the connection tolerance. Confirm design connectivity before joining."],
+ BRANCH_END_UNVERIFIED:["Branch termination needs confirmation","The source branch end has no matching other-branch endpoint within tolerance. It might be a legitimate boundary, not a defect."],
  COINCIDENT_NODE_ALIAS_CANDIDATE:["Coincident nodes with verified ownership","Two or more source nodes occupy the same connection position, and PSI116 found connection authority for one canonical identity."],
  COINCIDENT_NODE_IDENTITY_AMBIGUOUS:["Coincident connection without proven ownership","Nodes share a position but PSI116 cannot prove that they represent the same engineering connection."],
  ZERO_LENGTH_ROUTE_SPAN:["Zero-length route connection","Consecutive route endpoints have negligible separation; inspect component ownership before any contraction."],
@@ -21,6 +24,7 @@ const RULES=Object.freeze({
 // Engineering subject classification is separate from solver severity and repair eligibility.
 // No source rule currently establishes that an open end/gap/disconnection has been checked.
 const CATEGORIES=Object.freeze({
+ gaps:{title:"Potential gaps & open ends",explain:"3D near-miss PIPE joints and branch-end evidence. These are review candidates; confirmed disconnections require design/connection authority."},
  connection:{title:"Connection topology & node identity",explain:"Coincident identities and zero/short route relationships. These findings do NOT prove a gap or a disconnected pipe."},
  overlap:{title:"Overlaps & duplicate geometry",explain:"Duplicate or collinear pipe runs and generated pipe-carrier overlaps. Not every overlapping representation is defective."},
  component:{title:"Component topology & ports",explain:"Elbow, tee, OLET, support and component-port ownership or integrity; not automatically a physical pipe disconnection."},
@@ -28,6 +32,9 @@ const CATEGORIES=Object.freeze({
  unclassified:{title:"Unclassified rule — review",explain:"New PSI116 rules must be mapped explicitly; the preview will not infer an engineering category."}
 });
 const CATEGORY_BY_RULE=Object.freeze({
+ NEAR_MISS_PIPE_JOINT:"gaps",
+ NEAR_MISS_BRANCH_ENDS:"gaps",
+ BRANCH_END_UNVERIFIED:"gaps",
  COINCIDENT_NODE_ALIAS_CANDIDATE:"connection",
  COINCIDENT_NODE_IDENTITY_AMBIGUOUS:"connection",
  ZERO_LENGTH_ROUTE_SPAN:"connection",
@@ -47,6 +54,9 @@ const CATEGORY_BY_RULE=Object.freeze({
  INSTRUMENT_RIGID_EVIDENCE_REQUIRED:"non_topology"
 });
 const MANUAL_GUIDE=Object.freeze({
+ NEAR_MISS_PIPE_JOINT:"Inspect both pipe endpoints in the authoring model and the intended joint. If they must connect, correct the actual routed geometry upstream; do not auto-snap by XYZ.",
+ NEAR_MISS_BRANCH_ENDS:"Check P&ID, branch connections and endpoint ownership. If the two branches should join, correct and re-export their positions and connection metadata; do not merge automatically.",
+ BRANCH_END_UNVERIFIED:"Confirm whether this start/end is an approved nozzle, free end, blind, cap or boundary. If it should connect, locate its intended partner and repair the upstream model; otherwise document the intended termination.",
  COINCIDENT_NODE_IDENTITY_AMBIGUOUS:"Inspect the original branch connection and component port records. Confirm which nodes truly connect in the 3D source, correct the owner/link upstream, and re-run the audit. Do not merge by XYZ alone.",
  ZERO_LENGTH_COMPONENT_SPAN:"Inspect the fitting's endpoint mapping and physical length. Correct the authoritative component geometry or helper ports upstream; do not delete the component to silence the error.",
  ZERO_LENGTH_ROUTE_SPAN:"Verify the connection ownership and whether the span is a legitimate coincident junction. Correct the upstream branch route only after component and restraint evidence is confirmed.",
@@ -101,7 +111,7 @@ export function buildAudit(findings,actions){
    groups.get(f.code).items.push(item);
  }
  const counts={ERROR:0,WARNING:0,INFO:0,auto:0,manual:0,evidence:0,keep:0};
- counts.categories={connection:0,overlap:0,component:0,non_topology:0,unclassified:0};
+ counts.categories={gaps:0,connection:0,overlap:0,component:0,non_topology:0,unclassified:0};
  for(const item of items){
    counts[item.severity]++;counts[item.fix.kind]++;
    counts.categories[item.category]++;
@@ -182,7 +192,7 @@ export function renderAuditSummary(audit){
  c.ERROR+' errors · '+c.WARNING+' warnings · '+c.INFO+' informational · '+
  c.auto+' findings linked to '+c.autoActions+' distinct Auto fix actions · '+c.manual+' manual fix / review · '+c.evidence+' evidence-only · '+
  c.keep+' preserve. By class: '+
- c.categories.connection+' connection/identity, '+c.categories.overlap+' overlap, '+
+ c.categories.gaps+' possible gaps/termination reviews, '+c.categories.connection+' connection/identity, '+c.categories.overlap+' overlap, '+
  c.categories.component+' component topology, '+c.categories.non_topology+' non-topology.'+
- ' Open gaps/disconnected ends: NOT CHECKED (no dedicated rule). Original source unchanged.';
+ ' 3D near-miss and branch-end screening performed; full connection graph and approved terminations NOT VERIFIED. Original source unchanged.';
 }
