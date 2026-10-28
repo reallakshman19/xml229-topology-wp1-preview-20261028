@@ -33,3 +33,14 @@
 .audit-policy{font-size:12px;color:#c5d6e4!important}
 .topo-side{scrollbar-width:thin}
 @media(min-width:1000px){.topo-grid{grid-template-columns:minmax(335px,30%) minmax(350px,1fr) minmax(230px,21%)}}
+
+.audit-coverage{padding:9px 10px;margin:6px 0 12px;border:1px solid #ad7b35;background:#352913;color:#ffedbd!important;font-size:12px;line-height:1.45}
+.audit-category-label{display:block;width:100%;font-size:12px;margin-bottom:10px;color:#d1e5f4}
+.audit-category-label select{display:block;width:100%;margin-top:5px;padding:7px;border-radius:6px;border:1px solid #64748b;background:#0f172a;color:#f1f5f9;font:inherit}
+.audit-category{border-left:3px solid #537794;margin-bottom:13px;padding:0 0 2px 9px}
+.audit-category h3{font-size:14px;margin:10px 0 3px;color:#f1f5f9}
+.audit-category-count{font-size:11px;display:inline-block;margin-left:4px;background:#334155;color:#e2e8f0;padding:3px 7px;border-radius:10px}
+.audit-category-explain{font-size:12px;color:#b9d1df!important;line-height:1.4;margin:4px 0 9px}
+.audit-category[data-category-id="overlap"]{border-color:#c58b3f}
+.audit-category[data-category-id="non_topology"]{border-color:#8290ae}
+.audit-category[data-category-id="component"]{border-color:#45a6a4}
