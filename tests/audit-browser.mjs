@@ -28,6 +28,21 @@ try{
  await page.locator('[data-analyze]').click();
  await page.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'),null,{timeout:120000});
  result.summary=await page.locator('[data-plan-summary]').textContent();
+ result.filterCounts=Object.fromEntries(await Promise.all(
+  ['all','error','warning','auto','manual','evidence'].map(async key=>
+   [key,await page.locator('[data-audit-filter="'+key+'"]').textContent()])));
+ const expected={all:210,error:0,warning:151,auto:76,manual:10,evidence:18};
+ for(const [key,count] of Object.entries(expected))
+  if(!result.filterCounts[key].includes('('+count+')'))
+   throw Error('Filter count drift: '+key+' actual '+result.filterCounts[key]);
+ if(!((await page.locator('[data-auto-fix-all]').textContent()).includes('(66 actions)')))
+   throw Error('Distinct action count not shown for Autofix-All');
+ await page.locator('[data-audit-filter="error"]').click();
+ result.emptyError=await page.locator('[data-issues]').textContent();
+ if(!result.emptyError.includes('No ERROR findings')||
+    !result.emptyError.includes('not proof of complete network connectivity'))
+   throw Error('ERROR tab missing clear empty state');
+ await page.locator('[data-audit-filter="all"]').click();
  result.ruleGroups=await page.locator('.audit-rule').count();
  result.autofixCandidates=await page.locator('[data-auto-fix]').count();
  result.warningFound=await page.locator('.audit-severity.warning').count();
@@ -79,6 +94,29 @@ try{
  result.fixState=await page.locator('[data-fix-result]').getAttribute('data-result');
  result.fixMessage=await page.locator('[data-fix-result]').textContent();
  if(result.fixState==='ready' && !(await page.locator('[data-download-fix]').count()))throw Error('Missing validated XML download action');
+ await page.locator('[data-auto-fix-all]').click();
+ result.batchPreview=await page.locator('[data-batch-confirm]').textContent();
+ if(!result.batchPreview.includes('66 eligible XML-changing actions')||
+    !result.batchPreview.includes('conflict-free actions'))
+   throw Error('Batch preview missing eligible and excluded count');
+ const selected=Number(result.batchPreview.match(/(\\d+) conflict-free actions/)?.[1]);
+ if(!Number.isInteger(selected)||selected<1||selected>66)
+   throw Error('Invalid conflict-free action count');
+ await page.locator('[data-run-auto-fix-all]').click();
+ await page.waitForFunction(()=>['ready','rejected'].includes(
+   document.querySelector('[data-fix-result]')?.getAttribute('data-result')),null,{timeout:180000});
+ result.batchState=await page.locator('[data-fix-result]').getAttribute('data-result');
+ result.batchMessage=await page.locator('[data-fix-result]').textContent();
+ if(result.batchState!=='ready')
+   throw Error('Autofix-All must produce a validated copy for reference fixture: '+result.batchMessage);
+ const dl=page.waitForEvent('download');
+ await page.locator('[data-download-fix]').click();
+ const output=await dl;
+ result.batchOutputName=output.suggestedFilename();
+ if(!result.batchOutputName.includes('.batch-'+selected+'.validated.topofix.xml'))
+   throw Error('Batch output lacks specific selected action count');
+ const xml=await readFile(await output.path(),'utf8');
+ if(!xml.includes('PipeStressExport'))throw Error('Batch fixed XML missing expected source root');
  result.originalOccurrences=await page.locator('[data-occ-summary]').textContent();
  await mkdir(path.join(sourceRoot,'preview-test-results'),{recursive:true});
  await page.screenshot({path:path.join(sourceRoot,'preview-test-results','rule-audit.png'),fullPage:true});
