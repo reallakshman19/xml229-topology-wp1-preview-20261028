@@ -18,6 +18,17 @@ const RULES=Object.freeze({
  DUPLICATE_ROUTE_SPAN:["Repeated route span","The same route geometry appears multiple times without sufficient proof that one is expendable."],
  COLLINEAR_ROUTE_OVERLAP:["Overlapping pipe spans","Route segments overlap on the same line; overlap alone does not establish which span may be removed."],
 });
+const MANUAL_GUIDE=Object.freeze({
+ COINCIDENT_NODE_IDENTITY_AMBIGUOUS:"Inspect the original branch connection and component port records. Confirm which nodes truly connect in the 3D source, correct the owner/link upstream, and re-run the audit. Do not merge by XYZ alone.",
+ ZERO_LENGTH_COMPONENT_SPAN:"Inspect the fitting's endpoint mapping and physical length. Correct the authoritative component geometry or helper ports upstream; do not delete the component to silence the error.",
+ ZERO_LENGTH_ROUTE_SPAN:"Verify the connection ownership and whether the span is a legitimate coincident junction. Correct the upstream branch route only after component and restraint evidence is confirmed.",
+ SHORT_ROUTE_SPAN:"Check the measured span, adjacent fittings, supports and unit tolerance. Adjust the authored route only if the short span is not an intentional component connection.",
+ DUPLICATE_ROUTE_SPAN:"Compare both route occurrences, endpoints and owner references. Confirm which line is intended before removing or reconnecting anything in the source model.",
+ COLLINEAR_ROUTE_OVERLAP:"Inspect both overlapping spans in 3D with component ownership and route continuity. Resolve the overlap in the source CAD/export model and rerun the audit.",
+ ELBO_OWNER_ENDPOINT_MISSING:"Restore or correct the elbow's Endpoint=0 engineering owner in the upstream PSI116 export; do not invent an owner based only on coordinates.",
+ ELBO_HELPER_PORTS_MISSING:"Check the elbow tangent/port records (Endpoint=1 and Endpoint=2). Restore missing helper records in the source authoring system.",
+ INSTRUMENT_RIGID_EVIDENCE_REQUIRED:"Verify the instrument's support, mounting and rigid-body classification from project engineering data. Update Rigid only with documented authority.",
+});
 const FIXABLE=new Set(["ALIAS_COINCIDENT_NODE","CONTRACT_PRESERVE_OWNER","SAFE_DROP_PIPE_GEOMETRY","REMOVE_FALSE_RIGID"]);
 const RECOMMEND=Object.freeze({
  ALIAS_COINCIDENT_NODE:"Use one verified connection identity while preserving each source occurrence and trace.",
@@ -32,8 +43,8 @@ const esc=v=>String(v??"").replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"
 const severity=f=>["ERROR","WARNING","INFO"].includes(f?.severity)?f.severity:"INFO";
 function resolution(action,finding){
  if(finding.blocking||action?.status==="BLOCKED"||(action?.blockers||[]).length)
-   return {kind:"manual",text:"Manual fix required"};
- if(!action)return {kind:"manual",text:"Manual review required"};
+   return {kind:"manual",text:"Manual fix / review"};
+ if(!action)return {kind:"manual",text:"Manual fix / review"};
  if(FIXABLE.has(action.disposition)&&action.status==="PROPOSED"&&
     Number(action.confidence)>=.95&&(action.proposed_changes||[]).length)
    return {kind:"auto",text:"Auto fix available"};
@@ -41,7 +52,7 @@ function resolution(action,finding){
    return {kind:"evidence",text:"Evidence-only; no XML change"};
  if(action.disposition==="KEEP")
    return {kind:"keep",text:"Preserve as-is"};
- return {kind:"manual",text:"Manual review required"};
+ return {kind:"manual",text:"Manual fix / review"};
 }
 export function buildAudit(findings,actions){
  const actionMap=new Map();
@@ -73,11 +84,14 @@ function itemHTML(item){
  const detail=(f.node_keys||[]).slice(0,12).join(", ");
  const reason=f.message||"Refer to rule evidence";
  const chosen=a?.disposition||"NO_ACTION";
+ const remedy=fix.kind==="manual"
+   ?(MANUAL_GUIDE[f.code]||"Inspect the original source-qualified records and component ownership. Correct the upstream engineering XML/export under human authority, then rerun the PSI116 audit.")
+   :(RECOMMEND[chosen]||a?.message||"Review source geometry and ownership manually.");
  return '<article class="audit-item">'+
   '<div class="audit-item-top"><span class="audit-severity '+item.severity.toLowerCase()+'">'+esc(item.severity)+'</span>'+
   '<span class="audit-resolution '+fix.kind+'">'+esc(fix.text)+'</span></div>'+
   '<p class="audit-plain">'+esc(reason)+'</p>'+
-  '<p class="audit-remedy"><strong>Recommended action:</strong> '+esc(RECOMMEND[chosen]||a?.message||"Review source geometry and ownership manually.")+'</p>'+
+  '<p class="audit-remedy"><strong>'+(fix.kind==="manual"?"Manual fix steps:":"Recommended action:")+'</strong> '+esc(remedy)+'</p>'+
   '<p class="audit-context"><strong>Source:</strong> '+esc(f.branch_name||"Unknown branch")+
   (nodes?' · Node '+esc(nodes):'')+'</p>'+
   (a?'<div class="audit-controls"><button data-audit-action="'+esc(a.action_id)+'">Locate on canvas</button>'+
