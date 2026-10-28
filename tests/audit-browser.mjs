@@ -32,11 +32,12 @@ try{
  result.filterCounts=Object.fromEntries(await Promise.all(
   ['all','error','warning','auto','manual','evidence'].map(async key=>
    [key,await page.locator('[data-audit-filter="'+key+'"]').textContent()])));
- const expected={all:210,error:0,warning:151,auto:76,manual:10,evidence:18};
+ // Ten formerly mutating removals now retain both linked findings as review evidence.
+ const expected={all:210,error:0,warning:151,auto:56,manual:30,evidence:18};
  for(const [key,count] of Object.entries(expected))
   if(!result.filterCounts[key].includes('('+count+')'))
    throw Error('Filter count drift: '+key+' actual '+result.filterCounts[key]);
- if(!((await page.locator('[data-auto-fix-all]').textContent()).includes('(66 actions)')))
+ if(!((await page.locator('[data-auto-fix-all]').textContent()).includes('(56 actions)')))
    throw Error('Distinct action count not shown for Autofix-All');
  await page.locator('[data-audit-filter="error"]').click();
  result.emptyError=await page.locator('[data-issues]').textContent();
@@ -44,6 +45,14 @@ try{
     !result.emptyError.includes('not proof of complete network connectivity'))
    throw Error('ERROR tab missing clear empty state');
  await page.locator('[data-audit-filter="all"]').click();
+ const preservation=page.locator('.audit-item').filter({hasText:'ABSORBED_PIPE_HAS_COMPONENT_REF_NO'}).first();
+ if(!await preservation.count())throw Error('Missing original reference-bearing preservation review');
+ const guidance=await preservation.locator('.audit-remedy').textContent();
+ if(!guidance.includes('B3:N1600:S2')||!guidance.includes('B3:N1610:S3')||
+    !guidance.includes('ComponentRefNo')||!guidance.includes('re-export')||!guidance.includes('rerun'))
+   throw Error('Manual preservation directions must name source, owner, reference and recheck');
+ if(await preservation.locator('[data-auto-fix]').count())throw Error('Unsafe source review offers Auto fix');
+ result.manualPreservationGuidance='PASS: exact source/owner/reference, no Auto fix, re-export and recheck';
  result.ruleGroups=await page.locator('.audit-rule').count();
  result.autofixCandidates=await page.locator('[data-auto-fix]').count();
  result.warningFound=await page.locator('.audit-severity.warning').count();
@@ -97,11 +106,11 @@ try{
  if(result.fixState==='ready' && !(await page.locator('[data-download-fix]').count()))throw Error('Missing validated XML download action');
  await page.locator('[data-auto-fix-all]').click();
  result.batchPreview=await page.locator('[data-batch-confirm]').textContent();
- if(!result.batchPreview.includes('66 eligible XML-changing actions')||
+ if(!result.batchPreview.includes('56 eligible XML-changing actions')||
     !result.batchPreview.includes('conflict-free actions'))
    throw Error('Batch preview missing eligible and excluded count');
  const selected=Number(result.batchPreview.match(/([0-9]+) conflict-free actions/)?.[1]);
- if(!Number.isInteger(selected)||selected<1||selected>66)
+ if(!Number.isInteger(selected)||selected!==39)
    throw Error('Invalid conflict-free action count');
  await page.locator('[data-run-auto-fix-all]').click();
  await page.waitForFunction(()=>['ready','rejected'].includes(
@@ -131,9 +140,28 @@ try{
     report.source?.sha256!=='feee5a5a6399207337e63bc56c8afb001fe37ab30c6a7a9283333ec60f6eea38'||
     report.fixedXmlSha256!==sha||
     report.selectedActionIds.length!==result.batchApplied||
-    report.excludedActions.length!==66-result.batchApplied||
+    report.excludedActions.length!==56-result.batchApplied||
     new Set(report.selectedActionIds).size!==result.batchApplied)
-   throw Error('Batch audit receipt does not reconcile 66 proposals, applied actions and exclusions');
+   throw Error('Batch audit receipt does not reconcile eligible proposals, applied actions and exclusions');
+ const original=await readFile(path.join(sourceRoot,'tests','FirstpassXML'),'utf8');
+ const preservationCheck=await page.evaluate(({original,xml})=>{
+   const parse=text=>new DOMParser().parseFromString(text,'application/xml');
+   const nodes=doc=>[...doc.getElementsByTagNameNS('*','Node')];
+   const signature=el=>[el.namespaceURI,el.localName,
+     [...el.attributes].map(a=>[a.namespaceURI,a.localName,a.value]).sort(),
+     el.localName==='NodeNumber'?'AUTHORIZED_ALIAS':el.children.length?'':el.textContent.trim(),
+     [...el.children].map(signature)];
+   const before=nodes(parse(original)),after=nodes(parse(xml));
+   return {before:before.length,after:after.length,
+     allRecordFieldsExceptNodeNumberPreserved:JSON.stringify(before.map(signature))===JSON.stringify(after.map(signature))};
+ },{original,xml});
+ if(preservationCheck.before!==216||preservationCheck.after!==216||
+    !preservationCheck.allRecordFieldsExceptNodeNumberPreserved)
+   throw Error('Source-record or engineering-field loss in browser output');
+ result.sourcePreservation=preservationCheck;
+ await mkdir(path.join(sourceRoot,'preview-test-results'),{recursive:true});
+ // Retain the actual exported receipt for this new candidate, not a schema projection.
+ await writeFile(path.join(sourceRoot,'preview-test-results','FirstpassXML.autofix-batch-report.json'),JSON.stringify(report,null,2)+'\n');
  result.batchExcluded=report.excludedActions.length;
  result.batchSourceSha=report.source.sha256;
  result.batchOutputSha=sha;

@@ -29,6 +29,7 @@ export function previewBatchPlan(findings=[],actions=[],sourceByKey=null){
         .filter(r=>(action.absorbed_node_numbers||[]).includes(r?.nodeNumber));
       if(absorptions.length!==1||
          absorptions.some(r=>r.type!=="PIPE"||!!r.nodeName||!!r.restraint||
+           typeof r.refNo!=="string"||!!r.refNo||
            (r.weight!==""&&r.weight!=null&&Number(r.weight)!==0))){
         skipped.push({actionId:action.action_id,
           reason:"PLAIN_PIPE_REMOVAL_NOT_PROVEN_FROM_ORIGINAL_SOURCE"});

@@ -83,6 +83,15 @@ class SourcePreservation(unittest.TestCase):
         self.assertIn("ELBOW-OWNER", txn.fixed_xml)
         self.assertIn("BYSTANDER", txn.fixed_xml)
 
+    def test_manual_review_cannot_be_applied_even_with_zero_confidence_threshold(self):
+        result = resolve_psi116(source())
+        action = candidate(result)
+        txn = apply_topofix_transaction(result, policy=TransactionPolicy(
+            selected_action_ids=(action.action_id,), minimum_confidence=0))
+        self.assertFalse(txn.committed)
+        self.assertIsNone(txn.fixed_xml)
+        self.assertTrue(any("UNSUPPORTED_DISPOSITION" in r for r in txn.reject_reasons))
+
     def test_existing_vetoes_are_preserved_independently(self):
         result = resolve_psi116(source(reference=""))
         pipe, owner, _ = result.document.branches[0].nodes
@@ -105,6 +114,19 @@ class SourcePreservation(unittest.TestCase):
         self.assertEqual(action.disposition, "REVIEW_SOURCE_RECORD")
         for text in ("KEEP-NAME", "PIPE-REF", "2.87", "8.18"):
             self.assertIn(text, action.message)
+
+    def test_nondefault_connection_tolerance_is_used_by_the_shared_planning_guard(self):
+        # The source pair is within this explicitly selected tolerance, not the default.
+        text = source(reference="").replace("<Position>0 0 0</Position>",
+                                             "<Position>0.4 0 0</Position>", 1)
+        text = text.replace("<Position>0 0 0</Position>", "<Position>-0.4 0 0</Position>", 1)
+        config = ResolverConfig(connection_tolerance_mm=1.0)
+        result = resolve_psi116(text, config)
+        action = candidate(result)
+        self.assertEqual(action.disposition, "SAFE_DROP_PIPE_GEOMETRY")
+        txn = apply_topofix_transaction(result, config=config,
+            policy=TransactionPolicy(selected_action_ids=(action.action_id,)))
+        self.assertTrue(txn.committed, txn.reject_reasons)
 
 
 if __name__ == "__main__":

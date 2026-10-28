@@ -19,7 +19,7 @@ const actions=[
  {action_id:'ACT-4',finding_ids:['FND-4'],disposition:'KEEP',status:'PROPOSED',confidence:1,blockers:[]}
 ];
 test('Preservation review shows source-specific manual instructions without Auto fix',()=>{
- const message='Preserve PIPE B0:N10:S0 with ComponentRefNo UNIQUE-KEEP-REF; verify owner B0:N20:S1, re-export and rerun TopoFix.';
+ const message='Preserve PIPE B0:N10:S0 with ComponentRefNo UNIQUE-KEEP-REF <script>; verify owner B0:N20:S1, re-export and rerun TopoFix.';
  const action={...actions[0],disposition:'REVIEW_SOURCE_RECORD',confidence:0,proposed_changes:[],message};
  const audit=buildAudit([findings[0]],[action]);
  assert.equal(audit.counts.manual,1);
@@ -27,6 +27,8 @@ test('Preservation review shows source-specific manual instructions without Auto
  assert.match(html,/UNIQUE-KEEP-REF/);
  assert.match(html,/B0:N20:S1/);
  assert.match(html,/re-export and rerun/);
+ assert.match(html,/&lt;script&gt;/);
+ assert.doesNotMatch(html,/<script>/);
  assert.doesNotMatch(html,/data-auto-fix=/);
 });
 test('findings inherit exact PSI116 severity and grouped rule, rather than inferred action severity',()=>{

@@ -160,7 +160,8 @@ function itemHTML(item,reviews={},sourceByKey=null){
  }).join("");
  const chosen=a?.disposition||"NO_ACTION";
  const remedy=fix.kind==="manual"
-   ?(MANUAL_GUIDE[f.code]||"Inspect the original source-qualified records and component ownership. Correct the upstream engineering XML/export under human authority, then rerun the PSI116 audit.")
+   ?(chosen==="REVIEW_SOURCE_RECORD"&&a?.message?a.message:
+     MANUAL_GUIDE[f.code]||"Inspect the original source-qualified records and component ownership. Correct the upstream engineering XML/export under human authority, then rerun the PSI116 audit.")
    :(RECOMMEND[chosen]||a?.message||"Review source geometry and ownership manually.");
  return '<article class="audit-item">'+
   '<h4 class="audit-item-title">'+esc(item.title)+'</h4>'+
