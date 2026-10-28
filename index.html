@@ -5,13 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>XML229 · Standalone Topology Inspection</title>
 <link rel="stylesheet" href="./tabs/topology-workspace/workspace.css">
+<link rel="stylesheet" href="./tabs/topology-workspace/audit.css">
 </head>
 <body>
 <main id="xml229-topology-workspace">
   <header class="topo-head">
     <div><p class="topo-eyebrow">XML229 / STANDALONE</p>
-      <h1>Topology inspection</h1>
-      <p>Source-bound PSI116 read-only topology review. No masters, O1, Final or native CII required.</p></div>
+      <h1>Topology audit &amp; inspection</h1>
+      <p>Human-readable PSI116 rule audit, source-linked findings, and validated Auto fix copies. No Weight masters, O1, Final or native CII.</p></div>
     <a href="./index.html">Back to 3D Converters</a>
   </header>
   <section class="topo-admission" aria-label="Load XML and analyze">
@@ -40,9 +41,19 @@
       <label>Find node, branch, component or reference
         <input data-search type="search" placeholder="e.g. 2050, BR-1, RIGID">
       </label>
-      <section class="topo-group"><h2>Topology actions</h2>
-        <p data-plan-summary>Real engine findings appear after analysis. KEEP is summarized, not selected.</p>
-        <div data-issues class="topo-items"></div></section>
+      <section class="topo-group" aria-label="Rule-based engineering audit"><h2>Engineering audit · grouped by rule</h2>
+        <p class="audit-intro">Findings are classified by PSI116 severity, not by action name. Auto fix creates a checked copy only; Manual review means no automatic edit is authorized.</p>
+        <p data-plan-summary>Analyze the XML to see error, warning and informational findings.</p>
+        <div class="audit-filters" role="group" aria-label="Filter findings">
+          <button data-audit-filter="all" aria-pressed="true">All findings</button>
+          <button data-audit-filter="error" aria-pressed="false">Errors</button>
+          <button data-audit-filter="warning" aria-pressed="false">Warnings</button>
+          <button data-audit-filter="auto" aria-pressed="false">Auto fix</button>
+          <button data-audit-filter="manual" aria-pressed="false">Manual review</button>
+          <button data-audit-filter="evidence" aria-pressed="false">No XML change</button>
+        </div>
+        <div data-fix-result class="audit-fix-status" aria-live="polite"></div>
+        <div data-issues class="audit-groups"></div></section>
       <section class="topo-group"><h2>Source occurrences</h2>
         <p data-occ-summary>Load XML to inspect every source record.</p>
         <div data-occurrences class="topo-items"></div></section>
@@ -60,7 +71,7 @@
       <div data-inspector></div>
     </aside>
   </div>
-  <footer>WP1 is inspection only. Preview, action batching, commits and Weight review remain unavailable here.</footer>
+  <footer>Public testing preview · Engineering rule findings originate in the PSI116 resolver. A selected Auto fix runs the governed PSI116 transaction on a copy and checks source SHA256, validation and lineage receipts before enabling export. Never replaces the uploaded original or creates O1, Final or native CII.</footer>
 </main>
 <script type="module" src="./tabs/topology-workspace/workspace-app.mjs"></script>
 </body></html>
