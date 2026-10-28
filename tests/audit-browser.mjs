@@ -22,10 +22,10 @@ const result={};
 try{
  await page.goto('http://127.0.0.1:'+port+'/index.html');
  await page.locator('[data-file]').setInputFiles(path.join(root,'tests','FirstpassXML'));
- await page.waitForFunction(()=>document.querySelector('[data-occ-summary]')?.textContent?.includes('216 of 216'),{timeout:30000});
+ await page.waitForFunction(()=>document.querySelector('[data-occ-summary]')?.textContent?.includes('216 of 216'),null,{timeout:30000});
  result.loaded=true;
  await page.locator('[data-analyze]').click();
- await page.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'),{timeout:120000});
+ await page.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'),null,{timeout:120000});
  result.summary=await page.locator('[data-plan-summary]').textContent();
  result.ruleGroups=await page.locator('.audit-rule').count();
  result.autofixCandidates=await page.locator('[data-auto-fix]').count();
@@ -35,7 +35,7 @@ try{
  result.manualFilter=await page.locator('.audit-rule').count();
  await page.locator('[data-audit-filter="all"]').click();
  await page.locator('[data-auto-fix]').first().click();
- await page.waitForFunction(()=>['ready','rejected'].includes(document.querySelector('[data-fix-result]')?.getAttribute('data-result')),{timeout:120000});
+ await page.waitForFunction(()=>['ready','rejected'].includes(document.querySelector('[data-fix-result]')?.getAttribute('data-result')),null,{timeout:120000});
  result.fixState=await page.locator('[data-fix-result]').getAttribute('data-result');
  result.fixMessage=await page.locator('[data-fix-result]').textContent();
  if(result.fixState==='ready' && !(await page.locator('[data-download-fix]').count()))throw Error('Missing validated XML download action');
