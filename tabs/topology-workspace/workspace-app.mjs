@@ -38,7 +38,7 @@ function actionButton(action) {
 export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneEngineJob}={}) {
   if(!root)throw Error('Topology workspace root is required');
   const state={epoch:0,source:null,scene:null,plan:null,findings:[],result:null,
-    selected:new Set(),search:'',filter:'all',category:'all',fix:null,busy:false};
+    selected:new Set(),search:'',filter:'all',category:'all',fix:null,gapReviews:new Map(),busy:false};
   const canvas=createTopologyCanvas(query(root,'[data-canvas]'),onHits);
   const updateStatus=message=>{query(root,'[data-status]').textContent=message;};
   const displayMessage=message=>{query(root,'[data-hits]').textContent=message;};
@@ -71,7 +71,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     }
     const audit=buildAudit(state.findings,plan.actions||[]);
     summary.textContent=renderAuditSummary(audit);
-    const visible=renderAuditHTML(audit,{search:state.search,filter:state.filter,category:state.category});
+    const visible=renderAuditHTML(audit,{search:state.search,filter:state.filter,category:state.category,reviews:Object.fromEntries(state.gapReviews)});
     panel.innerHTML=visible.html;
     getNodes(root,'[data-audit-filter]').forEach(button=>{
       button.setAttribute('aria-pressed',String(button.dataset.auditFilter===state.filter));
@@ -88,6 +88,41 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
       button.textContent='Download validated corrected XML';
       panel.appendChild(button);
     }
+  }
+  function saveGapReview(button){
+    const id=button.dataset.saveGapReview;
+    const finding=state.findings.find(f=>f.finding_id===id);
+    const allowed=['NEAR_MISS_PIPE_JOINT','NEAR_MISS_BRANCH_ENDS','BRANCH_END_UNVERIFIED'];
+    if(!state.source||!finding||!allowed.includes(finding.code))return;
+    const parent=button.closest('.audit-item');
+    const disposition=parent?.querySelector('[data-gap-review-choice]')?.value;
+    const note=parent?.querySelector('[data-gap-review-note]')?.value.trim()||'';
+    const notice=query(root,'[data-gap-review-status]');
+    if(!['intentional','repair','unresolved'].includes(disposition)||note.length<10){
+      if(notice)notice.textContent='Select a disposition and enter at least 10 characters of engineering evidence/reference.';
+      return;
+    }
+    state.gapReviews.set(id,{disposition,note,rule:finding.code,
+      node_keys:[...(finding.node_keys||[])],sourceSha256:state.source.sourceSha256});
+    renderActions();
+    if(notice)notice.textContent='Saved '+state.gapReviews.size+' reviewer decision(s) for this source. Export review receipt; not engineering acceptance.';
+  }
+  function downloadGapReview(){
+    if(!state.source||!state.gapReviews.size)return;
+    const decisions=[...state.gapReviews.entries()].map(([findingId,record])=>({
+      findingId,...record
+    }));
+    const receipt={schema:'xml229-preview-gap-review/v1',
+      source:{name:state.source.name,sha256:state.source.sourceSha256,
+        rawSha256:state.source.rawSha256},
+      status:'REVIEWER_ANNOTATIONS_ONLY_NOT_CONNECTION_CERTIFICATION',
+      reviewedAt:new Date().toISOString(),decisions};
+    const url=URL.createObjectURL(new Blob([JSON.stringify(receipt,null,2)+'\\n'],
+      {type:'application/json'}));
+    const a=document.createElement('a');
+    a.href=url;a.download=(state.source.name.replace(/\\.xml$/i,'')||'input')+'.gap-review.json';
+    document.body.appendChild(a);a.click();a.remove();
+    window.setTimeout(()=>URL.revokeObjectURL(url),1000);
   }
   function downloadFix(){
     if(!state.fix||state.fix.sourceSha256!==state.source?.sourceSha256)return;
@@ -184,7 +219,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
   }
   async function load(file) {
     const generation=++state.epoch;
-    state.source=null;state.scene=null;state.plan=null;state.findings=[];state.result=null;state.fix=null;
+    state.source=null;state.scene=null;state.plan=null;state.findings=[];state.result=null;state.fix=null;state.gapReviews.clear();
     state.selected.clear();state.busy=false;canvas.setScene(null);
     query(root,'[data-source-meta]').textContent='Reading '+file.name+'…';
     displayMessage('');setFixStatus('');refresh();
@@ -242,7 +277,9 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
   }
   const click=event=>{
     const target=event.target.closest('button');if(!target||!root.contains(target))return;
-    if(target.hasAttribute('data-analyze'))analyze();
+    if(target.hasAttribute('data-save-gap-review'))saveGapReview(target);
+    else if(target.hasAttribute('data-download-gap-review'))downloadGapReview();
+    else if(target.hasAttribute('data-analyze'))analyze();
     else if(target.hasAttribute('data-cancel')){state.epoch++;state.busy=false;refresh();
       updateStatus('Pending analysis result invalidated. Original source remains available.');}
     else if(target.hasAttribute('data-occ-id')){select([target.dataset.occId],event.shiftKey);displayMessage('');}
