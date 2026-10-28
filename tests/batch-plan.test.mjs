@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {eligibleActions,previewBatchPlan} from '../tabs/topology-workspace/batch-plan.mjs';
+import {eligibleActions,previewBatchPlan,explicitlyRejectedActionIds} from '../tabs/topology-workspace/batch-plan.mjs';
 const findings=[
  {finding_id:'F1',severity:'WARNING',blocking:false,node_keys:['B0:N10:S0','B0:N20:S1']},
  {finding_id:'F2',severity:'WARNING',blocking:false,node_keys:['B0:N20:S1','B0:N30:S2']},
@@ -38,4 +38,26 @@ test('Missing exact source-qualified witnesses are excluded from a bulk transact
   confidence:1,blockers:[],disposition:'ALIAS_COINCIDENT_NODE',
   proposed_changes:[{operation:'ALIAS_NODE'}]}];
  assert.equal(previewBatchPlan(findings,altered).candidateCount,3);
+});
+
+test('Reject unsafe plain-pipe deletion from bulk using authoritative original occurrence',()=>{
+ const source=new Map([
+ ['B0:N20:S1',{nodeNumber:20,type:'PIPE',nodeName:'PIPE AUTO /A',restraint:false,weight:0}],
+ ['B0:N30:S2',{nodeNumber:30,type:'PIPE',nodeName:'',restraint:false,weight:0}],
+ ['B1:N40:S0',{nodeNumber:40,type:'PIPE',nodeName:'',restraint:false,weight:0}]
+ ]);
+ const withAbsorbed=[...actions];
+ withAbsorbed[0]={...actions[0],disposition:'SAFE_DROP_PIPE_GEOMETRY',absorbed_node_numbers:[20]};
+ const plan=previewBatchPlan(findings,withAbsorbed,source);
+ assert.equal(plan.skipped[0].actionId,'A1');
+ assert.equal(plan.skipped[0].reason,'PLAIN_PIPE_REMOVAL_NOT_PROVEN_FROM_ORIGINAL_SOURCE');
+ assert.ok(plan.actionIds.includes('A2'));
+});
+test('Only explicit per-action PSI116 application rejection permits a retry',()=>{
+ assert.deepEqual(explicitlyRejectedActionIds([
+  'APPLY_FAILED:Action ACT-000030 cannot remove B4:N2060:S35: ABSORBED_PIPE_HAS_NODE_NAME',
+  'VALIDATION_FAILED:NO_NEW_BLOCKING_FINDINGS',
+  'APPLY_FAILED:Action ACT-000030 cannot remove B4:N2060:S35: ABSORBED_PIPE_HAS_NODE_NAME'
+ ]),['ACT-000030']);
+ assert.deepEqual(explicitlyRejectedActionIds(['VALIDATION_FAILED:SHOULD_NOT_SKIP']),[]);
 });
