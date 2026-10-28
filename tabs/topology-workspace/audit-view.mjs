@@ -67,6 +67,21 @@ const MANUAL_GUIDE=Object.freeze({
  ELBO_HELPER_PORTS_MISSING:"Check the elbow tangent/port records (Endpoint=1 and Endpoint=2). Restore missing helper records in the source authoring system.",
  INSTRUMENT_RIGID_EVIDENCE_REQUIRED:"Verify the instrument's support, mounting and rigid-body classification from project engineering data. Update Rigid only with documented authority.",
 });
+const RULE_IMPACT=Object.freeze({
+ COINCIDENT_NODE_IDENTITY_AMBIGUOUS:"A coincident 3D position is not sufficient to establish pipe connectivity. Automatic node merging could create a false load path.",
+ ZERO_LENGTH_COMPONENT_SPAN:"A component may have collapsed endpoints; removing or contracting it could erase fitting or boundary evidence.",
+ ZERO_LENGTH_ROUTE_SPAN:"The connection has no measurable span. This might be intentional; check the owner and physical route.",
+ SHORT_ROUTE_SPAN:"The short distance may be a construction detail or a route defect. Threshold alone cannot establish the correction.",
+ DUPLICATE_ROUTE_SPAN:"Duplicate pipe centreline geometry may double count a routed segment or represent an intentional overlay.",
+ COLLINEAR_ROUTE_OVERLAP:"Overlapping pipe spans could represent duplicate geometry or an intentionally shared region. The owning route is unproven.",
+ ELBO_OWNER_ENDPOINT_MISSING:"The elbow lacks its designated engineering-owner record; port reconstruction without source evidence is unsafe.",
+ ELBO_HELPER_PORTS_MISSING:"Missing elbow helper endpoints can make the projected fitting incomplete; do not infer tangent geometry.",
+ NON_RIGID_COMPONENT_CLASSIFIED_RIGID:"The Rigid=2 flag conflicts with this component class and may change downstream interpretation.",
+ INSTRUMENT_RIGID_EVIDENCE_REQUIRED:"The rigid classification needs engineering justification before it can be accepted.",
+ NEAR_MISS_PIPE_JOINT:"The two PIPE ends are close but outside the connection tolerance. They may be disconnected or intentionally separated.",
+ NEAR_MISS_BRANCH_ENDS:"Two separate branch ends nearly meet in 3D; design intent is required before joining them.",
+ BRANCH_END_UNVERIFIED:"The branch termination has no confirmed matching end; it may be an approved open boundary.",
+});
 const FIXABLE=new Set(["ALIAS_COINCIDENT_NODE","CONTRACT_PRESERVE_OWNER","SAFE_DROP_PIPE_GEOMETRY","REMOVE_FALSE_RIGID"]);
 const RECOMMEND=Object.freeze({
  ALIAS_COINCIDENT_NODE:"Use one verified connection identity while preserving each source occurrence and trace.",
@@ -123,20 +138,41 @@ export function buildAudit(findings,actions){
    return score(a)-score(b)||b.items.length-a.items.length||a.title.localeCompare(b.title);
  }),items,counts};
 }
-function itemHTML(item,reviews={}){
+function itemHTML(item,reviews={},sourceByKey=null){
  const saved=reviews[item.finding.finding_id]||null;
  const {finding:f,action:a,fix}=item;
  const nodes=(f.node_numbers||[]).slice(0,7).join(", ");
  const detail=(f.node_keys||[]).slice(0,12).join(", ");
  const reason=f.message||"Refer to rule evidence";
+ const impact=RULE_IMPACT[f.code]||"Review the source-qualified engineering evidence before changing geometry or attributes.";
+ const numeric=Number.isFinite(f.length_mm)?' · Measured 3D length / overlap: '+f.length_mm.toFixed(3)+' mm':'';
+ const details=f.details||{};
+ const optional=['gapMm','maximumResidualMm','overlapLengthMm','connectionAuthority','ownerType',
+   'preferredOwnerNodeNumber','missingEndpoints','endpointSet','crossBranch','confidence'];
+ const evidence=optional.filter(k=>details[k]!==undefined&&details[k]!==null)
+   .map(k=>k.replace(/([a-z])([A-Z])/g,'$1 $2')+': '+
+     (Array.isArray(details[k])?details[k].join(', '):String(details[k]))).join(' · ');
+ const sourceRows=(f.node_keys||[]).slice(0,8).map(key=>{
+   const r=sourceByKey?.get?.(key)||sourceByKey?.[key];
+   const position=r?.position?Object.values(r.position).join(', '):'no explicit XYZ';
+   return '<li><strong>'+esc(key)+'</strong> — '+esc(r?.type||'Source record')+
+     ' · Node '+esc(r?.nodeNumber??'unknown')+' · XYZ '+esc(position)+'</li>';
+ }).join("");
  const chosen=a?.disposition||"NO_ACTION";
  const remedy=fix.kind==="manual"
    ?(MANUAL_GUIDE[f.code]||"Inspect the original source-qualified records and component ownership. Correct the upstream engineering XML/export under human authority, then rerun the PSI116 audit.")
    :(RECOMMEND[chosen]||a?.message||"Review source geometry and ownership manually.");
  return '<article class="audit-item">'+
+  '<h4 class="audit-item-title">'+esc(item.title)+'</h4>'+
   '<div class="audit-item-top"><span class="audit-severity '+item.severity.toLowerCase()+'">'+esc(item.severity)+'</span>'+
   '<span class="audit-resolution '+fix.kind+'">'+esc(fix.text)+'</span></div>'+
-  '<p class="audit-plain">'+esc(reason)+'</p>'+
+  '<p class="audit-plain"><strong>What was detected:</strong> '+esc(reason)+'</p>'+
+  '<p class="audit-impact"><strong>Why it matters:</strong> '+esc(impact)+'</p>'+
+  '<p class="audit-evidence"><strong>Rule trigger:</strong> '+esc(item.rule+numeric)+
+    (evidence?' · '+esc(evidence):'')+'</p>'+
+  '<p class="audit-impact"><strong>Severity / blocking:</strong> '+esc(item.severity)+
+    (f.blocking?' · Blocked from automatic correction by the analyzer.':
+      ' · Diagnostic finding; severity alone does not authorize a fix.')+'</p>'+
   '<p class="audit-remedy"><strong>'+(fix.kind==="manual"?"Manual fix steps:":"Recommended action:")+'</strong> '+esc(remedy)+'</p>'+
   '<p class="audit-context"><strong>Source:</strong> '+esc(f.branch_name||"Unknown branch")+
   (nodes?' · Node '+esc(nodes):'')+'</p>'+
@@ -156,6 +192,8 @@ function itemHTML(item,reviews={}){
     '<label>Drawing, P&ID or reasoning reference<input data-gap-review-note type="text" maxlength="250" placeholder="Evidence required" value="'+esc(saved?.note||'')+'"></label>'+
     '<button data-save-gap-review="'+esc(f.finding_id)+'">Save review note</button>'+
     '</div>':'')+
+  (sourceRows?'<details class="audit-source"><summary>Source evidence — '+(f.node_keys||[]).length+
+     ' original occurrence(s)</summary><ul>'+sourceRows+'</ul></details>':'')+
   '<details class="audit-proof"><summary>Rule evidence and technical IDs</summary>'+
   '<p><strong>Rule:</strong> '+esc(f.code)+' · <strong>Finding:</strong> '+esc(f.finding_id)+
   (a?' · <strong>Action:</strong> '+esc(a.action_id)+' · <strong>Disposition:</strong> '+esc(a.disposition):'')+'</p>'+
@@ -164,7 +202,7 @@ function itemHTML(item,reviews={}){
   (a?.authority?'<p><strong>Authority:</strong> '+esc(a.authority)+'</p>':'')+
   '</details></article>';
 }
-export function renderAuditHTML(audit,{search="",filter="all",category="all",reviews={}}={}){
+export function renderAuditHTML(audit,{search="",filter="all",category="all",reviews={},sourceByKey=null}={}){
  const q=search.trim().toLowerCase();
  const match=i=>[i.title,i.rule,i.finding.code,i.finding.message,i.finding.branch_name,
   i.action?.action_id,i.action?.disposition,...(i.finding.node_numbers||[]),
@@ -186,7 +224,7 @@ export function renderAuditHTML(audit,{search="",filter="all",category="all",rev
       '<span class="audit-rule-stats">'+matches.length+' findings · '+esc(sev)+
       (autos?' · '+autos+' Auto fix actions':'')+(manuals?' · '+manuals+' manual':'')+'</span></summary>'+
       '<p class="audit-rule-why"><strong>Why this rule flags a finding:</strong> '+esc(g.rule)+'</p>'+
-      matches.slice(0,200).map(i=>itemHTML(i,reviews)).join("")+
+      matches.slice(0,200).map(i=>itemHTML(i,reviews,sourceByKey)).join("")+
       (matches.length>200?'<p>Showing 200 findings; narrow search.</p>':'')+'</details>';
    }).filter(Boolean);
    if(!groupHTML.length)return "";
@@ -197,9 +235,29 @@ export function renderAuditHTML(audit,{search="",filter="all",category="all",rev
      '<p class="audit-category-explain">'+esc(info.explain)+'</p>'+
      groupHTML.join("")+'</section>';
  }).filter(Boolean);
- return {shown,html:sections.join("")||
-  '<p>No findings match this filter. Try All findings or clear search.</p>'};
+ const empty=filter==="error"?
+  '<div class="audit-empty"><strong>No ERROR findings in this selection.</strong>'+
+  '<p>Warnings and potential gaps are shown separately. Zero ERROR findings is not proof of complete network connectivity.</p></div>':
+  '<p>No findings match this filter. Try All findings or clear search.</p>';
+ return {shown,html:sections.join("")||empty};
 }
+/** Counts represent finding rows in the current issue class and search, independent of severity filter.
+ * Auto fix is a finding count; batching counts distinct eligible source actions separately. */
+export function filterCounts(audit,{search="",category="all"}={}){
+ const q=search.trim().toLowerCase();
+ const matched=audit.items.filter(i=>{
+   if(category!=="all"&&i.category!==category)return false;
+   return [i.title,i.rule,i.finding.code,i.finding.message,i.finding.branch_name,
+     i.action?.action_id,i.action?.disposition,...(i.finding.node_numbers||[]),
+     ...(i.finding.node_keys||[])].some(v=>String(v??"").toLowerCase().includes(q));
+ });
+ return {all:matched.length,error:matched.filter(i=>i.severity==="ERROR").length,
+   warning:matched.filter(i=>i.severity==="WARNING").length,
+   auto:matched.filter(i=>i.fix.kind==="auto").length,
+   manual:matched.filter(i=>i.fix.kind==="manual").length,
+   evidence:matched.filter(i=>i.fix.kind==="evidence").length};
+}
+
 export function renderAuditSummary(audit){
  const c=audit.counts;
  return audit.items.length+' findings under '+audit.groups.length+' engineering rules · '+
