@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildAudit,renderAuditHTML,renderAuditSummary} from '../tabs/topology-workspace/audit-view.mjs';
+import {buildAudit,renderAuditHTML,renderAuditSummary,filterCounts} from '../tabs/topology-workspace/audit-view.mjs';
 
 const findings=[
  {finding_id:'FND-1',code:'COINCIDENT_NODE_ALIAS_CANDIDATE',
@@ -133,4 +133,28 @@ test('manual evidence notes distinguish intended termination from repair needed 
    'END-Q':{disposition:'repair',note:'Drawing D-200 identifies missing tie-in'}
  }}).html;
  assert.match(unresolved,/Connection correction needed/);
+});
+
+test('counts reflect search/category and do not change when severity tab is selected',()=>{
+ const m=buildAudit(findings,actions);
+ assert.deepEqual(filterCounts(m),{all:4,error:1,warning:2,auto:1,manual:1,evidence:1});
+ assert.deepEqual(filterCounts(m,{category:'connection'}),{
+   all:2,error:1,warning:1,auto:1,manual:1,evidence:0});
+ assert.equal(filterCounts(m,{search:'B0:N1750:S0'}).all,1);
+ assert.equal(filterCounts(m,{category:'gaps'}).all,0);
+});
+test('ERROR findings explain severity, why flagged, engineering impact and source occurrence data',()=>{
+ const a=buildAudit(findings,actions);
+ const sourceByKey=new Map([['B0:N1900:S1',{
+   type:'PIPE',nodeNumber:1900,position:{x:100,y:200,z:300}}]]);
+ const h=renderAuditHTML(a,{filter:'error',sourceByKey}).html;
+ assert.match(h,/Why it matters/);
+ assert.match(h,/What was detected/);
+ assert.match(h,/Rule trigger/);
+ assert.match(h,/Block(ed)? from automatic correction/);
+ assert.match(h,/Source evidence/);
+ assert.match(h,/100, 200, 300/);
+ const empty=renderAuditHTML(a,{filter:'error',category:'non_topology'}).html;
+ assert.match(empty,/No ERROR findings/);
+ assert.match(empty,/not proof of complete network connectivity/);
 });
