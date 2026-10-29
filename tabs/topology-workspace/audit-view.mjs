@@ -141,6 +141,11 @@ export function buildAudit(findings,actions){
 function itemHTML(item,reviews={},sourceByKey=null){
  const saved=reviews[item.finding.finding_id]||null;
  const {finding:f,action:a,fix}=item;
+ const pair=(f.node_keys||[]).map(k=>sourceByKey?.get?.(k)||sourceByKey?.[k]);
+ const canClose=['NEAR_MISS_PIPE_JOINT','NEAR_MISS_BRANCH_ENDS',
+  'COINCIDENT_NODE_IDENTITY_AMBIGUOUS','COINCIDENT_NODE_ALIAS_CANDIDATE'].includes(f.code)&&
+  pair.length===2&&pair.every(r=>r?.position&&r.type==='PIPE'&&['1','2'].includes(r.endpoint)&&!r.restraint)&&
+  Math.hypot(pair[0].position.x-pair[1].position.x,pair[0].position.y-pair[1].position.y,pair[0].position.z-pair[1].position.z)<25;
  const nodes=(f.node_numbers||[]).slice(0,7).join(", ");
  const detail=(f.node_keys||[]).slice(0,12).join(", ");
  const reason=f.message||"Refer to rule evidence";
@@ -193,6 +198,13 @@ function itemHTML(item,reviews={},sourceByKey=null){
     '<label>Drawing, P&ID or reasoning reference<input data-gap-review-note type="text" maxlength="250" placeholder="Evidence required" value="'+esc(saved?.note||'')+'"></label>'+
     '<button data-save-gap-review="'+esc(f.finding_id)+'">Save review note</button>'+
     '</div>':'')+
+  (canClose?'<div class="audit-joint"><strong>Close this joint · less than 25 mm</strong>'+
+    '<label>Keep this port fixed; move the other port to it<select data-joint-target>'+
+    pair.map(r=>'<option value="'+esc(r.key)+'">'+esc(r.key+' · '+r.refNo)+'</option>').join('')+'</select></label>'+
+    '<label>Connection evidence / reason<input data-joint-evidence maxlength="250" placeholder="Drawing, P&amp;ID or confirmed connection reason"></label>'+
+    '<label><input type="checkbox" data-joint-confirm> These two ports must connect.</label>'+
+    '<p>Sets the moved port’s XYZ and NodeNumber to the retained port. Keeps both PIPE records and component references.</p>'+
+    '<button data-close-joint="'+esc(f.finding_id)+'">Close joint &amp; recheck</button></div>':'')+
   (sourceRows?'<details class="audit-source"><summary>Source evidence — '+(f.node_keys||[]).length+
      ' original occurrence(s)</summary><ul>'+sourceRows+'</ul></details>':'')+
   '<details class="audit-proof"><summary>Rule evidence and technical IDs</summary>'+

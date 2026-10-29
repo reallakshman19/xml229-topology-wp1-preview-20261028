@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from hashlib import sha256
 import json
 import math
@@ -20,6 +20,7 @@ MUTATING_DISPOSITIONS = frozenset({
     "CONTRACT_PRESERVE_OWNER",
     "SAFE_DROP_PIPE_GEOMETRY",
     "REMOVE_FALSE_RIGID",
+    "CLOSE_CONFIRMED_PIPE_JOINT",
 })
 EVIDENCE_ONLY_DISPOSITIONS = frozenset({"KEEP", "MERGE_CARRIER_WITH_COMPONENT"})
 
@@ -30,6 +31,7 @@ class TransactionPolicy:
     apply_all_safe: bool = False
     minimum_confidence: float = 0.95
     require_no_blocking_plan_actions: bool = True
+    joint_repairs: tuple[dict, ...] = ()
 
     def validate(self) -> None:
         if not math.isfinite(float(self.minimum_confidence)) or not 0 <= self.minimum_confidence <= 1:
@@ -392,6 +394,23 @@ def _snapshot(result: ResolutionResult) -> dict[str, object]:
     }
 
 
+def _apply_confirmed_joint(action, locators, operation_id):
+    change = action.proposed_changes[0]
+    moving, target = locators[change['moveKey']], locators[change['targetKey']]
+    before = {name: _child(moving.node_element, name).text for name in ('NodeNumber', 'Position')}
+    after = {'NodeNumber': _child(target.node_element, 'NodeNumber').text,
+             'Position': _child(target.node_element, 'Position').text}
+    for name, value in after.items():
+        _set_child_text(moving.node_element, name, value)
+    return AppliedOperation(
+        operation_id=operation_id, action_id=action.action_id,
+        disposition=action.disposition, operation='CLOSE_PIPE_JOINT',
+        branch_name=moving.record.branch_name, source_node_key=moving.record.key,
+        source_node_number=moving.record.node_number, retained_node_key=target.record.key,
+        retained_node_number=target.record.node_number, before=before, after=after,
+        authority=action.authority, source_xml_sha256=_record_sha(moving.record))
+
+
 def _selected_findings_resolved(before: ResolutionResult, after: ResolutionResult, actions: Sequence[FixAction]) -> tuple[bool, list[str]]:
     after_alias_sets = [set(finding.node_numbers) for finding in after.findings if finding.code == "COINCIDENT_NODE_ALIAS_CANDIDATE"]
     after_rigid_numbers = {number for finding in after.findings if finding.code == "NON_RIGID_COMPONENT_CLASSIFIED_RIGID" for number in finding.node_numbers}
@@ -429,6 +448,18 @@ def _validate_transaction(
         ValidationCheck("SELECTED_FINDINGS_RESOLVED", resolved, True, "Every selected mutating action must disappear from the rebuilt topology evidence.", details={"unresolvedActionIds": unresolved_actions}),
         ValidationCheck("NO_NEW_OVERLAP_FINDINGS", not any(finding.code in {"DUPLICATE_ROUTE_SPAN", "COLLINEAR_ROUTE_OVERLAP", "COINCIDENT_NODE_IDENTITY_AMBIGUOUS"} and finding.blocking for finding in after.findings), True, "Transaction must not create an unresolved overlap or ambiguous coincidence."),
     ]
+    for operation in operations:
+        if operation.operation != 'CLOSE_PIPE_JOINT':
+            continue
+        source = next(n for b in before.document.branches for n in b.nodes
+                      if n.key == operation.source_node_key)
+        target = next(n for b in before.document.branches for n in b.nodes
+                      if n.key == operation.retained_node_key)
+        actual = after.document.branches[source.branch_index].nodes[source.source_index]
+        checks.append(ValidationCheck('CONFIRMED_JOINT_CLOSED',
+            actual.position == target.position and actual.node_number == target.node_number,
+            True, 'Selected port has exactly the retained port position and NodeNumber.',
+            source.position.as_list(), actual.position.as_list()))
     return tuple(checks)
 
 
@@ -441,6 +472,11 @@ def apply_topofix_transaction(
     config = config or ResolverConfig()
     config.validate()
     before = source if isinstance(source, ResolutionResult) else resolve_psi116(source, config)
+    if policy.joint_repairs:
+        from .joint_repair import with_confirmed_joint_repairs, repair_action_id
+        if tuple(policy.selected_action_ids) != tuple(repair_action_id(r) for r in policy.joint_repairs):
+            raise ValueError('Joint closure cannot be mixed with other automatic changes.')
+        before = with_confirmed_joint_repairs(before, policy.joint_repairs, config)
     actions = _selected_actions(before, policy)
     preflight_reasons = _preflight(before, actions, policy)
     if preflight_reasons:
@@ -466,6 +502,8 @@ def apply_topofix_transaction(
                 operations.append(_apply_safe_drop(before, action, locators, config, f"OP-{len(operations) + 1:06d}"))
             elif action.disposition == "REMOVE_FALSE_RIGID":
                 operations.append(_apply_remove_false_rigid(before, action, locators, f"OP-{len(operations) + 1:06d}"))
+            elif action.disposition == 'CLOSE_CONFIRMED_PIPE_JOINT':
+                operations.append(_apply_confirmed_joint(action, locators, f"OP-{len(operations) + 1:06d}"))
             else:
                 raise ValueError(f"Unsupported selected disposition {action.disposition}.")
     except (KeyError, TypeError, ValueError) as error:

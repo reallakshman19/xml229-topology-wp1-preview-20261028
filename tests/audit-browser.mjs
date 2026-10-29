@@ -103,7 +103,18 @@ try{
  await page.waitForFunction(()=>['ready','rejected'].includes(document.querySelector('[data-fix-result]')?.getAttribute('data-result')),null,{timeout:120000});
  result.fixState=await page.locator('[data-fix-result]').getAttribute('data-result');
  result.fixMessage=await page.locator('[data-fix-result]').textContent();
+ if(result.fixState!=='ready')throw Error('Single fix must be applied: '+result.fixMessage);
+ result.singleProgress=await page.locator('[data-progress]').textContent();
+ if(!result.singleProgress.includes('APPLIED · revision 1')||
+    await page.locator('[data-download-working]').isDisabled())throw Error('Working copy update not visible');
+ result.afterSingleAuto=await page.locator('[data-auto-fix-all]').textContent();
+ if(result.afterSingleAuto.includes('(56 actions)'))throw Error('Single applied fix left original actionable count');
  if(result.fixState==='ready' && !(await page.locator('[data-download-fix]').count()))throw Error('Missing validated XML download action');
+ // Reset explicitly to the same S0 for the established independent batch oracle.
+ await page.locator('[data-file]').setInputFiles(path.join(sourceRoot,'tests','FirstpassXML'));
+ await page.waitForFunction(()=>document.querySelector('[data-progress]')?.textContent?.includes('revision 0'));
+ await page.locator('[data-analyze]').click();
+ await page.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'),null,{timeout:120000});
  await page.locator('[data-auto-fix-all]').click();
  result.batchPreview=await page.locator('[data-batch-confirm]').textContent();
  if(!result.batchPreview.includes('56 eligible XML-changing actions')||
@@ -166,6 +177,41 @@ try{
  result.batchSourceSha=report.source.sha256;
  result.batchOutputSha=sha;
  result.originalOccurrences=await page.locator('[data-occ-summary]').textContent();
+ result.batchProgress=await page.locator('[data-progress]').textContent();
+ if(!result.batchProgress.includes('39 action(s) applied'))throw Error('Batch completion is not visible');
+ const afterBatch=await page.locator('[data-auto-fix-all]').textContent();
+ if(afterBatch.includes('(56 actions)'))throw Error('Batch left stale original action counts');
+ // Real Pyodide closure, working-copy recheck, changed geometry, download and history.
+ result.jointRepairs=[];
+ for(const join of [124.9,98,100]){
+  const nodes=[[10,'A',1,0],[20,'A',2,100],[30,'B',1,join],[40,'B',2,200]];
+  const fixture='<PipeStressExport><Branch><Branchname>JOINT-TEST</Branchname>'+nodes.map(([n,ref,end,x])=>
+    `<Node><NodeNumber>${n}</NodeNumber><ComponentType>PIPE</ComponentType><ComponentRefNo>PIPE-${ref}</ComponentRefNo><Endpoint>${end}</Endpoint><Position>${x} 0 0</Position><WallThickness>3.5</WallThickness></Node>`).join('')+'</Branch></PipeStressExport>';
+  await page.locator('[data-file]').setInputFiles({name:'joint-test.xml',mimeType:'application/xml',buffer:Buffer.from(fixture)});
+  await page.waitForFunction(()=>document.querySelector('[data-occ-summary]')?.textContent?.includes('4 of 4'));
+  await page.locator('[data-analyze]').click();
+  await page.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'),null,{timeout:120000});
+  const joint=page.locator('.audit-item').filter({has:page.locator('[data-close-joint]')}).first();
+  await joint.locator('xpath=ancestor::details[contains(@class,"audit-rule")]').evaluate(el=>el.open=true);
+  await joint.locator('[data-joint-target]').selectOption('B0:N20:S1');
+  await joint.locator('[data-joint-evidence]').fill('TEST-DRAWING-01: confirmed intended joint');
+  await joint.locator('[data-joint-confirm]').check();
+  await joint.locator('[data-close-joint]').click();
+  await page.waitForFunction(()=>['ready','rejected'].includes(document.querySelector('[data-fix-result]')?.getAttribute('data-result')),null,{timeout:120000});
+  const message=await page.locator('[data-fix-result]').textContent();
+  if(await page.locator('[data-fix-result]').getAttribute('data-result')!=='ready')throw Error('Joint '+join+' rejected: '+message);
+  const downloadingJoint=page.waitForEvent('download');await page.locator('[data-download-working]').click();
+  const downloadedJoint=await downloadingJoint,closed=await readFile(await downloadedJoint.path(),'utf8');
+  const ports=await page.evaluate(xml=>[...new DOMParser().parseFromString(xml,'application/xml').getElementsByTagNameNS('*','Node')].map(n=>({
+    number:n.getElementsByTagNameNS('*','NodeNumber')[0].textContent,
+    xyz:n.getElementsByTagNameNS('*','Position')[0].textContent,
+    ref:n.getElementsByTagNameNS('*','ComponentRefNo')[0].textContent})),closed);
+  if(ports.length!==4||ports[2].number!=='20'||ports[2].xyz!=='100 0 0'||ports[2].ref!=='PIPE-B')throw Error('Joint output changed wrong ownership or geometry');
+  const historyDownload=page.waitForEvent('download');await page.locator('[data-download-history]').click();
+  const history=JSON.parse(await readFile(await (await historyDownload).path(),'utf8'));
+  if(history.repairs[0].operations[0].before.Position!==join+' 0 0'||history.repairs[0].operations[0].after.Position!=='100 0 0')throw Error('Missing joint before/after receipt');
+  result.jointRepairs.push({join,progress:await page.locator('[data-progress]').textContent(),ports,history:'PASS'});
+ }
  await mkdir(path.join(sourceRoot,'preview-test-results'),{recursive:true});
  await page.screenshot({path:path.join(sourceRoot,'preview-test-results','rule-audit.png'),fullPage:true});
  if(pageErrors.length)throw Error('Browser errors: '+pageErrors.join(' | '));

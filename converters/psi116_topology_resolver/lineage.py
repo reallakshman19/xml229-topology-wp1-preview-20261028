@@ -81,7 +81,7 @@ def _operation_index(transaction: TopoFixTransactionResult):
             continue
         require(operation.operation in {
             "ALIAS_NODE_NUMBER", "SET_RIGID_ZERO",
-            "REMOVE_PLAIN_PIPE_NODE_RECORD"
+            "REMOVE_PLAIN_PIPE_NODE_RECORD", "CLOSE_PIPE_JOINT"
         } and operation.source_node_key and
             operation.source_node_key not in indexed,
             "TOPOFIX_LINEAGE_OPERATION_KEY_DRIFT")
@@ -107,6 +107,14 @@ def _mutated_source_node(node: ET.Element, operation) -> ET.Element:
             field = ET.Element(namespace + "Rigid")
             expected.insert(0, field)
         field.text = "0"
+    elif operation.operation == 'CLOSE_PIPE_JOINT':
+        require(set(operation.before) == set(operation.after) == {'NodeNumber', 'Position'},
+                'TOPOFIX_LINEAGE_OPERATION_BEFORE_DRIFT')
+        for name in ('NodeNumber', 'Position'):
+            field = _child(expected, name)
+            require(field is not None and field.text == operation.before[name],
+                    'TOPOFIX_LINEAGE_OPERATION_BEFORE_DRIFT')
+            field.text = operation.after[name]
     else:
         raise TopoFixLineageError("TOPOFIX_LINEAGE_OPERATION_UNSUPPORTED")
     return expected
@@ -157,6 +165,7 @@ def build_topofix_source_lineage(transaction: TopoFixTransactionResult) -> dict:
                         "TOPOFIX_LINEAGE_UNDECLARED_XML_CHANGE")
                 status = ("RENUMBERED_CONNECTION" if op is not None and
                           op.operation == "ALIAS_NODE_NUMBER" else
+                          "PIPE_JOINT_CLOSED" if op is not None and op.operation == 'CLOSE_PIPE_JOINT' else
                           "RIGID_RECLASSIFIED" if op is not None else "RETAINED")
                 fixed_ordinal = position
                 fixed_digest = _node_digest(after[position])

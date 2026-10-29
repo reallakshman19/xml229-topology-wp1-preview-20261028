@@ -28,6 +28,7 @@ class ResolverConfig:
     exact_coincidence_tolerance_mm: float = 0.001
     connection_tolerance_mm: float = 0.5
     short_span_threshold_mm: float = 6.0
+    joint_repair_threshold_mm: float = 25.0
     collinear_tolerance_mm: float = 0.5
     angle_tolerance_deg: float = 0.1
 

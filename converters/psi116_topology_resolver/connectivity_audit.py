@@ -37,7 +37,7 @@ def _analyze_connection_gaps(
     connection reference, because it may be a correctly modeled pipe length.
     """
     tolerance = config.connection_tolerance_mm
-    screening = config.short_span_threshold_mm
+    screening = config.joint_repair_threshold_mm
     for span in doc.spans:
         if (span.span_role != "ROUTE_CONNECTION"
             or span.from_node.semantic_type != "PIPE"

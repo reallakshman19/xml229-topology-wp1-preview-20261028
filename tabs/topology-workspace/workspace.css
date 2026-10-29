@@ -14,7 +14,7 @@ label{display:inline-block;color:#cbd5e1}label input[type=checkbox]{vertical-ali
 .topo-admission,.topo-toolbar,.topo-canvas-top{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
 .topo-admission,.topo-toolbar{background:#0f172a;border:1px solid #334155;padding:10px;border-radius:8px;margin-bottom:10px}
 .topo-admission [data-source-meta]{font-size:12px;color:#94a3b8;overflow-wrap:anywhere}
-.topo-grid{display:grid;grid-template-columns:minmax(250px,23%) minmax(400px,1fr) minmax(250px,22%);gap:10px;min-height:620px}
+.topo-grid{display:grid;grid-template-columns:minmax(260px,320px) minmax(0,1fr) minmax(220px,280px);gap:10px;min-height:620px}
 .topo-side,.topo-viewport,.topo-detail{background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;min-width:0}
 .topo-side,.topo-detail{max-height:calc(100vh - 225px);min-height:500px;overflow:auto}
 .topo-group{margin-top:15px}.topo-group p,.topo-viewport p{font-size:12px;color:#94a3b8}
@@ -25,6 +25,10 @@ label{display:inline-block;color:#cbd5e1}label input[type=checkbox]{vertical-ali
 .topo-canvas-top{justify-content:space-between;color:#94a3b8;font-size:12px;margin-bottom:8px}
 .topo-canvas-top strong{color:#e2e8f0}
 [data-canvas]{width:100%;height:min(67vh,680px);min-height:440px;border:1px solid #475569;border-radius:8px;display:block;background:#07101f;touch-action:none}
+.topo-progress{display:flex;flex-wrap:wrap;align-items:center;gap:10px;background:#12332e;border:1px solid #34d399;padding:12px;margin-bottom:10px;border-radius:8px}
+.topo-progress strong{flex:1;min-width:220px}.topo-toolbar span{font-size:12px;color:#cbd5e1}
+.audit-joint{display:grid;gap:8px;border:1px solid #34d399;padding:10px;margin:10px 0;border-radius:6px}
+.audit-joint label{display:grid;gap:4px}.audit-joint input,.audit-joint select{max-width:100%;min-width:0;background:#07101f;color:inherit;border:1px solid #64748b;padding:6px}
 .topo-hits{display:flex;flex-wrap:wrap;gap:5px;margin:8px 0}.topo-hits button{font-size:12px}
 .topo-detail dl{display:grid;grid-template-columns:100px 1fr;gap:4px;font-size:12px;overflow-wrap:anywhere}
 .topo-detail dt{color:#94a3b8}.topo-detail dd{margin:0}

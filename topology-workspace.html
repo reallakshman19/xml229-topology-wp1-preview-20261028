@@ -35,6 +35,12 @@
     <button data-focus>Focus selected</button>
     <label><input data-helpers type="checkbox" checked> Helpers / supports</label>
     <label><input data-labels type="checkbox" checked> Labels</label>
+    <span>Drag: pan · Shift/right-drag: orbit · wheel: zoom at pointer · F: focus · Home/double-click: fit</span>
+  </div>
+  <div class="topo-progress" role="status" aria-live="polite">
+    <strong data-progress>No repairs applied.</strong>
+    <button data-download-working disabled>Download current XML</button>
+    <button data-download-history disabled>Download repair history</button>
   </div>
   <div class="topo-grid">
     <aside class="topo-side" aria-label="Findings and original occurrences">
@@ -42,7 +48,7 @@
         <input data-search type="search" placeholder="e.g. 2050, BR-1, RIGID">
       </label>
       <section class="topo-group" aria-label="Rule-based engineering audit"><h2>Engineering audit · grouped by rule</h2>
-        <p class="audit-intro">Findings are classified by PSI116 severity, not by action name. Auto fix creates a checked copy only; Manual review means no automatic edit is authorized.</p>
+        <p class="audit-intro">Auto fix applies to the working copy and reruns the audit. For a confirmed PIPE joint below 25 mm, choose the retained port and use Close joint &amp; recheck.</p>
         <p data-plan-summary>Analyze the XML to see error, warning and informational findings.</p>
         <p class="audit-coverage" role="status"><strong>Gap screening: ACTIVE (review candidates only).</strong> PSI116 checks small 3D PIPE-end separations and surfaces unverified branch terminations. This is not a complete solver graph, and no gap or termination is certified without engineering connection/design evidence.</p>
         <div class="audit-review-toolbar">
@@ -78,14 +84,14 @@
         <div data-occurrences class="topo-items"></div></section>
     </aside>
     <section class="topo-viewport" aria-label="Projected three-dimensional source topology">
-      <div class="topo-canvas-top"><strong>Original source geometry</strong>
+      <div class="topo-canvas-top"><strong>Current working geometry</strong>
         <span>Projected Canvas 2D · Source-order route strokes are illustrative, never solver connectivity</span></div>
       <canvas data-canvas tabindex="0" aria-label="Original XML topology with occurrence picking"></canvas>
       <div data-hits class="topo-hits" aria-live="polite"></div>
       <p data-status role="status">No XML loaded.</p>
     </section>
     <aside class="topo-detail" aria-label="Occurrence inspector">
-      <h2>Source inspector</h2>
+      <h2>Working occurrence inspector</h2>
       <p data-selection>Choose a node on the canvas or in the occurrence list.</p>
       <div data-inspector></div>
     </aside>
