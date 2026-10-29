@@ -471,6 +471,8 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     else if(target.hasAttribute('data-close-joint'))closeJoint(target);
     else if(target.hasAttribute('data-analyze'))analyze();
     else if(target.hasAttribute('data-cancel')){state.epoch++;state.busy=false;refresh();
+      state.batch=null;query(root,'[data-batch-confirm]').textContent='';
+      query(root,'[data-progress]').textContent='CANCELLED · working revision '+state.revision+' retained.';
       setFixStatus('Operation cancelled. No new working revision applied.','rejected');
       updateStatus('Pending result invalidated. Current working revision retained.');}
     else if(target.hasAttribute('data-occ-id')){select([target.dataset.occId],event.shiftKey);displayMessage('');}
@@ -505,7 +507,9 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     else if(target.hasAttribute('data-focus'))canvas.focus(state.selected);
   };
   const changed=event=>{
-    if(event.target.matches('[data-file]')&&event.target.files?.[0])load(event.target.files[0]);
+    if(event.target.matches('[data-file]')&&event.target.files?.[0]){
+      const file=event.target.files[0];event.target.value='';load(file);
+    }
     if(event.target.matches('[data-audit-category]')){state.category=event.target.value;renderActions();}
     if(event.target.matches('[data-helpers]'))canvas.setShowHelpers(event.target.checked);
     if(event.target.matches('[data-labels]'))canvas.setShowLabels(event.target.checked);
