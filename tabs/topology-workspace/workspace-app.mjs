@@ -38,11 +38,25 @@ function actionButton(action) {
 }
 export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneEngineJob}={}) {
   if(!root)throw Error('Topology workspace root is required');
-  const state={epoch:0,source:null,scene:null,plan:null,findings:[],result:null,
+  const state={epoch:0,source:null,original:null,revision:0,applied:0,history:[],scene:null,plan:null,findings:[],result:null,
     selected:new Set(),search:'',filter:'all',category:'all',fix:null,batch:null,gapReviews:new Map(),busy:false};
   const canvas=createTopologyCanvas(query(root,'[data-canvas]'),onHits);
   const updateStatus=message=>{query(root,'[data-status]').textContent=message;};
   const displayMessage=message=>{query(root,'[data-hits]').textContent=message;};
+  function sourceMeta(){
+    query(root,'[data-source-meta]').textContent=state.source.name+' · working revision '+state.revision+
+      ' · '+state.scene.records.length+' occurrences · SHA256 '+state.source.sourceSha256;
+  }
+  function acceptAnalysis(result,sourceSha){
+    if(result?.ok!==true||result.outputKind!=='topology-sidecars'||result.ciiText||
+       result.acceptedFinalTransferred!==false||result.nativeCiiReleaseAuthorized!==false||
+       result.topoFixCommitted===true||result.topoFixXmlText)throw Error('Topology-only recheck rejected');
+    const plan=JSON.parse(result.topologyFixPlanText||'null');
+    const findings=JSON.parse(result.topologyFindingsText||'null');
+    if(plan?.source?.sha256!==sourceSha||findings?.source?.sha256!==sourceSha||
+       !Array.isArray(plan.actions)||!Array.isArray(findings.findings))throw Error('TOPOFIX_PLAN_SOURCE_DRIFT');
+    return {plan,findings:findings.findings};
+  }
   function renderSelection() {
     const ids=[...state.selected],records=ids.map(id=>state.scene?.byId.get(id)).filter(Boolean);
     query(root,'[data-selection]').textContent=records.length?
@@ -171,6 +185,16 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     document.body.appendChild(anchor);anchor.click();anchor.remove();
     window.setTimeout(()=>URL.revokeObjectURL(url),1000);
   }
+  function downloadCurrent(history=false){
+    if(!state.source||!state.revision)return;
+    const body=history?JSON.stringify({schema:'topofix-working-history/v1',
+      originalSha256:state.original.sourceSha256,currentSha256:state.source.sourceSha256,
+      revision:state.revision,repairs:state.history},null,2):state.source.sourceText;
+    const a=document.createElement('a'),url=URL.createObjectURL(new Blob([body],
+      {type:history?'application/json':'application/xml'}));
+    a.href=url;a.download=state.source.name+'.revision-'+state.revision+(history?'.repairs.json':'.topofix.xml');
+    document.body.appendChild(a);a.click();a.remove();window.setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }
   function planAutoFixAll(){
     if(state.busy||!state.plan||!state.source)return;
     const plan=previewBatchPlan(state.findings,state.plan.actions||[],state.scene?.byKey);
@@ -195,11 +219,13 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     cancel.type='button';cancel.dataset.cancelAutoFixAll='';
     cancel.textContent='Cancel batch';panel.appendChild(cancel);
   }
-  async function runFix(actionIds,receiptKey='single'){
+  async function runFix(actionIds,receiptKey='single',jointRepairs=[]){
     const allowed=new Set(eligibleActions(state.findings,state.plan?.actions||[])
       .map(a=>a.action_id));
     let ids=[...new Set(actionIds)].sort();
-    if(!state.source||state.busy||!ids.length||ids.some(id=>!allowed.has(id))){
+    const joint=jointRepairs.length===1&&ids.length===1&&
+      ids[0]==='JOIN:'+jointRepairs[0].findingId+':'+jointRepairs[0].moveKey;
+    if(!state.source||state.busy||!ids.length||(!joint&&ids.some(id=>!allowed.has(id)))){
       setFixStatus('Auto fix is not authorized for this selection. No XML was modified.','rejected');
       return;
     }
@@ -207,6 +233,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     const skippedByPlan=batch?[...(state.batch?.skipped||[])]:[];
     const skippedByEngine=[];
     state.busy=true;state.fix=null;refresh();
+    query(root,'[data-progress]').textContent='APPLYING · '+ids.length+' action(s). Waiting for validation and working-copy recheck…';
     setFixStatus('Applying '+ids.length+' selected PSI116 action(s) to an isolated copy. '+
       'Any rejected action will be excluded from the next full validation attempt.');
     try{
@@ -215,7 +242,8 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
         result=await runEngine({sourceKind:'xml',sourceText:source.sourceText,
           sourceName:source.name,topologyPreFinalOnly:true,
           options:{outputMode:'enriched-only',analyzeTopology:true,
-            generateTopoFix:true,useTopoFixForCii:false,topologyActionIds:ids}});
+            generateTopoFix:true,useTopoFixForCii:false,topologyActionIds:ids,
+            topologyJointRepairs:jointRepairs}});
         if(generation!==state.epoch)return;
         txn=JSON.parse(result?.topoFixTransactionText||'null');
         validation=JSON.parse(result?.topoFixValidationText||'null');
@@ -262,9 +290,38 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
       if(generation!==state.epoch)return;
       if(txn.fixedXmlSha256!==fixedSha||validation.fixedXmlSha256!==fixedSha)
         throw Error('Corrected XML digest mismatch');
-      const suffix=batch?'batch-'+ids.length:ids[0];
+      const suffix=batch?'batch-'+ids.length:joint?'joint-closure':'single-fix';
       const excluded=[...skippedByPlan,...skippedByEngine];
-      state.fix={sourceSha256:source.sourceSha256,receiptKey,actionIds:ids,
+      const proposed=eligibleActions(state.findings,state.plan.actions).length;
+      const beforeCount=state.findings.length;
+      const nextSource={...source,sourceText:result.topoFixXmlText,sourceSha256:fixedSha};
+      const nextScene=parseOccurrenceScene(nextSource.sourceText,fixedSha);
+      const lineage=JSON.parse(result.topoFixLineageText);
+      const changedLocations=(lineage.sourceOccurrenceMap||[])
+        .filter(r=>r.operationId&&Number.isInteger(r.fixedNodeOrdinal))
+        .map(r=>[r.branchOccurrenceIndex,r.fixedNodeOrdinal]);
+      const changedIds=nextScene.records.filter(r=>changedLocations.some(([b,s])=>
+        r.branchIndex===b&&r.sourceIndex===s)).map(r=>r.id);
+      setFixStatus('XML validated. Rechecking the corrected working copy and refreshing the canvas…');
+      const recheck=await runEngine({sourceKind:'xml',sourceText:nextSource.sourceText,
+        sourceName:source.name,topologyPreFinalOnly:true,
+        options:{outputMode:'enriched-only',analyzeTopology:true,generateTopoFix:false,
+          useTopoFixForCii:false,topologyActionIds:[]}});
+      if(generation!==state.epoch)return;
+      const current=acceptAnalysis(recheck,fixedSha);
+      const priorReviews=Object.fromEntries(state.gapReviews);
+      state.source=nextSource;state.scene=nextScene;state.plan=current.plan;
+      state.findings=current.findings;state.result=recheck;state.selected.clear();state.gapReviews.clear();
+      state.selected=new Set(changedIds);
+      state.revision++;state.applied+=ids.length;
+      state.history.push({sourceSha256:source.sourceSha256,fixedSha256:fixedSha,
+        actionIds:ids,operations:txn.operations,validation:validation.checks,jointRepairs,reviews:priorReviews});
+      canvas.setScene(nextScene);sourceMeta();
+      query(root,'[data-gap-review-status]').textContent='Working copy changed. Prior source review notes are in the repair history; review current findings.';
+      query(root,'[data-progress]').textContent='APPLIED · revision '+state.revision+' · '+
+        state.applied+' action(s) applied · findings '+beforeCount+' → '+current.findings.length+
+        ' after full recheck. Canvas and counts show the corrected working copy.';
+      state.fix={sourceSha256:fixedSha,receiptKey,actionIds:ids,
         xml:result.topoFixXmlText,
         name:(source.name.replace(/\\.xml$/i,'')||'input')+'.'+suffix+
           '.validated.topofix.xml',
@@ -272,24 +329,42 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
           status:'VALIDATED_COPY_NOT_ENGINEERING_ACCEPTANCE',
           source:{name:source.name,sha256:source.sourceSha256},
           fixedXmlSha256:fixedSha,
-          proposedMutationCount:eligibleActions(state.findings,state.plan.actions).length,
+          proposedMutationCount:proposed,
           selectedActionIds:ids,excludedActions:excluded,
           validationChecks:validation.checks}:null};
-      setFixStatus('Auto fix PASSED: '+ids.length+' action(s), '+
+      setFixStatus('APPLIED to working copy: '+ids.length+' action(s), '+
         validation.checks.length+' validation checks, output SHA256 '+fixedSha+
         (batch?' · '+excluded.length+' excluded from bulk; see batch report.':'')+
-        '. Download the validated copy for review. Original unchanged; '+
+        '. Canvas and counts rechecked. Download the validated copy for review. Original unchanged; '+
         'not connectivity certification or engineering acceptance.','ready',receiptKey);
+      updateStatus('Repair applied and rechecked. Working revision '+state.revision+'.');
     }catch(error){
-      if(generation===state.epoch)setFixStatus('Auto fix NOT applied: '+
+      if(generation===state.epoch){
+        query(root,'[data-progress]').textContent='NOT APPLIED · '+(error?.message||String(error))+
+          ' · working revision '+state.revision+' retained.';
+        setFixStatus('Auto fix NOT applied: '+
         (error?.message||String(error))+'. No corrected XML is available. '+
-        'Original remains unchanged.','rejected');
+        'Current working revision retained.','rejected');
+      }
     }finally{
       if(generation===state.epoch){state.busy=false;state.batch=null;
         query(root,'[data-batch-confirm]').textContent='';refresh();}
     }
   }
   function autoFix(actionId){return runFix([actionId],'single');}
+  function closeJoint(button){
+    if(state.busy)return;
+    const item=button.closest('.audit-item');
+    const finding=state.findings.find(f=>f.finding_id===button.dataset.closeJoint);
+    const targetKey=item.querySelector('[data-joint-target]')?.value;
+    const evidence=item.querySelector('[data-joint-evidence]')?.value.trim()||'';
+    if(!finding||!item.querySelector('[data-joint-confirm]')?.checked||evidence.length<10){
+      setFixStatus('Choose the retained port, confirm the intended connection and enter at least 10 characters of connection evidence.','rejected');return;
+    }
+    const moveKey=finding.node_keys.find(k=>k!==targetKey);
+    const request={sourceSha256:state.source.sourceSha256,findingId:finding.finding_id,moveKey,targetKey,evidence};
+    return runFix(['JOIN:'+finding.finding_id+':'+moveKey],'joint',[request]);
+  }
   function autoFixAll(){
     const b=state.batch;
     if(!b||b.epoch!==state.epoch||b.sourceSha256!==state.source?.sourceSha256||
@@ -300,6 +375,8 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     renderRecords();renderActions();renderSelection();
     query(root,'[data-analyze]').disabled=!state.source||state.busy;
     query(root,'[data-cancel]').disabled=!state.busy;
+    getNodes(root,'[data-auto-fix],[data-close-joint]').forEach(button=>button.disabled=state.busy);
+    getNodes(root,'[data-download-working],[data-download-history]').forEach(button=>button.disabled=state.busy||!state.revision);
   }
   function select(ids,add=false) {
     if(!add)state.selected.clear();
@@ -321,7 +398,9 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
   }
   async function load(file) {
     const generation=++state.epoch;
-    state.source=null;state.scene=null;state.plan=null;state.findings=[];state.result=null;state.fix=null;state.batch=null;state.gapReviews.clear();
+    state.source=null;state.original=null;state.revision=0;state.applied=0;state.history=[];
+    state.scene=null;state.plan=null;state.findings=[];state.result=null;state.fix=null;state.batch=null;state.gapReviews.clear();
+    query(root,'[data-progress]').textContent='Reading original · no repairs applied.';
     state.selected.clear();state.busy=false;canvas.setScene(null);
     query(root,'[data-source-meta]').textContent='Reading '+file.name+'…';
     displayMessage('');setFixStatus('');refresh();
@@ -334,6 +413,8 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
       const scene=parseOccurrenceScene(sourceText,sourceSha256);
       if(!scene.records.some(r=>r.position))throw Error('No explicit XYZ source positions available');
       state.source={sourceText,sourceSha256,rawSha256,name:file.name};
+      state.original={...state.source};
+      query(root,'[data-progress]').textContent='Original loaded · revision 0 · no repairs applied.';
       state.scene=scene;canvas.setScene(scene);
       query(root,'[data-source-meta]').textContent=file.name+' · '+scene.branches.length+
         ' branches · '+scene.records.length+' original occurrences · text SHA256 '+sourceSha256+
@@ -387,15 +468,21 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     }
     else if(target.hasAttribute('data-save-gap-review'))saveGapReview(target);
     else if(target.hasAttribute('data-download-gap-review'))downloadGapReview();
+    else if(target.hasAttribute('data-close-joint'))closeJoint(target);
     else if(target.hasAttribute('data-analyze'))analyze();
     else if(target.hasAttribute('data-cancel')){state.epoch++;state.busy=false;refresh();
-      updateStatus('Pending analysis result invalidated. Original source remains available.');}
+      state.batch=null;query(root,'[data-batch-confirm]').textContent='';
+      query(root,'[data-progress]').textContent='CANCELLED · working revision '+state.revision+' retained.';
+      setFixStatus('Operation cancelled. No new working revision applied.','rejected');
+      updateStatus('Pending result invalidated. Current working revision retained.');}
     else if(target.hasAttribute('data-occ-id')){select([target.dataset.occId],event.shiftKey);displayMessage('');}
     else if(target.hasAttribute('data-hit-id')){select([target.dataset.hitId],event.shiftKey);displayMessage('');}
     else if(target.hasAttribute('data-audit-filter')){
       state.filter=target.dataset.auditFilter;renderActions();
     }
     else if(target.hasAttribute('data-download-batch-report'))downloadBatchReport();
+    else if(target.hasAttribute('data-download-working'))downloadCurrent();
+    else if(target.hasAttribute('data-download-history'))downloadCurrent(true);
     else if(target.hasAttribute('data-download-fix'))downloadFix();
     else if(target.hasAttribute('data-auto-fix'))autoFix(target.dataset.autoFix);
     else if(target.hasAttribute('data-audit-action')){
@@ -420,7 +507,9 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     else if(target.hasAttribute('data-focus'))canvas.focus(state.selected);
   };
   const changed=event=>{
-    if(event.target.matches('[data-file]')&&event.target.files?.[0])load(event.target.files[0]);
+    if(event.target.matches('[data-file]')&&event.target.files?.[0]){
+      const file=event.target.files[0];event.target.value='';load(file);
+    }
     if(event.target.matches('[data-audit-category]')){state.category=event.target.value;renderActions();}
     if(event.target.matches('[data-helpers]'))canvas.setShowHelpers(event.target.checked);
     if(event.target.matches('[data-labels]'))canvas.setShowLabels(event.target.checked);
@@ -430,7 +519,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
   };
   root.addEventListener('click',click);root.addEventListener('change',changed);
   root.addEventListener('input',input);refresh();
-  return {getState:()=>({sourceSha256:state.source?.sourceSha256||null,
+  return {getState:()=>({sourceSha256:state.source?.sourceSha256||null,revision:state.revision,applied:state.applied,
     occurrences:state.scene?.records.length||0,actions:state.plan?.actions.length||0,
     selected:[...state.selected],busy:state.busy}),load,analyze,
     dispose(){state.epoch++;canvas.dispose();root.removeEventListener('click',click);

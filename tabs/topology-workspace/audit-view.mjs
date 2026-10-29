@@ -3,7 +3,7 @@ const RULES=Object.freeze({
  NEAR_MISS_PIPE_JOINT:["Possible pipe-joint gap","Adjacent source PIPE occurrences have separated ends within the 3D near-miss screening range. Verify intended connection; source ordering alone is not proof."],
  NEAR_MISS_BRANCH_ENDS:["Possible gap between branch ends","Pipe endpoints in different branches nearly meet but do not coincide within the connection tolerance. Confirm design connectivity before joining."],
  BRANCH_END_UNVERIFIED:["Branch termination needs confirmation","The source branch end has no matching other-branch endpoint within tolerance. It might be a legitimate boundary, not a defect."],
- COINCIDENT_NODE_ALIAS_CANDIDATE:["Coincident nodes with verified ownership","Two or more source nodes occupy the same connection position, and PSI116 found connection authority for one canonical identity."],
+ COINCIDENT_NODE_ALIAS_CANDIDATE:["Coincident node identity candidate","Two or more source nodes occupy the same connection position. PSI116 proposes a canonical identity; inspect its reported connection authority."],
  COINCIDENT_NODE_IDENTITY_AMBIGUOUS:["Coincident connection without proven ownership","Nodes share a position but PSI116 cannot prove that they represent the same engineering connection."],
  ZERO_LENGTH_ROUTE_SPAN:["Zero-length route connection","Consecutive route endpoints have negligible separation; inspect component ownership before any contraction."],
  ZERO_LENGTH_COMPONENT_SPAN:["Collapsed component endpoints","A component's endpoints coincide; removing a component or its engineering records is not automatically permitted."],
@@ -54,15 +54,15 @@ const CATEGORY_BY_RULE=Object.freeze({
  INSTRUMENT_RIGID_EVIDENCE_REQUIRED:"non_topology"
 });
 const MANUAL_GUIDE=Object.freeze({
- NEAR_MISS_PIPE_JOINT:"Inspect both pipe endpoints in the authoring model and the intended joint. If they must connect, correct the actual routed geometry upstream; do not auto-snap by XYZ.",
- NEAR_MISS_BRANCH_ENDS:"Check P&ID, branch connections and endpoint ownership. If the two branches should join, correct and re-export their positions and connection metadata; do not merge automatically.",
+ NEAR_MISS_PIPE_JOINT:"Confirm that these PIPE ports should connect. For an eligible joint below 25 mm, choose the retained port and use Close joint & recheck below. The other port moves to it; both component records remain. For shared or complex ownership, repair the authoring model and re-export.",
+ NEAR_MISS_BRANCH_ENDS:"Check the intended branch connection. For an eligible pair of PIPE ports below 25 mm, choose the retained port and use Close joint & recheck. If the separation is intentional, record that outcome; shared or complex joints require upstream repair.",
  BRANCH_END_UNVERIFIED:"Confirm whether this start/end is an approved nozzle, free end, blind, cap or boundary. If it should connect, locate its intended partner and repair the upstream model; otherwise document the intended termination.",
  COINCIDENT_NODE_IDENTITY_AMBIGUOUS:"Inspect the original branch connection and component port records. Confirm which nodes truly connect in the 3D source, correct the owner/link upstream, and re-run the audit. Do not merge by XYZ alone.",
  ZERO_LENGTH_COMPONENT_SPAN:"Inspect the fitting's endpoint mapping and physical length. Correct the authoritative component geometry or helper ports upstream; do not delete the component to silence the error.",
  ZERO_LENGTH_ROUTE_SPAN:"Verify the connection ownership and whether the span is a legitimate coincident junction. Correct the upstream branch route only after component and restraint evidence is confirmed.",
  SHORT_ROUTE_SPAN:"Check the measured span, adjacent fittings, supports and unit tolerance. Adjust the authored route only if the short span is not an intentional component connection.",
  DUPLICATE_ROUTE_SPAN:"Compare both route occurrences, endpoints and owner references. Confirm which line is intended before removing or reconnecting anything in the source model.",
- COLLINEAR_ROUTE_OVERLAP:"Inspect both overlapping spans in 3D with component ownership and route continuity. Resolve the overlap in the source CAD/export model and rerun the audit.",
+ COLLINEAR_ROUTE_OVERLAP:"Inspect both spans and component ownership. A short overlap at two PIPE ports can be closed using Close joint & recheck on its associated joint finding. Multi-span or shared-owner overlaps need an upstream route repair and re-export.",
  ELBO_OWNER_ENDPOINT_MISSING:"Restore or correct the elbow's Endpoint=0 engineering owner in the upstream PSI116 export; do not invent an owner based only on coordinates.",
  ELBO_HELPER_PORTS_MISSING:"Check the elbow tangent/port records (Endpoint=1 and Endpoint=2). Restore missing helper records in the source authoring system.",
  INSTRUMENT_RIGID_EVIDENCE_REQUIRED:"Verify the instrument's support, mounting and rigid-body classification from project engineering data. Update Rigid only with documented authority.",
@@ -141,6 +141,11 @@ export function buildAudit(findings,actions){
 function itemHTML(item,reviews={},sourceByKey=null){
  const saved=reviews[item.finding.finding_id]||null;
  const {finding:f,action:a,fix}=item;
+ const pair=(f.node_keys||[]).map(k=>sourceByKey?.get?.(k)||sourceByKey?.[k]);
+ const canClose=['NEAR_MISS_PIPE_JOINT','NEAR_MISS_BRANCH_ENDS',
+  'COINCIDENT_NODE_IDENTITY_AMBIGUOUS','COINCIDENT_NODE_ALIAS_CANDIDATE'].includes(f.code)&&
+  pair.length===2&&pair.every(r=>r?.position&&r.type==='PIPE'&&['1','2'].includes(r.endpoint)&&!r.restraint)&&
+  Math.hypot(pair[0].position.x-pair[1].position.x,pair[0].position.y-pair[1].position.y,pair[0].position.z-pair[1].position.z)<25;
  const nodes=(f.node_numbers||[]).slice(0,7).join(", ");
  const detail=(f.node_keys||[]).slice(0,12).join(", ");
  const reason=f.message||"Refer to rule evidence";
@@ -193,6 +198,13 @@ function itemHTML(item,reviews={},sourceByKey=null){
     '<label>Drawing, P&ID or reasoning reference<input data-gap-review-note type="text" maxlength="250" placeholder="Evidence required" value="'+esc(saved?.note||'')+'"></label>'+
     '<button data-save-gap-review="'+esc(f.finding_id)+'">Save review note</button>'+
     '</div>':'')+
+  (canClose?'<div class="audit-joint"><strong>Close this joint · less than 25 mm</strong>'+
+    '<label>Keep this port fixed; move the other port to it<select data-joint-target>'+
+    pair.map(r=>'<option value="'+esc(r.key)+'">'+esc(r.key+' · '+r.refNo)+'</option>').join('')+'</select></label>'+
+    '<label>Connection evidence / reason<input data-joint-evidence maxlength="250" placeholder="Drawing, P&amp;ID or confirmed connection reason"></label>'+
+    '<label><input type="checkbox" data-joint-confirm> These two ports must connect.</label>'+
+    '<p>Sets the moved port’s XYZ and NodeNumber to the retained port. Keeps both PIPE records and component references.</p>'+
+    '<button data-close-joint="'+esc(f.finding_id)+'">Close joint &amp; recheck</button></div>':'')+
   (sourceRows?'<details class="audit-source"><summary>Source evidence — '+(f.node_keys||[]).length+
      ' original occurrence(s)</summary><ul>'+sourceRows+'</ul></details>':'')+
   '<details class="audit-proof"><summary>Rule evidence and technical IDs</summary>'+

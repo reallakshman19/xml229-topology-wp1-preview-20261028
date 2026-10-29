@@ -171,3 +171,15 @@ test('ERROR findings explain severity, why flagged, engineering impact and sourc
  assert.match(empty,/No ERROR findings/);
  assert.match(empty,/not proof of complete network connectivity/);
 });
+test('manual two-port joint offers an executable closure below 25 mm with retained endpoint choice',()=>{
+ const f={finding_id:'GAP',code:'NEAR_MISS_PIPE_JOINT',severity:'WARNING',node_keys:['A','B']};
+ const records=new Map([['A',{key:'A',type:'PIPE',endpoint:'2',position:{x:0,y:0,z:0},refNo:'PIPE-A'}],
+  ['B',{key:'B',type:'PIPE',endpoint:'1',position:{x:24.9,y:0,z:0},refNo:'PIPE-B'}]]);
+ const h=renderAuditHTML(buildAudit([f],[]),{sourceByKey:records}).html;
+ assert.match(h,/data-close-joint="GAP"/);assert.match(h,/Close joint &amp; recheck/);
+ assert.match(h,/data-joint-target/);assert.match(h,/data-joint-confirm/);
+ records.get('B').position.x=25;
+ assert.doesNotMatch(renderAuditHTML(buildAudit([f],[]),{sourceByKey:records}).html,/data-close-joint=/);
+ records.get('B').position.x=2;records.get('B').restraint=true;
+ assert.doesNotMatch(renderAuditHTML(buildAudit([f],[]),{sourceByKey:records}).html,/data-close-joint=/);
+});
