@@ -20,10 +20,11 @@ const actions=[
 test('Auto fix excludes BLOCKED and evidence-only work even with eligible-looking confidence',()=>{
  assert.deepEqual(eligibleActions(findings,actions).map(a=>a.action_id),['A1','A2','A3']);
  const plan=previewBatchPlan(findings,actions);
- assert.deepEqual(plan.actionIds,['A1','A3']);
- assert.deepEqual(plan.skipped.map(a=>a.actionId),['A2']);
+ assert.deepEqual(plan.actionIds,['A1']);
+ assert.deepEqual(plan.skipped.map(a=>a.actionId),['A2','A3']);
  assert.equal(plan.skipped[0].reason,'SHARED_SOURCE_OCCURRENCE');
  assert.deepEqual(plan.skipped[0].conflictsWith,['A1']);
+ assert.equal(plan.skipped[1].reason,'PLAIN_PIPE_REMOVAL_NOT_PROVEN_FROM_ORIGINAL_SOURCE');
  assert.equal(plan.candidateCount,3);
  assert.equal(plan.notEligible,2);
 });
@@ -60,4 +61,29 @@ test('Only explicit per-action PSI116 application rejection permits a retry',()=
   'APPLY_FAILED:Action ACT-000030 cannot remove B4:N2060:S35: ABSORBED_PIPE_HAS_NODE_NAME'
  ]),['ACT-000030']);
  assert.deepEqual(explicitlyRejectedActionIds(['VALIDATION_FAILED:SHOULD_NOT_SKIP']),[]);
+});
+
+test('Reference-bearing or unavailable-reference records cannot enter bulk deletion',()=>{
+ const safe={nodeNumber:20,type:'PIPE',nodeName:'',refNo:'',restraint:false,weight:0};
+ const removal={...actions[0],disposition:'SAFE_DROP_PIPE_GEOMETRY',absorbed_node_numbers:[20]};
+ for(const record of [{...safe,refNo:'UNIQUE-KEEP-REF'},{...safe,refNo:undefined}]){
+  const plan=previewBatchPlan(findings,[removal],new Map([['B0:N20:S1',record]]));
+  assert.deepEqual(plan.actionIds,[]);
+  assert.equal(plan.skipped[0].reason,'PLAIN_PIPE_REMOVAL_NOT_PROVEN_FROM_ORIGINAL_SOURCE');
+ }
+ assert.deepEqual(previewBatchPlan(findings,[removal],new Map([['B0:N20:S1',safe]])).actionIds,['A1']);
+});
+
+test('Missing source maps reject deletion without blocking unrelated alias proposals',()=>{
+ const removal={...actions[0],disposition:'SAFE_DROP_PIPE_GEOMETRY',absorbed_node_numbers:[20]};
+ const alias={...actions[0],action_id:'A2'};
+ for(const source of [undefined,null,new Map(),{}]){
+  const plan=previewBatchPlan(findings,[removal,alias],source);
+  assert.deepEqual(plan.actionIds,['A2']);
+  assert.deepEqual(plan.skipped,[{actionId:'A1',reason:'PLAIN_PIPE_REMOVAL_NOT_PROVEN_FROM_ORIGINAL_SOURCE'}]);
+ }
+ assert.deepEqual(previewBatchPlan(findings,[removal]).actionIds,[]);
+ const safe={nodeNumber:20,type:'PIPE',nodeName:'',refNo:'',restraint:false,weight:0};
+ for(const source of [new Map([['B0:N20:S1',safe]]),{'B0:N20:S1':safe}])
+  assert.deepEqual(previewBatchPlan(findings,[removal],source).actionIds,['A1']);
 });

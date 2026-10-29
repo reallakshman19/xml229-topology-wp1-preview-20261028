@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import replace
 from typing import Sequence
 
 from .analysis import _preferred_owner, _unique_ints
+from .removal_policy import can_remove_plain_pipe
 from .models import (
     Finding,
     FixAction,
@@ -29,7 +31,8 @@ def _span_index(document: Psi116Document) -> dict[str, RouteSpan]:
     return {span.span_id: span for span in document.spans}
 
 
-def _build_fix_actions(document: Psi116Document, findings: Sequence[Finding]) -> tuple[FixAction, ...]:
+def _build_fix_actions(document: Psi116Document, findings: Sequence[Finding],
+                       config: ResolverConfig | None = None) -> tuple[FixAction, ...]:
     nodes_by_number = _node_index(document)
     spans_by_id = _span_index(document)
     actions: list[FixAction] = []
@@ -159,13 +162,40 @@ def _build_fix_actions(document: Psi116Document, findings: Sequence[Finding]) ->
             proposed_changes=changes,
             blockers=blockers,
         ))
-    return _coalesce_fix_actions(actions)
+    return _coalesce_fix_actions(actions, document, findings, config or ResolverConfig())
 
 
-def _coalesce_fix_actions(actions: Sequence[FixAction]) -> tuple[FixAction, ...]:
+def _removal_review(action: FixAction, records: dict[str, NodeRecord],
+                    finding_keys: dict[str, tuple[str, ...]],
+                    config: ResolverConfig) -> tuple[bool, str, str]:
+    keys = {key for fid in action.finding_ids for key in finding_keys.get(fid, ())}
+    witnesses = [records[key] for key in keys if key in records]
+    owners = [n for n in witnesses if n.node_number == action.owner_node_number]
+    absorbed = [n for n in witnesses if n.node_number in action.absorbed_node_numbers]
+    if len(owners) != 1 or len(absorbed) != 1:
+        return False, "SOURCE_RECORD_NOT_UNIQUE", (
+            "Preserve the original records: a unique absorbed PIPE and owner are not proven. "
+            "Review the source-qualified occurrences and design ownership, then re-export and rerun TopoFix.")
+    record, owner = absorbed[0], owners[0]
+    safe, reason = can_remove_plain_pipe(record, owner, config)
+    message = (
+        f"Preserve {record.semantic_type} {record.key}: removal is not authorized ({reason}). "
+        f"Original NodeName={record.node_name!r}, ComponentRefNo={record.component_ref_no!r}, "
+        f"OD={record.outside_diameter}, wall={record.wall_thickness}; "
+        f"owner {owner.key} ({owner.semantic_type}) has OD={owner.outside_diameter}, wall={owner.wall_thickness}. "
+        "Verify source-model identity and the property boundary against the authoritative design. "
+        "Correct or preserve only under that authority; do not clear engineering fields to permit deletion. "
+        "After an authorized correction, re-export and rerun full TopoFix.")
+    return safe, reason, message
+
+
+def _coalesce_fix_actions(actions: Sequence[FixAction], document: Psi116Document,
+                         findings: Sequence[Finding], config: ResolverConfig) -> tuple[FixAction, ...]:
     """Collapse duplicate exact-coincidence operations into one deterministic plan action."""
     alias_index: dict[tuple[int | None, frozenset[int]], int] = {}
     merged: list[FixAction] = []
+    records = {node.key: node for branch in document.branches for node in branch.nodes}
+    finding_keys = {finding.finding_id: finding.node_keys for finding in findings}
 
     for action in actions:
         node_set = frozenset(action.node_numbers)
@@ -177,7 +207,7 @@ def _coalesce_fix_actions(actions: Sequence[FixAction]) -> tuple[FixAction, ...]
         if action.disposition == "CONTRACT_PRESERVE_OWNER" and key in alias_index:
             index = alias_index[key]
             alias = merged[index]
-            merged[index] = FixAction(
+            combined = FixAction(
                 action_id=alias.action_id,
                 finding_ids=tuple(sorted(set(alias.finding_ids + action.finding_ids))),
                 disposition="SAFE_DROP_PIPE_GEOMETRY",
@@ -197,6 +227,11 @@ def _coalesce_fix_actions(actions: Sequence[FixAction]) -> tuple[FixAction, ...]
                 proposed_changes=action.proposed_changes,
                 blockers=(),
             )
+            safe, reason, review_message = _removal_review(combined, records, finding_keys, config)
+            if not safe:
+                combined = replace(combined, disposition="REVIEW_SOURCE_RECORD", confidence=0.0,
+                                   authority=reason, message=review_message, proposed_changes=())
+            merged[index] = combined
             continue
         merged.append(action)
 

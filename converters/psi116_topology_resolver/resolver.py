@@ -51,7 +51,7 @@ def analyze_document(document: Psi116Document, config: ResolverConfig | None = N
     return ResolutionResult(
         document=document,
         findings=normalized,
-        fix_actions=_build_fix_actions(document, normalized),
+        fix_actions=_build_fix_actions(document, normalized, config),
     )
 
 

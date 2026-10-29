@@ -6,6 +6,7 @@ const TOPOLOGY_PACKAGE_FILES = Object.freeze([
   'geometry_analysis.py',
   'connectivity_audit.py',
   'planner.py',
+  'removal_policy.py',
   'resolver.py',
   'transaction.py',
   'lineage.py',
