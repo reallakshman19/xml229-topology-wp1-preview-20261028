@@ -7,7 +7,10 @@ decision plus re-export/reanalysis steps. It offers no Auto fix for that proposa
 
 This is a bounded repair on preview baseline
 `1b9804b21aacd14e12a884f98b5958b9441a9cc2`, under native issue #4. It is authored
-implementation and self-assessed validation, pending IR `6ae155fe`. No product
+implementation and self-assessed validation. IR `6ae2d5ac` returned PARTIAL /
+INDEPENDENCE_NOT_ESTABLISHED on the earlier candidate `9804e2c`; see native issue
+#2 comment 6494348817. Its source/JS observations do not qualify Python replay or
+browser execution. No product
 merge, deployment, protected PR #346 integration or engineering acceptance occurs.
 
 ## What changed
@@ -65,6 +68,19 @@ It runs only on main/manual dispatch and its Python pattern covers gap tests;
 IR must explicitly run the full Python command above for these new regressions.
 
 ## Remaining limits
+
+### Missing source-map hardening — IR P1 follow-up
+
+The IR reproduced that `previewBatchPlan(findings, actions, null)` bypassed the
+client's PIPE removal screen. The helper now always checks removal witnesses,
+including when the map is omitted/null or has no matching record. Missing proof
+uses the existing explicit preservation rejection and does not reserve keys that
+would block an unrelated alias action. Map and plain-object positive controls
+with an explicit empty-reference PIPE remain eligible. The Python guard and
+workspace invocation are unchanged; this is not evidence of live unsafe XML
+deletion. The regression fails on `9804e2c` and passes after this repair (20 Node
+tests). The changed candidate needs review; the prior IR return is not silently
+rebound to the new head.
 
 Distinct-principal review and independent engineering expectations remain pending.
 This patch does not qualify every populated source field, establish connection

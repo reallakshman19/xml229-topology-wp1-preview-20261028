@@ -24,8 +24,8 @@ export function previewBatchPlan(findings=[],actions=[],sourceByKey=null){
       id=>map.get(id)?.node_keys||[]));
     // Additional negative evidence from exact source occurrence records:
     // disposable pipe nodes with engineering semantics must NOT enter bulk.
-    if(sourceByKey && action.disposition==="SAFE_DROP_PIPE_GEOMETRY"){
-      const absorptions=[...keys].map(k=>sourceByKey.get?.(k)||sourceByKey[k])
+    if(action.disposition==="SAFE_DROP_PIPE_GEOMETRY"){
+      const absorptions=[...keys].map(k=>sourceByKey?.get?.(k)||sourceByKey?.[k])
         .filter(r=>(action.absorbed_node_numbers||[]).includes(r?.nodeNumber));
       if(absorptions.length!==1||
          absorptions.some(r=>r.type!=="PIPE"||!!r.nodeName||!!r.restraint||
