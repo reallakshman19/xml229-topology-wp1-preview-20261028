@@ -139,7 +139,7 @@ def _build_fix_actions(document: Psi116Document, findings: Sequence[Finding],
             blockers = ()
         elif finding.code in {"DUPLICATE_ROUTE_SPAN", "COLLINEAR_ROUTE_OVERLAP"}:
             blockers = ("OVERLAP_OWNERSHIP_NOT_PROVEN",)
-        elif finding.code in {"NEAR_MISS_PIPE_JOINT", "NEAR_MISS_BRANCH_ENDS", "BRANCH_END_UNVERIFIED"}:
+        elif finding.code in {"NEAR_MISS_PIPE_JOINT", "NEAR_MISS_BRANCH_ENDS", "BRANCH_END_UNVERIFIED", "CONNECTION_DECLARATION_CONFLICT"}:
             # Gap evidence is a screening result, never a source-connection authority.
             # Keep it nonblocking to avoid vetoing unrelated, validated transactions.
             disposition, status, confidence = "REVIEW_CONNECTION", "PROPOSED", 0.0

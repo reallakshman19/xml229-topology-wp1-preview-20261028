@@ -1,5 +1,6 @@
 /** Human-readable PSI116 rule audit. Presentation only: all severities and witnesses come from findings. */
 const RULES=Object.freeze({
+ CONNECTION_DECLARATION_CONFLICT:["Connection and closure declarations conflict","A shared source node is also declared CLOS. Reconcile the branch connection/termination declaration before changing it."],
  PORT_CONNECTION_WITHIN_TOLERANCE:["Connection within 25 mm tolerance","Compatible physical ports have a unique counterpart within the inclusive project tolerance. Auto fix closes the interface and preserves finite component geometry."],
  NEAR_MISS_PIPE_JOINT:["Possible pipe-joint gap","Adjacent source PIPE occurrences have separated ends within the 3D near-miss screening range. Verify intended connection; source ordering alone is not proof."],
  NEAR_MISS_BRANCH_ENDS:["Possible gap between branch ends","Pipe endpoints in different branches nearly meet but do not coincide within the connection tolerance. Confirm design connectivity before joining."],
@@ -33,6 +34,7 @@ const CATEGORIES=Object.freeze({
  unclassified:{title:"Unclassified rule — review",explain:"New PSI116 rules must be mapped explicitly; the preview will not infer an engineering category."}
 });
 const CATEGORY_BY_RULE=Object.freeze({
+ CONNECTION_DECLARATION_CONFLICT:"gaps",
  PORT_CONNECTION_WITHIN_TOLERANCE:"gaps",
  NEAR_MISS_PIPE_JOINT:"gaps",
  NEAR_MISS_BRANCH_ENDS:"gaps",
@@ -58,7 +60,7 @@ const CATEGORY_BY_RULE=Object.freeze({
 const MANUAL_GUIDE=Object.freeze({
  NEAR_MISS_PIPE_JOINT:"Confirm that these PIPE ports should connect. For an eligible joint at ≤25 mm, choose the retained port and use Close joint & recheck below. The other port moves to it; both component records remain. For shared or complex ownership, repair the authoring model and re-export.",
  NEAR_MISS_BRANCH_ENDS:"Check the intended branch connection. For an eligible pair of PIPE ports at ≤25 mm, choose the retained port and use Close joint & recheck. If the separation is intentional, record that outcome; shared or complex joints require upstream repair.",
- BRANCH_END_UNVERIFIED:"Confirm whether this start/end is an approved nozzle, free end, blind, cap or boundary. If it should connect, locate its intended partner and repair the upstream model; otherwise document the intended termination.",
+ BRANCH_END_UNVERIFIED:"No compatible port connection qualified under the ≤25 mm policy. Check this branch head/tail HREF/TREF and its target component/port in the authoring model. Restore a missing target in the export or correct its position/link, re-export and rerun TopoFix; document an intentional boundary instead when applicable.",
  COINCIDENT_NODE_IDENTITY_AMBIGUOUS:"Inspect the original branch connection and component port records. Confirm which nodes truly connect in the 3D source, correct the owner/link upstream, and re-run the audit. Do not merge by XYZ alone.",
  ZERO_LENGTH_COMPONENT_SPAN:"Inspect the fitting's endpoint mapping and physical length. Correct the authoritative component geometry or helper ports upstream; do not delete the component to silence the error.",
  ZERO_LENGTH_ROUTE_SPAN:"Verify the connection ownership and whether the span is a legitimate coincident junction. Correct the upstream branch route only after component and restraint evidence is confirmed.",
@@ -155,7 +157,7 @@ function itemHTML(item,reviews={},sourceByKey=null){
  const impact=RULE_IMPACT[f.code]||"Review the source-qualified engineering evidence before changing geometry or attributes.";
  const numeric=Number.isFinite(f.length_mm)?' · Measured 3D length / overlap: '+f.length_mm.toFixed(3)+' mm':'';
  const details=f.details||{};
- const optional=['gapMm','maximumResidualMm','overlapLengthMm','connectionAuthority','ownerType',
+ const optional=['gapMm','nearestSourceRecordMm','nearestSourceRecordKey','maximumResidualMm','overlapLengthMm','connectionAuthority','ownerType',
    'preferredOwnerNodeNumber','missingEndpoints','endpointSet','crossBranch','confidence'];
  const evidence=optional.filter(k=>details[k]!==undefined&&details[k]!==null)
    .map(k=>k.replace(/([a-z])([A-Z])/g,'$1 $2')+': '+

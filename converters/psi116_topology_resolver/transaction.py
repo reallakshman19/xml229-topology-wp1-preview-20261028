@@ -501,9 +501,10 @@ def _validate_transaction(
             if 'NodeNumber' in operation.after:passed = passed and actual.node_number == int(operation.after['NodeNumber'])
         else:
             passed = actual.position == target.position and actual.node_number == target.node_number
-        checks.append(ValidationCheck('CONFIRMED_JOINT_CLOSED',
+        checks.append(ValidationCheck('PORT_REPAIR_OPERATION_VERIFIED' if operation.operation == 'CLOSE_COMPONENT_PORT' else 'CONFIRMED_JOINT_CLOSED',
             passed,
-            True, 'Selected port has exactly the retained port position and NodeNumber.',
+            True, 'Port/owner fields match the authorized source-bound repair.' if operation.operation == 'CLOSE_COMPONENT_PORT' else
+                  'Selected port has exactly the retained port position and NodeNumber.',
             source.position.as_list(), actual.position.as_list()))
     if any(a.disposition == 'CLOSE_PORT_CONNECTION' for a in actions):
         from .connection_ports import PortModel, FINITE

@@ -55,6 +55,13 @@ class PortPolicy(unittest.TestCase):
   r=resolve_psi116(source)
   self.assertTrue(any(x['code']=='DECLARED_CLOSED_END' and 'B0:N-1:S0' in x['node_keys'] for x in r.connection_resolutions))
   self.assertFalse(any(f.code=='BRANCH_END_UNVERIFIED' and 10 in f.node_numbers for f in r.findings))
+ def test_closure_conflicting_with_shared_connection_is_not_auto_resolved(self):
+  source=doc(node(10,'BRAN','B',1,'0 0 0','<ConnectionType>CLOS</ConnectionType>'),
+             node(10,'BRAN','C',1,'0 0 0'))
+  r=resolve_psi116(source)
+  self.assertTrue(any(f.code=='CONNECTION_DECLARATION_CONFLICT' for f in r.findings))
+  self.assertFalse(any(x['code']=='EXISTING_CONNECTION' for x in r.connection_resolutions))
+  self.assertFalse(any(a.disposition=='CLOSE_PORT_CONNECTION' for a in r.fix_actions))
  def test_branch_stub_resolves_to_parent_tee_inside_other_branch(self):
   source=doc(node(-1,'TEE','T',1,'0 0 0')+node(50,'TEE','T',0,'100 0 0')+
    node(-1,'TEE','T',2,'200 0 0')+node(-1,'TEE','T',3,'100 100 0'),

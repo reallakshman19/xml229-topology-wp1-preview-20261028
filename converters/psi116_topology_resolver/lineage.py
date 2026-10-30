@@ -166,7 +166,8 @@ def build_topofix_source_lineage(transaction: TopoFixTransactionResult) -> dict:
                         "TOPOFIX_LINEAGE_UNDECLARED_XML_CHANGE")
                 status = ("RENUMBERED_CONNECTION" if op is not None and
                           op.operation == "ALIAS_NODE_NUMBER" else
-                          "PIPE_JOINT_CLOSED" if op is not None and op.operation in {'CLOSE_PIPE_JOINT','CLOSE_COMPONENT_PORT'} else
+                          "PORT_CONNECTION_CLOSED" if op is not None and op.operation == 'CLOSE_COMPONENT_PORT' else
+                          "PIPE_JOINT_CLOSED" if op is not None and op.operation == 'CLOSE_PIPE_JOINT' else
                           "RIGID_RECLASSIFIED" if op is not None else "RETAINED")
                 fixed_ordinal = position
                 fixed_digest = _node_digest(after[position])

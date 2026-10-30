@@ -72,9 +72,16 @@ def _analyze_connection_gaps(
         shared = [n for n in records if n.branch_index != node.branch_index and n.positive
                   and n.node_number == node.node_number and n.position and
                   n.position.distance_to(node.position) <= tolerance]
-        closed = [n for n in records if n.branch_index == node.branch_index and
+        closed = [n for n in records if n.branch_index in {node.branch_index, *(s.branch_index for s in shared)} and
                   n.connection_type == 'CLOS' and n.position and
                   n.position.distance_to(node.position) <= tolerance]
+        if shared and closed:
+            add('CONNECTION_DECLARATION_CONFLICT','WARNING',False,
+                'Shared connection identity conflicts with explicit CLOS evidence; review the branch end declaration.',
+                branch_name=node.branch_name,node_keys=tuple(sorted({node.key, *(n.key for n in shared+closed)})),
+                node_numbers=(node.node_number,),details={'connectionAuthority':'CONFLICTING_SOURCE_DECLARATIONS',
+                    'autofixAuthorized':False})
+            continue
         if shared or closed:
             if resolutions is not None:
                 resolutions.append({'code':'EXISTING_CONNECTION' if shared else 'DECLARED_CLOSED_END',
@@ -120,6 +127,8 @@ def _analyze_connection_gaps(
                 )
             continue
 
+        nearest_record = min(((node.position.distance_to(n.position),n.key) for n in records
+            if n.branch_index != node.branch_index and n.position), default=(None,None), key=lambda x:x[0])
         add(
             "BRANCH_END_UNVERIFIED", "INFO", False,
             f"Branch {role.lower()} at Node {node.node_number} has no matching "
@@ -131,6 +140,8 @@ def _analyze_connection_gaps(
             component_ref_nos=(node.component_ref_no,) if node.component_ref_no else (),
             details={"endRole":role, "XYZ":node.position.as_list(),
                      "nearestOtherBranchEndMm":peers[0][2] if peers else None,
+                     "nearestSourceRecordMm":nearest_record[0],
+                     "nearestSourceRecordKey":nearest_record[1],
                      "connectionToleranceMm":tolerance,
                      "connectionAuthority":"NOT_ESTABLISHED",
                      "certainty":"TERMINATION_INTENT_UNKNOWN",
