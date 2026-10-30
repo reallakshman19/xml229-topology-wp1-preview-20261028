@@ -71,3 +71,13 @@
 .audit-source li{margin:4px 0;overflow-wrap:anywhere}
 .audit-empty{border:1px dashed #7588a0;padding:14px;border-radius:8px;background:#1b2639;font-size:12px}
 .audit-empty p{font-size:12px;color:#c6d7eb!important}
+
+.audit-case{border-top:1px solid #334155}.audit-case>summary{padding:10px;cursor:pointer;font-size:12px;color:#e2e8f0}
+.audit-rule-tools{display:flex;gap:6px;margin:8px 0}.audit-rule-tools button{font-size:12px}
+[data-second-pass][hidden]{display:none}[data-second-pass]{background:#0d2631;border-color:#38bdf8}
+[data-second-pass] h3{margin:0}[data-second-pass] p{font-size:12px;overflow-wrap:anywhere}
+.second-pass-preview{overflow-x:auto}.second-pass-preview table{border-collapse:collapse;width:100%;font-size:11px}
+.second-pass-preview th,.second-pass-preview td{padding:6px;border:1px solid #476071;vertical-align:top;overflow-wrap:anywhere}
+.second-pass-preview input[type=checkbox]{width:auto}
+
+[data-second-pass] fieldset{border:0;padding:0;margin:0;min-width:0;display:grid;gap:8px}

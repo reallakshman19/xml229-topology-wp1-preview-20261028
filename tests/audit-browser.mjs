@@ -383,6 +383,107 @@ try{
   result.shortLengthQualification.push({kind,outcome:'MANUAL_LENGTH_UNQUALIFIED'});
  }
  await page.screenshot({path:path.join(sourceRoot,'preview-test-results','short-length-guard.png'),fullPage:true});
+ // Manual Fix is a collapsed rule/case queue. >25 mm repairs require a separate preview and approval.
+ const manualNode=(number,kind,ref,end,x,extra='')=>'<Node><NodeNumber>'+number+'</NodeNumber><ComponentType>'+kind+'</ComponentType><ComponentRefNo>'+ref+'</ComponentRefNo><Endpoint>'+end+'</Endpoint><Position>'+x+' 0 0</Position><OutsideDiameter>100</OutsideDiameter>'+extra+'</Node>';
+ const manualDoc=(a,b)=>'<PipeStressExport><Branch><Branchname>SOURCE</Branchname>'+a+'</Branch><Branch><Branchname>PARTNER</Branchname>'+b+'</Branch></PipeStressExport>';
+ const manualPipeFlange=manualDoc(manualNode(10,'PIPE','P',1,0)+manualNode(20,'PIPE','P',2,100),manualNode(30,'FLAN','F',1,175)+manualNode(-1,'RIGID','F',2,261));
+ const manualGasket=manualDoc(manualNode(20,'GASK','G',1,100)+manualNode(-1,'RIGID','G',2,103),manualNode(10,'PIPE','P',1,-100)+manualNode(40,'PIPE','P',2,25));
+ async function openManualPair(xml,peer){
+  await page.locator('[data-file]').setInputFiles({name:'manual-second-pass.xml',mimeType:'application/xml',buffer:Buffer.from(xml)});
+  await page.waitForFunction(()=>document.querySelector('[data-occ-summary]')?.textContent?.includes('4 of 4'));
+  await page.locator('[data-analyze]').click();
+  await page.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'),null,{timeout:120000});
+  await page.locator('[data-audit-category]').selectOption('all');
+  await page.locator('[data-audit-filter="manual"]').click();
+  if(await page.locator('.audit-rule[open]').count())throw Error('Manual rules should initially be collapsed');
+  await page.locator('[data-rules-expand]').click();
+  const summary=page.locator('.audit-case > summary').filter({hasText:'Node 20 · SOURCE'}).first();
+  await summary.click();
+  await summary.locator('..').locator('[data-add-second-pass]').click();
+  await page.locator('[data-second-peer]').selectOption(peer);
+ }
+ result.manualSecondPass=[];
+ for(const [kind,xml,peer,movedKey,expectedPositions] of [
+  ['PIPE_FLANGE',manualPipeFlange,'B1:N30:S0','B0:N20:S1',[0,175,175,261]],
+  ['GASK_PIPE',manualGasket,'B1:N40:S1','B1:N40:S1',[100,103,-100,100]]]){
+  await openManualPair(xml,peer);
+  if(kind==='GASK_PIPE'){
+   await page.locator('[data-second-peer]').selectOption('');
+   await page.locator('[data-occ-id$=":B1:N40:S1"]').click();
+   await page.locator('[data-second-use-selection]').click();
+   if(await page.locator('[data-second-peer]').inputValue()!==peer)throw Error('Exact canvas/occurrence partner selection failed');
+  }
+  const beforeCount=await page.locator('[data-audit-filter="manual"]').textContent();
+  await page.locator('[data-preview-second]').click();
+  await page.waitForFunction(()=>/PREVIEW ONLY|Cannot close|Preview unavailable/.test(document.querySelector('[data-second-status]')?.textContent||''),null,{timeout:120000});
+  const preview=await page.locator('[data-second-pass]').textContent();
+  if(!preview.includes('75.000 mm closure')||!preview.includes('Move '+movedKey))throw Error('Manual preview lacks exact distance or PIPE movement priority: '+preview);
+  if(!await page.locator('[data-download-working]').isDisabled()||!await page.locator('[data-apply-second]').isDisabled())throw Error('Preview must not apply XML or allow unconfirmed movement');
+  if(await page.locator('[data-audit-filter="manual"]').textContent()!==beforeCount)throw Error('Preview changed findings');
+  const previewBounds=await page.locator('[data-second-pass]').boundingBox();
+  const sideBounds=await page.locator('.topo-side').first().boundingBox();
+  if(previewBounds.y<sideBounds.y-2||previewBounds.y>sideBounds.y+55)throw Error('Second-pass preview scrolled out of the findings viewport');
+  await page.screenshot({path:path.join(sourceRoot,'preview-test-results','manual-'+kind.toLowerCase()+'-preview.png'),fullPage:false});
+  await page.locator('[data-second-evidence]').fill('DRAWING-SYNTHETIC-02 explicitly confirms this connection');
+  await page.locator('[data-second-confirm]').check();
+  await page.locator('[data-apply-second]').click();
+  await page.waitForFunction(()=>['ready','rejected'].includes(document.querySelector('[data-fix-result]')?.getAttribute('data-result')),null,{timeout:120000});
+  const progress=await page.locator('[data-progress]').textContent();
+  if(!progress.includes('APPLIED · revision 1')||!progress.includes('after full recheck'))throw Error('Second pass not applied and rechecked: '+progress+' '+await page.locator('[data-fix-result]').textContent());
+  if(await page.locator('[data-audit-filter="manual"]').textContent()===beforeCount)throw Error('Manual count not refreshed after closure');
+  if(!await page.locator('[data-second-pass]').isHidden())throw Error('Applied source preview should be invalidated');
+  const xmlDownload=page.waitForEvent('download');await page.locator('[data-download-working]').click();
+  const fixed=await readFile(await (await xmlDownload).path(),'utf8');
+  const positions=await page.evaluate(xml=>[...new DOMParser().parseFromString(xml,'application/xml').getElementsByTagNameNS('*','Position')].map(n=>Number(n.textContent.split(/\s+/)[0])),fixed);
+  if(JSON.stringify(positions)!==JSON.stringify(expectedPositions))throw Error('Manual corrected XML geometry drift: '+JSON.stringify(positions));
+  const receiptDownload=page.waitForEvent('download');await page.locator('[data-download-batch-report]').click();
+  const receipt=JSON.parse(await readFile(await (await receiptDownload).path(),'utf8'));
+  if(receipt.connectionApproval.approvedRepair.distanceMm!==75||receipt.transaction.policy.joint_repairs[0].confirmed!==true||receipt.validation.checks.some(c=>c.blocking&&!c.passed))throw Error('Manual approval/validation receipt missing');
+  if(createHash('sha256').update(fixed).digest('hex')!==receipt.fixedXmlSha256)throw Error('Second-pass downloaded XML hash mismatch');
+  await writeFile(path.join(sourceRoot,'preview-test-results','manual-'+kind.toLowerCase()+'.xml'),fixed);
+  await writeFile(path.join(sourceRoot,'preview-test-results','manual-'+kind.toLowerCase()+'-receipt.json'),JSON.stringify(receipt,null,2));
+  result.manualSecondPass.push({kind,distanceMm:75,preview:'NO_MUTATION',beforeCount,afterCount:await page.locator('[data-audit-filter="manual"]').textContent(),positions,progress,downloadSha256:receipt.fixedXmlSha256});
+ }
+ // Prototype UX checks: navigation state, stale approval and cancellation use real controls.
+ result.manualPrototypeUsability={};
+ await openManualPair(manualPipeFlange,'B1:N30:S0');
+ await page.locator('[data-preview-second]').click();
+ await page.waitForFunction(()=>document.querySelector('[data-second-status]')?.textContent?.includes('PREVIEW ONLY'),null,{timeout:120000});
+ if(await page.locator('.audit-rule[open]').count()!==1||await page.locator('.audit-case[open]').count()!==1)throw Error('Preview redraw lost manual rule/case navigation');
+ result.manualPrototypeUsability.ruleAndCaseExpansionRetained=true;
+ await page.locator('[data-second-evidence]').fill('SYNTHETIC-DRAWING-03 confirms the displayed connection');
+ await page.locator('[data-second-confirm]').check();
+ if(await page.locator('[data-apply-second]').isDisabled())throw Error('Confirmed valid preview did not enable Apply');
+ await page.locator('[data-second-peer]').selectOption('');
+ if(await page.locator('[data-apply-second]').count()||await page.locator('.second-pass-preview').count())throw Error('Edited partner retained obsolete approval');
+ result.manualPrototypeUsability.partnerEditInvalidatesApproval=true;
+ if(!await page.locator('[data-download-working]').isDisabled())throw Error('Partner editing emitted working XML');
+ await page.locator('[data-cancel-second]').click();
+ if(!await page.locator('[data-second-pass]').isHidden()||!await page.locator('[data-download-working]').isDisabled())throw Error('Cancel changed working copy');
+ result.manualPrototypeUsability.cancelLeavesOriginal=true;
+ await page.locator('[data-search]').fill('B0:N20:S1');
+ if(!(await page.locator('[data-audit-filter="manual"]').textContent()).includes('(1)'))throw Error('Manual rule search count did not narrow to source case');
+ await page.locator('[data-search]').fill('');
+ if(!(await page.locator('[data-audit-filter="manual"]').textContent()).includes('(3)'))throw Error('Clearing search lost original manual count');
+ result.manualPrototypeUsability.ruleSearchCountsRefresh=true;
+ await page.screenshot({path:path.join(sourceRoot,'preview-test-results','manual-by-rule-prototype.png'),fullPage:false});
+ await openManualPair(manualPipeFlange,'B1:N30:S0');
+ await page.locator('[data-preview-second]').click();
+ await page.waitForFunction(()=>document.querySelector('[data-second-status]')?.textContent?.includes('PREVIEW ONLY'),null,{timeout:120000});
+ await page.locator('[data-second-evidence]').fill('SYNTHETIC-DRAWING-04 confirms the current source only');
+ await page.locator('[data-second-confirm]').check();
+ await page.locator('[data-file]').setInputFiles({name:'replacement-source.xml',mimeType:'application/xml',buffer:Buffer.from(manualGasket)});
+ await page.waitForFunction(()=>document.querySelector('[data-source-meta]')?.textContent?.includes('replacement-source.xml'));
+ if(!await page.locator('[data-second-pass]').isHidden()||await page.locator('[data-apply-second]').count()||!await page.locator('[data-download-working]').isDisabled())throw Error('Loading replacement source retained old approved repair');
+ if(!(await page.locator('[data-progress]').textContent()).includes('revision 0'))throw Error('Replacement source reused old repair revision');
+ result.manualPrototypeUsability.replacementSourceInvalidatesApproval=true;
+ // Unknown diameter cannot be overridden by the new manual control.
+ await openManualPair(manualPipeFlange.replaceAll('<OutsideDiameter>100</OutsideDiameter>',''),'B1:N30:S0');
+ await page.locator('[data-preview-second]').click();
+ await page.waitForFunction(()=>document.querySelector('[data-second-status]')?.textContent?.includes('Cannot close'),null,{timeout:120000});
+ if(await page.locator('[data-apply-second]').count()||!await page.locator('[data-download-working]').isDisabled())throw Error('Incompatible manual pair exposed Apply/output');
+ result.manualSecondPassNegative='UNKNOWN_DIAMETER_REJECTED';
+
  // Source-evidenced closure resolves without a geometry edit and is exportable.
  const closed='<PipeStressExport><Branch><Branchname>CLOSED</Branchname><Node><NodeNumber>-1</NodeNumber><ComponentType>BRAN</ComponentType><ComponentRefNo>B</ComponentRefNo><Endpoint>1</Endpoint><ConnectionType>CLOS</ConnectionType><Position>0 0 0</Position></Node><Node><NodeNumber>10</NodeNumber><ComponentType>FBLI</ComponentType><ComponentRefNo>F</ComponentRefNo><Endpoint>1</Endpoint><Position>0 0 0</Position></Node><Node><NodeNumber>-1</NodeNumber><ComponentType>FBLI</ComponentType><ComponentRefNo>F</ComponentRefNo><Endpoint>2</Endpoint><Position>32.2 0 0</Position></Node></Branch></PipeStressExport>';
  await page.locator('[data-file]').setInputFiles({name:'closed.xml',mimeType:'application/xml',buffer:Buffer.from(closed)});

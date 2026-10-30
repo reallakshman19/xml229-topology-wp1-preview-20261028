@@ -145,9 +145,17 @@ class PortModel:
         return sorted(move),delta
 
     def repair(self,a,b):
+        return self._repair(a,b,confirmed=False)
+
+    def confirmed_repair(self,a,b):
+        """Explicit second-pass pair only; never used by automatic discovery."""
+        return self._repair(a,b,confirmed=True)
+
+    def _repair(self,a,b,*,confirmed):
         if not self.compatible(a,b,a.node.branch_index!=b.node.branch_index):raise ValueError('INCOMPATIBLE_PORTS')
         distance=a.node.position.distance_to(b.node.position)
-        if distance>min(25.,self.config.joint_repair_threshold_mm)+1e-9:raise ValueError('PORT_DISTANCE_EXCEEDS_POLICY')
+        if not isfinite(distance):raise ValueError('NONFINITE_PORT_DISTANCE')
+        if not confirmed and distance>min(25.,self.config.joint_repair_threshold_mm)+1e-9:raise ValueError('PORT_DISTANCE_EXCEEDS_POLICY')
         # Keep the more constrained/finite owner. Try the other side if the first is anchored.
         def priority(p):return (MOVE_ORDER.get(self.kind(p.group),4),-p.node.branch_index,-p.node.source_index)
         moving,target=sorted((a,b),key=priority)
@@ -165,7 +173,7 @@ class PortModel:
             if not any(abs(v)>1e-9 for v in delta) and not aliases:raise ValueError('NO_XML_CHANGE')
             return {'movePortKey':moving.node.key,'targetPortKey':target.node.key,
                     'moveKeys':keys,'delta':list(delta),'aliases':aliases,'distanceMm':distance,
-                    'policy':'OWNER_PORT_CONNECTION_LE_25_MM'}
+                    'policy':'USER_SELECTED_SECOND_PASS' if confirmed else 'OWNER_PORT_CONNECTION_LE_25_MM'}
         raise ValueError('MOVE_GROUP_REQUIRES_REVIEW')
 
     def candidates(self):

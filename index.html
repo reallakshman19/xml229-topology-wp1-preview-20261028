@@ -75,13 +75,14 @@
           <button data-audit-filter="error" data-audit-label="Errors" aria-pressed="false">Errors (0)</button>
           <button data-audit-filter="warning" data-audit-label="Warnings" aria-pressed="false">Warnings (0)</button>
           <button data-audit-filter="auto" data-audit-label="Auto fix" aria-pressed="false">Auto fix (0)</button>
-          <button data-audit-filter="manual" data-audit-label="Manual fix" aria-pressed="false">Manual fix (0)</button>
+          <button data-audit-filter="manual" data-audit-label="Manual fix · By rule" aria-pressed="false">Manual fix · By rule (0)</button>
           <button data-audit-filter="evidence" data-audit-label="No XML change" aria-pressed="false">No XML change (0)</button>
         </div>
         <div class="audit-bulk"><button type="button" data-auto-fix-all disabled>Autofix-All (0 actions)</button>
           <p>Applies eligible, nonconflicting XML changes to a copy. Requires a second confirmation and full PSI116 validation; skips manual and evidence-only findings.</p>
           <div data-batch-confirm aria-live="polite"></div></div>
         <div data-fix-result class="audit-fix-status" aria-live="polite"></div>
+        <section data-second-pass class="audit-joint" hidden aria-label="Manual connection second pass"></section>
         <div data-issues class="audit-groups"></div></section>
       <section class="topo-group"><h2>Source occurrences</h2>
         <p data-occ-summary>Load XML to inspect every source record.</p>
