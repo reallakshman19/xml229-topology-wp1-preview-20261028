@@ -25,6 +25,7 @@ class ShortElements(unittest.TestCase):
   self.assertEqual(ns[1].position.x,103);self.assertEqual(ns[2].position.x,103)
   self.assertEqual(ns[3].position.x-ns[2].position.x,86)
   self.assertEqual(sum(o.operation=='REMOVE_SELECTED_SHORT_ELEMENT_RECORD' for o in t.operations),2)
+  self.assertEqual(next(o.retained_node_key for o in t.operations if o.operation=='CLOSE_COMPONENT_PORT'),'B0:N-1:S4')
   l=build_topofix_source_lineage(t);self.assertEqual(l['counts']['removedSelectedShortElementOccurrences'],2)
   verify_topofix_pre_final(source,t.fixed_xml,t.transaction_payload(),t.validation_payload(),l,reviewed_action_ids=t.policy.selected_action_ids)
  def test_exactly_6_mm_is_included_and_other_two_port_types_can_be_selected(self):

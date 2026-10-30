@@ -75,12 +75,13 @@ def apply_short_element(before, policy, config):
     reverse={n.key:pos for pos,n in mapping.items()}
     li,ri=reverse[left.key],reverse[right.key]
     l=middle.document.branches[li[0]].nodes[li[1]];r=middle.document.branches[ri[0]].nodes[ri[1]]
-    stage=None
+    stage=None;retained=left
     if l.position.distance_to(r.position)>1e-7 or (l.positive and r.positive and l.node_number!=r.node_number):
         ports={l.key,r.key}
         closure=next((a for a in middle.fix_actions if a.disposition=='CLOSE_PORT_CONNECTION' and
             {a.proposed_changes[0]['movePortKey'],a.proposed_changes[0]['targetPortKey']}==ports),None)
         if closure is None:raise ValueError('SHORT_ELEMENT_RECONNECTION_NOT_QUALIFIED')
+        retained=right if closure.proposed_changes[0]['targetPortKey']==r.key else left
         stage=apply_topofix_transaction(middle,policy=TransactionPolicy(selected_action_ids=(closure.action_id,)),config=config)
         if not stage.committed:raise ValueError('SHORT_ELEMENT_RECONNECTION_REJECTED:'+','.join(stage.reject_reasons))
         candidate=stage.fixed_xml;after=stage.after_result
@@ -102,8 +103,8 @@ def apply_short_element(before, policy, config):
         if old==new:continue
         operations.append(AppliedOperation(operation_id=f'OP-{len(operations)+1:06d}',action_id=action.action_id,
             disposition=action.disposition,operation='CLOSE_COMPONENT_PORT',branch_name=n.branch_name,
-            source_node_key=n.key,source_node_number=n.node_number,retained_node_key=left.key,
-            retained_node_number=left.node_number,before=old,after=new,authority=action.authority,source_xml_sha256=_record_sha(n)))
+            source_node_key=n.key,source_node_number=n.node_number,retained_node_key=retained.key,
+            retained_node_number=retained.node_number,before=old,after=new,authority=action.authority,source_xml_sha256=_record_sha(n)))
     actual_nodes=[n for b in after.document.branches for n in b.nodes]
     expected=[n for n in original if n.key not in removed]
     identity=lambda n:(n.branch_index,n.component_ref_no,n.component_type,n.endpoint)
