@@ -8,12 +8,14 @@ export function createTopologyWorkerClient({
 }={}) {
   let worker=null;
   let sequence=0;
+  let completedInWorker=0;
   let disposed=false;
   const pending=new Map();
 
   function reset(reason) {
     const old=worker;
     worker=null;
+    completedInWorker=0;
     if(old) old.terminate();
     for(const {reject,timeout} of pending.values()) {
       clearTimeout(timeout);
@@ -34,6 +36,11 @@ export function createTopologyWorkerClient({
       if(data.type==='RESULT') task.resolve(data.result);
       else if(data.type==='ERROR') task.reject(Error('TOPOLOGY_WORKER_ERROR: '+String(data.message||'unknown failure')));
       else task.reject(Error('TOPOLOGY_WORKER_PROTOCOL_ERROR'));
+      // Engine job scratch directories live in Pyodide's in-memory FS.
+      // Recycle only when idle, bounding memory during hundreds of sequential drops.
+      if(++completedInWorker>=8 && !pending.size && worker===created){
+        worker=null;completedInWorker=0;created.terminate();
+      }
     });
     const crashed=(event)=>{
       const message=event?.message || 'Worker failed to load or exchange data';
