@@ -35,3 +35,6 @@ label{display:inline-block;color:#cbd5e1}label input[type=checkbox]{vertical-ali
 .topo-detail pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:320px;overflow:auto;font-size:11px;background:#020617;padding:8px}
 footer{font-size:12px;color:#94a3b8;margin-top:14px}
 @media(max-width:1100px){.topo-grid{grid-template-columns:1fr}.topo-side,.topo-detail{max-height:none;min-height:0}.topo-viewport{order:-1}}
+.audit-resolved{margin:10px 0;padding:8px;border:1px solid #34d399;border-radius:6px;font-size:12px}
+.audit-resolved:empty{display:none}.audit-resolved summary{cursor:pointer}.audit-resolved ul{padding-left:16px}
+.audit-resolved button{max-width:100%;overflow-wrap:anywhere;text-align:left;font-size:11px}

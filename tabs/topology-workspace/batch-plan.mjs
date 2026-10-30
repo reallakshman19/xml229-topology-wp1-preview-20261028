@@ -1,7 +1,7 @@
 /** Grouped, deterministic preview Auto fix planning. No transaction or XML edits here. */
 export const MUTATING_KINDS=new Set([
   "ALIAS_COINCIDENT_NODE","CONTRACT_PRESERVE_OWNER",
-  "SAFE_DROP_PIPE_GEOMETRY","REMOVE_FALSE_RIGID"
+  "SAFE_DROP_PIPE_GEOMETRY","REMOVE_FALSE_RIGID","CLOSE_PORT_CONNECTION"
 ]);
 
 export function eligibleActions(findings=[],actions=[]){

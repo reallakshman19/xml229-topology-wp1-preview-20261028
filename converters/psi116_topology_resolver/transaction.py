@@ -21,6 +21,7 @@ MUTATING_DISPOSITIONS = frozenset({
     "SAFE_DROP_PIPE_GEOMETRY",
     "REMOVE_FALSE_RIGID",
     "CLOSE_CONFIRMED_PIPE_JOINT",
+    "CLOSE_PORT_CONNECTION",
 })
 EVIDENCE_ONLY_DISPOSITIONS = frozenset({"KEEP", "MERGE_CARRIER_WITH_COMPONENT"})
 
@@ -411,6 +412,44 @@ def _apply_confirmed_joint(action, locators, operation_id):
         authority=action.authority, source_xml_sha256=_record_sha(moving.record))
 
 
+def _apply_port_connection(result, action, locators, config, operation_start):
+    from .connection_ports import PortModel
+    model = PortModel(result.document, config)
+    requested = action.proposed_changes[0]
+    verified = next((p for p in model.candidates() if
+        {p['movePortKey'],p['targetPortKey']} ==
+        {requested['movePortKey'],requested['targetPortKey']}), None)
+    if verified != requested:
+        raise ValueError('PORT_REPAIR_WITNESS_OR_POLICY_DRIFT')
+    target = locators[verified['targetPortKey']]
+    moving = locators[verified['movePortKey']]
+    operations = []
+    for key in verified['moveKeys']:
+        locator = locators[key]
+        before = {'Position': _child(locator.node_element,'Position').text}
+        xyz = locator.record.position.as_list()
+        if not any(abs(v)>1e-9 for v in verified['delta']):
+            position = before['Position']
+        elif locator.record.position.distance_to(moving.record.position)<=1e-6:
+            position = _child(target.node_element,'Position').text
+        else:
+            position = ' '.join(format(v+d,'.15g') for v,d in zip(xyz,verified['delta']))
+        after = {'Position':position}
+        if key in verified['aliases']:
+            before['NodeNumber'] = _child(locator.node_element,'NodeNumber').text
+            after['NodeNumber'] = str(verified['aliases'][key])
+        if before == after:continue
+        for field,value in after.items():_set_child_text(locator.node_element,field,value)
+        operations.append(AppliedOperation(
+            operation_id=f'OP-{operation_start+len(operations):06d}', action_id=action.action_id,
+            disposition=action.disposition, operation='CLOSE_COMPONENT_PORT',
+            branch_name=locator.record.branch_name,source_node_key=key,
+            source_node_number=locator.record.node_number,retained_node_key=target.record.key,
+            retained_node_number=target.record.node_number,before=before,after=after,
+            authority=action.authority,source_xml_sha256=_record_sha(locator.record)))
+    return operations
+
+
 def _selected_findings_resolved(before: ResolutionResult, after: ResolutionResult, actions: Sequence[FixAction]) -> tuple[bool, list[str]]:
     after_alias_sets = [set(finding.node_numbers) for finding in after.findings if finding.code == "COINCIDENT_NODE_ALIAS_CANDIDATE"]
     after_rigid_numbers = {number for finding in after.findings if finding.code == "NON_RIGID_COMPONENT_CLASSIFIED_RIGID" for number in finding.node_numbers}
@@ -449,17 +488,44 @@ def _validate_transaction(
         ValidationCheck("NO_NEW_OVERLAP_FINDINGS", not any(finding.code in {"DUPLICATE_ROUTE_SPAN", "COLLINEAR_ROUTE_OVERLAP", "COINCIDENT_NODE_IDENTITY_AMBIGUOUS"} and finding.blocking for finding in after.findings), True, "Transaction must not create an unresolved overlap or ambiguous coincidence."),
     ]
     for operation in operations:
-        if operation.operation != 'CLOSE_PIPE_JOINT':
+        if operation.operation not in {'CLOSE_PIPE_JOINT','CLOSE_COMPONENT_PORT'}:
             continue
         source = next(n for b in before.document.branches for n in b.nodes
                       if n.key == operation.source_node_key)
         target = next(n for b in before.document.branches for n in b.nodes
                       if n.key == operation.retained_node_key)
         actual = after.document.branches[source.branch_index].nodes[source.source_index]
+        if operation.operation == 'CLOSE_COMPONENT_PORT':
+            passed = actual.position is not None and all(abs(a-float(b))<1e-7
+                for a,b in zip(actual.position.as_list(), operation.after['Position'].split()))
+            if 'NodeNumber' in operation.after:passed = passed and actual.node_number == int(operation.after['NodeNumber'])
+        else:
+            passed = actual.position == target.position and actual.node_number == target.node_number
         checks.append(ValidationCheck('CONFIRMED_JOINT_CLOSED',
-            actual.position == target.position and actual.node_number == target.node_number,
+            passed,
             True, 'Selected port has exactly the retained port position and NodeNumber.',
             source.position.as_list(), actual.position.as_list()))
+    if any(a.disposition == 'CLOSE_PORT_CONNECTION' for a in actions):
+        from .connection_ports import PortModel, FINITE
+        model = PortModel(before.document, ResolverConfig())
+        shape_ok = True
+        for gid,group in enumerate(model.groups):
+            if model.kind(gid) not in FINITE:continue
+            deltas=[]
+            for n in group:
+                actual=after.document.branches[n.branch_index].nodes[n.source_index]
+                deltas.append(tuple(b-a for a,b in zip(n.position.as_list(),actual.position.as_list())))
+            shape_ok = shape_ok and all(all(abs(x-y)<1e-7 for x,y in zip(deltas[0],d)) for d in deltas)
+        checks.append(ValidationCheck('FINITE_COMPONENT_GEOMETRY_PRESERVED',shape_ok,True,
+            'Every finite component retains all port/owner relative geometry.'))
+        for action in actions:
+            if action.disposition != 'CLOSE_PORT_CONNECTION':continue
+            change=action.proposed_changes[0]
+            a=model.by_key[change['movePortKey']];b=model.by_key[change['targetPortKey']]
+            pa=after.document.branches[a.branch_index].nodes[a.source_index]
+            pb=after.document.branches[b.branch_index].nodes[b.source_index]
+            checks.append(ValidationCheck('PHYSICAL_PORTS_CLOSED',pa.position.distance_to(pb.position)<1e-7,
+                True,'Selected physical mating ports coincide after repair.'))
     return tuple(checks)
 
 
@@ -504,6 +570,8 @@ def apply_topofix_transaction(
                 operations.append(_apply_remove_false_rigid(before, action, locators, f"OP-{len(operations) + 1:06d}"))
             elif action.disposition == 'CLOSE_CONFIRMED_PIPE_JOINT':
                 operations.append(_apply_confirmed_joint(action, locators, f"OP-{len(operations) + 1:06d}"))
+            elif action.disposition == 'CLOSE_PORT_CONNECTION':
+                operations.extend(_apply_port_connection(before, action, locators, config, len(operations)+1))
             else:
                 raise ValueError(f"Unsupported selected disposition {action.disposition}.")
     except (KeyError, TypeError, ValueError) as error:

@@ -1,3 +1,5 @@
+> Historical PR #6 scope. The current inclusive port policy and validation are described in [PORT_POLICY.md](PORT_POLICY.md).
+
 # Navigation, working-copy feedback and confirmed joint closure
 
 Owner's reported failures: canvas navigation and centering are unreliable; Autofix gives no visible applied state or updated counts; a manually confirmed small gap/overlap has no executable closure.

@@ -33,11 +33,11 @@ try{
   ['all','error','warning','auto','manual','evidence'].map(async key=>
    [key,await page.locator('[data-audit-filter="'+key+'"]').textContent()])));
  // Ten formerly mutating removals now retain both linked findings as review evidence.
- const expected={all:210,error:0,warning:151,auto:56,manual:30,evidence:18};
+ const expected={all:220,error:0,warning:161,auto:72,manual:24,evidence:18};
  for(const [key,count] of Object.entries(expected))
   if(!result.filterCounts[key].includes('('+count+')'))
    throw Error('Filter count drift: '+key+' actual '+result.filterCounts[key]);
- if(!((await page.locator('[data-auto-fix-all]').textContent()).includes('(56 actions)')))
+ if(!((await page.locator('[data-auto-fix-all]').textContent()).includes('(72 actions)')))
    throw Error('Distinct action count not shown for Autofix-All');
  await page.locator('[data-audit-filter="error"]').click();
  result.emptyError=await page.locator('[data-issues]').textContent();
@@ -63,10 +63,11 @@ try{
  result.gapItems=await page.locator('.audit-item').count();
  if(result.gapItems<1)throw Error('Reference file must show evidence-qualified open ends');
  if(await page.locator('[data-audit-category]').inputValue()!=='gaps')throw Error('Gap filter did not activate');
- if(await page.locator('.audit-item [data-auto-fix]').count())throw Error('Gap candidates must not receive auto-join control');
+ if(!await page.locator('.audit-item [data-auto-fix]').count())throw Error('Qualified port closures must offer Auto fix');
  const gapRule=page.locator('.audit-rule').first();
  if(!(await gapRule.evaluate(el=>el.open)))await gapRule.locator('summary').first().click();
- const review=page.locator('.audit-item').first();
+ const review=page.locator('.audit-item').filter({has:page.locator('[data-save-gap-review]')}).first();
+ await review.locator('xpath=ancestor::details[contains(@class,"audit-rule")]').evaluate(el=>el.open=true);
  await review.locator('[data-gap-review-choice]').selectOption('intentional');
  await review.locator('[data-gap-review-note]').fill('P&ID-TEST-001: owner review labels this endpoint as intentional');
  await review.locator('[data-save-gap-review]').click();
@@ -108,7 +109,7 @@ try{
  if(!result.singleProgress.includes('APPLIED · revision 1')||
     await page.locator('[data-download-working]').isDisabled())throw Error('Working copy update not visible');
  result.afterSingleAuto=await page.locator('[data-auto-fix-all]').textContent();
- if(result.afterSingleAuto.includes('(56 actions)'))throw Error('Single applied fix left original actionable count');
+ if(result.afterSingleAuto.includes('(72 actions)'))throw Error('Single applied fix left original actionable count');
  if(result.fixState==='ready' && !(await page.locator('[data-download-fix]').count()))throw Error('Missing validated XML download action');
  // Reset explicitly to the same S0 for the established independent batch oracle.
  await page.locator('[data-file]').setInputFiles(path.join(sourceRoot,'tests','FirstpassXML'));
@@ -117,15 +118,15 @@ try{
  await page.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'),null,{timeout:120000});
  await page.locator('[data-auto-fix-all]').click();
  result.batchPreview=await page.locator('[data-batch-confirm]').textContent();
- if(!result.batchPreview.includes('56 eligible XML-changing actions')||
+ if(!result.batchPreview.includes('72 eligible XML-changing actions')||
     !result.batchPreview.includes('conflict-free actions'))
    throw Error('Batch preview missing eligible and excluded count');
  const selected=Number(result.batchPreview.match(/([0-9]+) conflict-free actions/)?.[1]);
- if(!Number.isInteger(selected)||selected!==39)
+ if(!Number.isInteger(selected)||selected!==42)
    throw Error('Invalid conflict-free action count');
  await page.locator('[data-run-auto-fix-all]').click();
  await page.waitForFunction(()=>['ready','rejected'].includes(
-   document.querySelector('[data-fix-result]')?.getAttribute('data-result')),null,{timeout:180000});
+   document.querySelector('[data-fix-result]')?.getAttribute('data-result'))&&document.querySelector('main').getAttribute('aria-busy')==='false',null,{timeout:180000});
  result.batchState=await page.locator('[data-fix-result]').getAttribute('data-result');
  result.batchMessage=await page.locator('[data-fix-result]').textContent();
  if(result.batchState!=='ready')
@@ -137,7 +138,7 @@ try{
  result.batchApplied=Number(result.batchOutputName.match(
   /[.]batch-([0-9]+)[.]validated[.]topofix[.]xml/)?.[1]);
  if(!Number.isInteger(result.batchApplied)||result.batchApplied<1||
-    result.batchApplied>selected)
+    result.batchApplied!==42)
    throw Error('Batch output does not reflect actual validated action count');
  const xml=await readFile(await output.path(),'utf8');
  if(!xml.includes('PipeStressExport'))throw Error('Batch fixed XML missing expected source root');
@@ -149,11 +150,8 @@ try{
  if(report.schema!=='xml229-preview-batch-topofix/v1'||
     report.status!=='VALIDATED_COPY_NOT_ENGINEERING_ACCEPTANCE'||
     report.source?.sha256!=='feee5a5a6399207337e63bc56c8afb001fe37ab30c6a7a9283333ec60f6eea38'||
-    report.fixedXmlSha256!==sha||
-    report.selectedActionIds.length!==result.batchApplied||
-    report.excludedActions.length!==56-result.batchApplied||
-    new Set(report.selectedActionIds).size!==result.batchApplied)
-   throw Error('Batch audit receipt does not reconcile eligible proposals, applied actions and exclusions');
+    report.fixedXmlSha256!==sha||report.selectedActionIds.length!==42||report.excludedActions.length!==30)
+   throw Error('Batch receipt does not reconcile source-bound actions and exclusions');
  const original=await readFile(path.join(sourceRoot,'tests','FirstpassXML'),'utf8');
  const preservationCheck=await page.evaluate(({original,xml})=>{
    const parse=text=>new DOMParser().parseFromString(text,'application/xml');
@@ -178,12 +176,12 @@ try{
  result.batchOutputSha=sha;
  result.originalOccurrences=await page.locator('[data-occ-summary]').textContent();
  result.batchProgress=await page.locator('[data-progress]').textContent();
- if(!result.batchProgress.includes('39 action(s) applied'))throw Error('Batch completion is not visible');
+ if(!result.batchProgress.includes('42 action(s) applied')||!result.batchProgress.includes('135'))throw Error('Batch completion is not visible');
  const afterBatch=await page.locator('[data-auto-fix-all]').textContent();
- if(afterBatch.includes('(56 actions)'))throw Error('Batch left stale original action counts');
+ if(afterBatch.includes('(72 actions)'))throw Error('Batch left stale original action counts');
  // Real Pyodide closure, working-copy recheck, changed geometry, download and history.
  result.jointRepairs=[];
- for(const join of [124.9,98,100]){
+ for(const join of [125,124.9,98,100]){
   const nodes=[[10,'A',1,0],[20,'A',2,100],[30,'B',1,join],[40,'B',2,200]];
   const fixture='<PipeStressExport><Branch><Branchname>JOINT-TEST</Branchname>'+nodes.map(([n,ref,end,x])=>
     `<Node><NodeNumber>${n}</NodeNumber><ComponentType>PIPE</ComponentType><ComponentRefNo>PIPE-${ref}</ComponentRefNo><Endpoint>${end}</Endpoint><Position>${x} 0 0</Position><WallThickness>3.5</WallThickness></Node>`).join('')+'</Branch></PipeStressExport>';
@@ -191,12 +189,9 @@ try{
   await page.waitForFunction(()=>document.querySelector('[data-occ-summary]')?.textContent?.includes('4 of 4'));
   await page.locator('[data-analyze]').click();
   await page.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'),null,{timeout:120000});
-  const joint=page.locator('.audit-item').filter({has:page.locator('[data-close-joint]')}).first();
+  const joint=page.locator('.audit-item').filter({has:page.locator('[data-auto-fix]')}).first();
   await joint.locator('xpath=ancestor::details[contains(@class,"audit-rule")]').evaluate(el=>el.open=true);
-  await joint.locator('[data-joint-target]').selectOption('B0:N20:S1');
-  await joint.locator('[data-joint-evidence]').fill('TEST-DRAWING-01: confirmed intended joint');
-  await joint.locator('[data-joint-confirm]').check();
-  await joint.locator('[data-close-joint]').click();
+  await joint.locator('[data-auto-fix]').click();
   await page.waitForFunction(()=>['ready','rejected'].includes(document.querySelector('[data-fix-result]')?.getAttribute('data-result')),null,{timeout:120000});
   const message=await page.locator('[data-fix-result]').textContent();
   if(await page.locator('[data-fix-result]').getAttribute('data-result')!=='ready')throw Error('Joint '+join+' rejected: '+message);
@@ -212,6 +207,32 @@ try{
   if(history.repairs[0].operations[0].before.Position!==join+' 0 0'||history.repairs[0].operations[0].after.Position!=='100 0 0')throw Error('Missing joint before/after receipt');
   result.jointRepairs.push({join,progress:await page.locator('[data-progress]').textContent(),ports,history:'PASS'});
  }
+ const fittingNodes=[[10,'A',1,0],[20,'A',2,86],[30,'B',1,96],[40,'B',2,182],[50,'C',1,192],[60,'C',2,278]];
+ const chain='<PipeStressExport><Branch><Branchname>CHAIN</Branchname>'+fittingNodes.map(([n,ref,end,x])=>
+   `<Node><NodeNumber>${n}</NodeNumber><ComponentType>FLAN</ComponentType><ComponentRefNo>${ref}</ComponentRefNo><Endpoint>${end}</Endpoint><Position>${x} 0 0</Position></Node>`).join('')+'</Branch></PipeStressExport>';
+ await page.locator('[data-file]').setInputFiles({name:'chain.xml',mimeType:'application/xml',buffer:Buffer.from(chain)});
+ await page.waitForFunction(()=>document.querySelector('[data-occ-summary]')?.textContent?.includes('6 of 6'));
+ await page.locator('[data-analyze]').click();
+ await page.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'),null,{timeout:120000});
+ await page.locator('[data-auto-fix-all]').click();await page.locator('[data-run-auto-fix-all]').click();
+ await page.waitForFunction(()=>document.querySelector('main').getAttribute('aria-busy')==='false'&&
+   ['ready','rejected'].includes(document.querySelector('[data-fix-result]')?.getAttribute('data-result')),null,{timeout:120000});
+ result.multiPass=await page.locator('[data-progress]').textContent();
+ if(!result.multiPass.includes('2 validated passes')||!result.multiPass.includes('0 eligible actions remain'))throw Error('Autofix-All did not finish the conflicting fitting chain: '+result.multiPass);
+ const multiDownload=page.waitForEvent('download');await page.locator('[data-download-batch-report]').click();
+ const multiReport=JSON.parse(await readFile(await (await multiDownload).path(),'utf8'));
+ if(multiReport.schema!=='xml229-preview-batch-topofix/v2'||multiReport.passes.length!==2||multiReport.appliedActionCount!==2)throw Error('Missing multi-pass source-bound report');
+ // Source-evidenced closure resolves without a geometry edit and is exportable.
+ const closed='<PipeStressExport><Branch><Branchname>CLOSED</Branchname><Node><NodeNumber>-1</NodeNumber><ComponentType>BRAN</ComponentType><ComponentRefNo>B</ComponentRefNo><Endpoint>1</Endpoint><ConnectionType>CLOS</ConnectionType><Position>0 0 0</Position></Node><Node><NodeNumber>10</NodeNumber><ComponentType>FBLI</ComponentType><ComponentRefNo>F</ComponentRefNo><Endpoint>1</Endpoint><Position>0 0 0</Position></Node><Node><NodeNumber>-1</NodeNumber><ComponentType>FBLI</ComponentType><ComponentRefNo>F</ComponentRefNo><Endpoint>2</Endpoint><Position>32.2 0 0</Position></Node></Branch></PipeStressExport>';
+ await page.locator('[data-file]').setInputFiles({name:'closed.xml',mimeType:'application/xml',buffer:Buffer.from(closed)});
+ await page.waitForFunction(()=>document.querySelector('[data-occ-summary]')?.textContent?.includes('3 of 3'));
+ await page.locator('[data-analyze]').click();
+ await page.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'),null,{timeout:120000});
+ result.resolvedEvidence=await page.locator('[data-resolved]').textContent();
+ if(!result.resolvedEvidence.includes('DECLARED CLOSED END'))throw Error('Source closure evidence not shown');
+ const evidenceDownload=page.waitForEvent('download');await page.locator('[data-download-resolutions]').click();
+ const evidence=JSON.parse(await readFile(await (await evidenceDownload).path(),'utf8'));
+ if(!evidence.resolvedConnections.some(x=>x.code==='DECLARED_CLOSED_END')||evidence.xmlChangedByResolution!==false)throw Error('Source closure receipt missing');
  await mkdir(path.join(sourceRoot,'preview-test-results'),{recursive:true});
  await page.screenshot({path:path.join(sourceRoot,'preview-test-results','rule-audit.png'),fullPage:true});
  if(pageErrors.length)throw Error('Browser errors: '+pageErrors.join(' | '));

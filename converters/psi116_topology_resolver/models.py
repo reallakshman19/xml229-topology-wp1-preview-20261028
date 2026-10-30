@@ -197,6 +197,7 @@ class ResolutionResult:
     document: Psi116Document
     findings: tuple[Finding, ...]
     fix_actions: tuple[FixAction, ...]
+    connection_resolutions: tuple[dict, ...] = ()
 
     def findings_payload(self, config: ResolverConfig) -> dict[str, object]:
         counts = Counter(finding.code for finding in self.findings)
@@ -217,8 +218,10 @@ class ResolutionResult:
                 "findingCount": len(self.findings),
                 "blockingFindingCount": blocking,
                 "findingCountsByCode": dict(sorted(counts.items())),
+                "resolvedConnectionCount": len(self.connection_resolutions),
             },
             "findings": [finding_to_dict(finding) for finding in self.findings],
+            "resolvedConnections": list(self.connection_resolutions),
         }
 
     def fix_plan_payload(self, config: ResolverConfig) -> dict[str, object]:

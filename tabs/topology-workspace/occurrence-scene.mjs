@@ -25,7 +25,7 @@ export function parseOccurrenceScene(xmlText, sourceSha256, Parser = globalThis.
   branches.forEach((branch, branchIndex) => {
     const name = child(branch, 'Branchname') || 'Branch ' + (branchIndex + 1);
     const b = { name, index: branchIndex, ordinal: branchIndex + 1, count: 0 };
-    let routePrevious = null;
+
     children(branch, 'Node').forEach((node, sourceIndex) => {
       const label = child(node, 'NodeNumber'), number = integer(label);
       const type = child(node, 'ComponentType').toUpperCase();
@@ -33,7 +33,7 @@ export function parseOccurrenceScene(xmlText, sourceSha256, Parser = globalThis.
       const support = type === 'ATTA' && /\/SREF/i.test(nodeName);
       const position = coordinate(child(node, 'Position'));
       const key = 'B' + branchIndex + ':N' + (number === null ? 'none' : number) + ':S' + sourceIndex;
-      const route = !!position && number !== null && number > 0 && type !== 'GASK' && !support;
+      const route = !!position && number !== null && number > 0 && !support;
       const record = {
         id: sourceSha256 + ':' + key, key, branchIndex, sourceIndex,
         branchOrdinal: branchIndex + 1, nodeOrdinal: sourceIndex + 1, branchName: name,
@@ -43,10 +43,10 @@ export function parseOccurrenceScene(xmlText, sourceSha256, Parser = globalThis.
         weight: child(node, 'Weight'), xmlFragment: new XMLSerializer().serializeToString(node),
       };
       records.push(record);
-      if (route && routePrevious) segments.push({ a: routePrevious.id, b: record.id, branchIndex });
-      if (route) routePrevious = record;
+
       b.count++;
     });
+    segments.push(...physicalPortSegments(records.filter(r=>r.branchIndex===branchIndex),branchIndex));
     branchList.push(b);
   });
   const located = records.filter(record => record.position);
@@ -58,6 +58,31 @@ export function parseOccurrenceScene(xmlText, sourceSha256, Parser = globalThis.
   return { sourceSha256, records, segments, branches: branchList,
     bounds: { min, max, center, span }, byId: new Map(records.map(r => [r.id, r])),
     byKey: new Map(records.map(r => [r.key, r])) };
+}
+
+export function physicalPortSegments(records,branchIndex=0){
+    // Draw physical ports, including negative-numbered helpers, with their owner.
+    // RIGID can be the second exported endpoint of a FLAN/GASK owner.
+    const segments=[],groups=[];
+    for(const r of records.filter(r=>r.position)){
+      if(['ATTA','SUPPORT','ANCI'].includes(r.type))continue;
+      const previous=groups.at(-1);
+      if(previous&&r.refNo&&r.type!=='BRAN'&&previous[0].type!=='BRAN'&&previous[0].refNo===r.refNo)previous.push(r);
+      else groups.push([r]);
+    }
+    const link=(a,z,kind)=>{if(a&&z&&a.id!==z.id)segments.push({a:a.id,b:z.id,branchIndex,kind});};
+    let previousExit=null;
+    for(const group of groups){
+      const owner=group.find(r=>r.endpoint==='0');
+      const first=group.find(r=>r.endpoint==='1')||owner||group[0];
+      const last=group.find(r=>r.endpoint==='2')||owner||group.at(-1);
+      link(previousExit,first,'route');
+      if(owner&&['ELBO','BEND','TEE','OLET','BRAN'].includes(owner.type)){
+        for(const port of group.filter(r=>['1','2','3'].includes(r.endpoint)))link(owner,port,'component');
+      }else link(first,last,'component');
+      previousExit=last;
+    }
+    return segments;
 }
 
 /** Use PSI116 findings' original node_keys, not node numbers, for authoritative highlighting. */

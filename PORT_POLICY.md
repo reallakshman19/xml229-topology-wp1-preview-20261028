@@ -1,0 +1,17 @@
+# Inclusive 25 mm connection policy
+
+Owner intent: automatically fix compatible disconnections at **≤25 mm**, across PIPE, fitting and branch ports, and provide auditable outcomes instead of routine manual findings.
+
+The physical port model groups exported component records by owner reference, including mixed GASK/FLAN + RIGID endpoint records and negative-numbered helper ports. It matches adjacent physical interfaces and exposed cross-branch ports, including declared branch-to-TEE/OLET logical connections. Matching considers component ownership, closed-end declarations, available outside diameter, facing direction and unique counterparts. Competing targets, incompatible bores, unsupported populated owners, conflicting shared identities and restrained movement remain review cases.
+
+Automatic closure retains the finite/constrained owner. A PIPE endpoint may extend/shorten; a finite component and its already-connected fitting/gasket records translate together. Every record/reference remains present. Python rederives the port witnesses, movement group and inclusive limit at Apply; finite-component relative geometry, actual physical closure, the existing transaction checks and complete source-lineage replay must pass. The legacy manual closure also includes exactly 25 mm.
+
+Shared NodeNumber + position and explicit CLOS source evidence resolve existing connections/terminations without XML mutation. A BRAN stub with an actual parent TEE/OLET owner is recorded as a resolved reference, rather than an incomplete duplicate fitting. Resolved source keys remain inspectable, highlighted and downloadable in the connection evidence receipt.
+
+The canvas draws physical component ports, including a gasket's negative helper endpoint and the adjoining flange/RIGID endpoint. Finite gasket/flange lengths are preserved and shown. Autofix-All rechecks each committed working revision and continues through at most eight conflict-free passes; per-pass source identities and action IDs are retained in a v2 report when multiple passes are needed. It stops on failed validation, repeated output or the pass limit, retaining the last validated working revision and reporting remaining work.
+
+Author validation: 33 Python / 27 Node tests PASS, including exactly 25 mm, 25.0001 mm rejection, cross-branch PIPE/flange closure, declared branch/TEE owner correction, finite flange/gasket translation, ambiguity/bore controls, source-bound atomic rejection and source-lineage replay. Actual Chromium/Pyodide/download qualification is tracked on the PR's read-only validation workflow.
+
+Owner-provided 1,654-record model: the legacy corrected XML output is unchanged; active post-Autofix findings fall from 91 to 27 and termination reviews from 46 to 10. Raw source findings fall from 368 to 304 through evidence-based classification. The remaining 27 entries include 15 preserved short spans, 10 unresolved terminations and two identity/zero-span diagnostics. These are author observations, not independent engineering acceptance. Source XML and engineering identifiers are not included in the public change.
+
+The public pinned FirstpassXML exercises the changed policy separately. Protected PR #346 remains HOLD; prior R3 source-order-heuristic qualification is not promoted by this candidate.

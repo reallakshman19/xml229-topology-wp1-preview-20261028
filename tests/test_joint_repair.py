@@ -19,7 +19,7 @@ def fixture(join=124.9, extra=''):
 
 
 def request_for(result):
-    f=next(f for f in result.findings if f.code in {'NEAR_MISS_PIPE_JOINT','COINCIDENT_NODE_ALIAS_CANDIDATE','COINCIDENT_NODE_IDENTITY_AMBIGUOUS'})
+    f=next(f for f in result.findings if f.code in {'PORT_CONNECTION_WITHIN_TOLERANCE','NEAR_MISS_PIPE_JOINT','COINCIDENT_NODE_ALIAS_CANDIDATE','COINCIDENT_NODE_IDENTITY_AMBIGUOUS'})
     return {'sourceSha256':result.document.source_sha256,'findingId':f.finding_id,
             'moveKey':'B0:N30:S2','targetKey':'B0:N20:S1','evidence':'Confirmed intended joint: TEST-DRAWING-01'}
 
@@ -63,9 +63,8 @@ class JointRepair(unittest.TestCase):
         self.assertTrue(txn.committed, txn.reject_reasons)
         self.assertEqual(txn.after_result.document.branches[0].nodes[2].node_number,20)
 
-    def test_exact_25_mm_limit_rejected(self):
-        with self.assertRaisesRegex(ValueError,'strictly less than 25'):
-            apply(fixture(125))
+    def test_exact_25_mm_limit_included(self):
+        self.assertTrue(apply(fixture(125)).committed)
 
     def test_stale_source_and_missing_confirmation_rejected(self):
         for change,reason in [(lambda r:r.update(sourceSha256='stale'),'SOURCE_DRIFT'),
@@ -87,6 +86,6 @@ class JointRepair(unittest.TestCase):
     def test_automatic_plan_never_invents_connection_confirmation(self):
         result=resolve_psi116(fixture())
         self.assertFalse(any(a.disposition=='CLOSE_CONFIRMED_PIPE_JOINT' for a in result.fix_actions))
-        self.assertIn('NEAR_MISS_PIPE_JOINT',[f.code for f in result.findings])
+        self.assertIn('PORT_CONNECTION_WITHIN_TOLERANCE',[f.code for f in result.findings])
 
 if __name__=='__main__': unittest.main()

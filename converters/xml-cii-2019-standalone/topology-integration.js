@@ -10,6 +10,7 @@ const TOPOLOGY_PACKAGE_FILES = Object.freeze([
   'resolver.py',
   'transaction.py',
   'joint_repair.py',
+  'connection_ports.py',
   'lineage.py',
 ]);
 

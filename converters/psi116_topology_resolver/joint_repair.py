@@ -3,6 +3,7 @@ from dataclasses import replace
 from .models import FixAction
 
 CODES = frozenset({'NEAR_MISS_PIPE_JOINT', 'NEAR_MISS_BRANCH_ENDS',
+                   'PORT_CONNECTION_WITHIN_TOLERANCE',
                    'COINCIDENT_NODE_IDENTITY_AMBIGUOUS', 'COINCIDENT_NODE_ALIAS_CANDIDATE'})
 
 
@@ -38,8 +39,8 @@ def with_confirmed_joint_repairs(result, requests, config):
         if len(owners) != 1 or owners[0].semantic_type != 'PIPE' or len(owners[0].records) != 2:
             raise ValueError('A unique two-port PIPE owner is required; inspect component ownership upstream.')
     distance = moving.position.distance_to(target.position)
-    if distance >= min(25.0, config.joint_repair_threshold_mm):
-        raise ValueError('Joint closure requires a 3D separation strictly less than 25 mm.')
+    if distance > min(25.0, config.joint_repair_threshold_mm):
+        raise ValueError('Joint closure requires a 3D separation no greater than 25 mm.')
     owner = next(o for o in result.document.occurrences if moving in o.records)
     if target in owner.records:
         raise ValueError('Cannot close the two ends of the same PIPE component.')

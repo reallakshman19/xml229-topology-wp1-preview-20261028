@@ -28,7 +28,7 @@ def _branch_endpoints(doc: Psi116Document) -> tuple[tuple[str, NodeRecord], ...]
     return tuple(endpoints)
 
 def _analyze_connection_gaps(
-    doc: Psi116Document, config: ResolverConfig, add: Callable[..., Finding]
+    doc: Psi116Document, config: ResolverConfig, add: Callable[..., Finding], resolutions=None
 ) -> None:
     """Emit review candidates, not false claims of confirmed disconnection.
 
@@ -64,9 +64,25 @@ def _analyze_connection_gaps(
         )
 
     endpoints = _branch_endpoints(doc)
+    records = [n for b in doc.branches for n in b.nodes]
     used_pairs = set()
     for index, (role, node) in enumerate(endpoints):
         if node.position is None:
+            continue
+        shared = [n for n in records if n.branch_index != node.branch_index and n.positive
+                  and n.node_number == node.node_number and n.position and
+                  n.position.distance_to(node.position) <= tolerance]
+        closed = [n for n in records if n.branch_index == node.branch_index and
+                  n.connection_type == 'CLOS' and n.position and
+                  n.position.distance_to(node.position) <= tolerance]
+        if shared or closed:
+            if resolutions is not None:
+                resolutions.append({'code':'EXISTING_CONNECTION' if shared else 'DECLARED_CLOSED_END',
+                    'node_keys':sorted({node.key, *(n.key for n in shared or closed)}),
+                    'message':'Shared source NodeNumber and position establish an existing connection.' if shared else
+                              'Source CLOS evidence establishes a declared closed termination.',
+                    'authority':'SOURCE_NODE_IDENTITY_AND_XYZ' if shared else 'SOURCE_CLOS',
+                    'xmlChanged':False})
             continue
         peers = [(other_role, other, node.position.distance_to(other.position))
                  for j,(other_role,other) in enumerate(endpoints)

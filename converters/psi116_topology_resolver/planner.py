@@ -47,7 +47,13 @@ def _build_fix_actions(document: Psi116Document, findings: Sequence[Finding],
         changes: tuple[dict[str, object], ...] = ()
         blockers: tuple[str, ...] = (finding.code,) if finding.blocking else ()
 
-        if finding.code == "COINCIDENT_NODE_ALIAS_CANDIDATE":
+        if finding.code == 'PORT_CONNECTION_WITHIN_TOLERANCE':
+            disposition, status, confidence = 'CLOSE_PORT_CONNECTION', 'PROPOSED', 1.0
+            authority = 'OWNER_PORT_CONNECTION_LE_25_MM'
+            changes = (finding.details['portRepair'],)
+            message = finding.message
+            blockers = ()
+        elif finding.code == "COINCIDENT_NODE_ALIAS_CANDIDATE":
             owner_number = int(finding.details.get("ownerNodeNumber"))
             absorbed = tuple(number for number in finding.node_numbers if number != owner_number)
             disposition, status, confidence = "ALIAS_COINCIDENT_NODE", "PROPOSED", 1.0

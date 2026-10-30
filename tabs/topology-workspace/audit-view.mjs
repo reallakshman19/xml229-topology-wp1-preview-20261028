@@ -1,5 +1,6 @@
 /** Human-readable PSI116 rule audit. Presentation only: all severities and witnesses come from findings. */
 const RULES=Object.freeze({
+ PORT_CONNECTION_WITHIN_TOLERANCE:["Connection within 25 mm tolerance","Compatible physical ports have a unique counterpart within the inclusive project tolerance. Auto fix closes the interface and preserves finite component geometry."],
  NEAR_MISS_PIPE_JOINT:["Possible pipe-joint gap","Adjacent source PIPE occurrences have separated ends within the 3D near-miss screening range. Verify intended connection; source ordering alone is not proof."],
  NEAR_MISS_BRANCH_ENDS:["Possible gap between branch ends","Pipe endpoints in different branches nearly meet but do not coincide within the connection tolerance. Confirm design connectivity before joining."],
  BRANCH_END_UNVERIFIED:["Branch termination needs confirmation","The source branch end has no matching other-branch endpoint within tolerance. It might be a legitimate boundary, not a defect."],
@@ -32,6 +33,7 @@ const CATEGORIES=Object.freeze({
  unclassified:{title:"Unclassified rule — review",explain:"New PSI116 rules must be mapped explicitly; the preview will not infer an engineering category."}
 });
 const CATEGORY_BY_RULE=Object.freeze({
+ PORT_CONNECTION_WITHIN_TOLERANCE:"gaps",
  NEAR_MISS_PIPE_JOINT:"gaps",
  NEAR_MISS_BRANCH_ENDS:"gaps",
  BRANCH_END_UNVERIFIED:"gaps",
@@ -54,8 +56,8 @@ const CATEGORY_BY_RULE=Object.freeze({
  INSTRUMENT_RIGID_EVIDENCE_REQUIRED:"non_topology"
 });
 const MANUAL_GUIDE=Object.freeze({
- NEAR_MISS_PIPE_JOINT:"Confirm that these PIPE ports should connect. For an eligible joint below 25 mm, choose the retained port and use Close joint & recheck below. The other port moves to it; both component records remain. For shared or complex ownership, repair the authoring model and re-export.",
- NEAR_MISS_BRANCH_ENDS:"Check the intended branch connection. For an eligible pair of PIPE ports below 25 mm, choose the retained port and use Close joint & recheck. If the separation is intentional, record that outcome; shared or complex joints require upstream repair.",
+ NEAR_MISS_PIPE_JOINT:"Confirm that these PIPE ports should connect. For an eligible joint at ≤25 mm, choose the retained port and use Close joint & recheck below. The other port moves to it; both component records remain. For shared or complex ownership, repair the authoring model and re-export.",
+ NEAR_MISS_BRANCH_ENDS:"Check the intended branch connection. For an eligible pair of PIPE ports at ≤25 mm, choose the retained port and use Close joint & recheck. If the separation is intentional, record that outcome; shared or complex joints require upstream repair.",
  BRANCH_END_UNVERIFIED:"Confirm whether this start/end is an approved nozzle, free end, blind, cap or boundary. If it should connect, locate its intended partner and repair the upstream model; otherwise document the intended termination.",
  COINCIDENT_NODE_IDENTITY_AMBIGUOUS:"Inspect the original branch connection and component port records. Confirm which nodes truly connect in the 3D source, correct the owner/link upstream, and re-run the audit. Do not merge by XYZ alone.",
  ZERO_LENGTH_COMPONENT_SPAN:"Inspect the fitting's endpoint mapping and physical length. Correct the authoritative component geometry or helper ports upstream; do not delete the component to silence the error.",
@@ -82,8 +84,9 @@ const RULE_IMPACT=Object.freeze({
  NEAR_MISS_BRANCH_ENDS:"Two separate branch ends nearly meet in 3D; design intent is required before joining them.",
  BRANCH_END_UNVERIFIED:"The branch termination has no confirmed matching end; it may be an approved open boundary.",
 });
-const FIXABLE=new Set(["ALIAS_COINCIDENT_NODE","CONTRACT_PRESERVE_OWNER","SAFE_DROP_PIPE_GEOMETRY","REMOVE_FALSE_RIGID"]);
+const FIXABLE=new Set(["ALIAS_COINCIDENT_NODE","CONTRACT_PRESERVE_OWNER","SAFE_DROP_PIPE_GEOMETRY","REMOVE_FALSE_RIGID","CLOSE_PORT_CONNECTION"]);
 const RECOMMEND=Object.freeze({
+ CLOSE_PORT_CONNECTION:"Close compatible ports under the inclusive ≤25 mm project policy, retain component references and dimensions, then rerun the complete audit.",
  ALIAS_COINCIDENT_NODE:"Use one verified connection identity while preserving each source occurrence and trace.",
  CONTRACT_PRESERVE_OWNER:"Simplify this short span while retaining the special-component owner and engineering attributes.",
  SAFE_DROP_PIPE_GEOMETRY:"Remove only the dispensable plain-pipe record from a validated copy; retain the component owner and lineage.",
@@ -145,7 +148,7 @@ function itemHTML(item,reviews={},sourceByKey=null){
  const canClose=['NEAR_MISS_PIPE_JOINT','NEAR_MISS_BRANCH_ENDS',
   'COINCIDENT_NODE_IDENTITY_AMBIGUOUS','COINCIDENT_NODE_ALIAS_CANDIDATE'].includes(f.code)&&
   pair.length===2&&pair.every(r=>r?.position&&r.type==='PIPE'&&['1','2'].includes(r.endpoint)&&!r.restraint)&&
-  Math.hypot(pair[0].position.x-pair[1].position.x,pair[0].position.y-pair[1].position.y,pair[0].position.z-pair[1].position.z)<25;
+  Math.hypot(pair[0].position.x-pair[1].position.x,pair[0].position.y-pair[1].position.y,pair[0].position.z-pair[1].position.z)<=25;
  const nodes=(f.node_numbers||[]).slice(0,7).join(", ");
  const detail=(f.node_keys||[]).slice(0,12).join(", ");
  const reason=f.message||"Refer to rule evidence";
@@ -185,7 +188,7 @@ function itemHTML(item,reviews={},sourceByKey=null){
   (a?'<div class="audit-controls"><button data-audit-action="'+esc(a.action_id)+'">Locate on canvas</button>'+
     (fix.kind==="auto"?'<button class="audit-primary" data-auto-fix="'+esc(a.action_id)+'">Auto fix · validated copy</button>':'')+
     '</div>':'')+
-  (item.category==="gaps"?'<div class="audit-review">'+
+  (item.category==="gaps"&&fix.kind==="manual"?'<div class="audit-review">'+
     '<strong>Engineering review (session only, not acceptance)</strong>'+
     (saved?'<p class="audit-review-saved">Reviewer-marked: '+esc(saved.disposition==='intentional'?'Intentional termination':saved.disposition==='repair'?'Connection correction needed':'Still unresolved')+
        ' · evidence: '+esc(saved.note)+'</p>':'')+
@@ -198,7 +201,7 @@ function itemHTML(item,reviews={},sourceByKey=null){
     '<label>Drawing, P&ID or reasoning reference<input data-gap-review-note type="text" maxlength="250" placeholder="Evidence required" value="'+esc(saved?.note||'')+'"></label>'+
     '<button data-save-gap-review="'+esc(f.finding_id)+'">Save review note</button>'+
     '</div>':'')+
-  (canClose?'<div class="audit-joint"><strong>Close this joint · less than 25 mm</strong>'+
+  (canClose?'<div class="audit-joint"><strong>Close this joint · ≤25 mm</strong>'+
     '<label>Keep this port fixed; move the other port to it<select data-joint-target>'+
     pair.map(r=>'<option value="'+esc(r.key)+'">'+esc(r.key+' · '+r.refNo)+'</option>').join('')+'</select></label>'+
     '<label>Connection evidence / reason<input data-joint-evidence maxlength="250" placeholder="Drawing, P&amp;ID or confirmed connection reason"></label>'+
