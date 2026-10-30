@@ -268,9 +268,11 @@ class PortModel:
             if c is None:indices=range(i+1,len(self.ports))
             else:
                 indexes=set(unindexed)
-                for dx in (-1,0,1):
-                    for dy in (-1,0,1):
-                        for dz in (-1,0,1):
+                # The inclusive 25 mm guard below has a +1e-9 margin.
+                # Near a cell edge, that can span cells two steps apart.
+                for dx in range(-2,3):
+                    for dy in range(-2,3):
+                        for dz in range(-2,3):
                             indexes.update(finite_grid.get((c[0]+dx,c[1]+dy,c[2]+dz),()))
                 indices=sorted(j for j in indexes if j>i)
             for j in indices:
