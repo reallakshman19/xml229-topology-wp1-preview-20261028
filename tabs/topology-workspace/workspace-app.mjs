@@ -1,5 +1,5 @@
 /** XML229 WP1: standalone source-only topology inspection; no engineering acceptance. */
-import {runTopologyWorkerJob, cancelTopologyWorkerJobs} from './topology-worker-client.mjs';
+import {createTopologyWorkerClient} from './topology-worker-client.mjs';
 import {parseOccurrenceScene, affectedOccurrenceIds, escapeValue as esc} from './occurrence-scene.mjs';
 import {createTopologyCanvas} from './projected-canvas.mjs';
 import {buildAudit,renderAuditHTML,renderAuditSummary,filterCounts} from './audit-view.mjs';
@@ -38,8 +38,12 @@ function actionButton(action) {
     '</strong> · '+esc(action.disposition)+'<small>'+esc((blocked?'BLOCKED · ':'')+
     (action.message||action.branch_name||'No narrative supplied'))+'</small></button>';
 }
-export function mountTopologyWorkspace(root, {runEngine=runTopologyWorkerJob,cancelEngine=cancelTopologyWorkerJobs}={}) {
+export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   if(!root)throw Error('Topology workspace root is required');
+  // One isolated engine per workspace; test injection does not start a Worker.
+  const ownedWorker=runEngine?null:createTopologyWorkerClient();
+  runEngine ||= ownedWorker.run;
+  cancelEngine ||= ownedWorker?()=>ownedWorker.cancel():()=>{};
   const state={epoch:0,source:null,original:null,revision:0,applied:0,history:[],resolutions:[],shortElements:[],shortPreview:null,scene:null,plan:null,findings:[],result:null,
     selected:new Set(),search:'',filter:'all',category:'all',manualPorts:[],secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false};
   const canvas=createTopologyCanvas(query(root,'[data-canvas]'),onHits);
@@ -823,7 +827,7 @@ export function mountTopologyWorkspace(root, {runEngine=runTopologyWorkerJob,can
   return {getState:()=>({sourceSha256:state.source?.sourceSha256||null,revision:state.revision,applied:state.applied,
     occurrences:state.scene?.records.length||0,actions:state.plan?.actions.length||0,
     selected:[...state.selected],busy:state.busy}),load,analyze,
-    dispose(){cancelEngine();state.epoch++;canvas.dispose();root.removeEventListener('toggle',toggled,true);root.removeEventListener('click',click);
+    dispose(){cancelEngine();ownedWorker?.dispose();state.epoch++;canvas.dispose();root.removeEventListener('toggle',toggled,true);root.removeEventListener('click',click);
       root.removeEventListener('change',changed);root.removeEventListener('input',input);}};
 }
 const root=document.querySelector('#xml229-topology-workspace');
