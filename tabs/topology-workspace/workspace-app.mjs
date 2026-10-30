@@ -1,10 +1,11 @@
 /** XML229 WP1: standalone source-only topology inspection; no engineering acceptance. */
-import {runXmlCii2019StandaloneEngineJob} from '../xml-cii-2019-standalone/xml-cii-workflow-engine-client.js';
+import {createTopologyWorkerClient} from './topology-worker-client.mjs';
 import {parseOccurrenceScene, affectedOccurrenceIds, escapeValue as esc} from './occurrence-scene.mjs';
 import {createTopologyCanvas} from './projected-canvas.mjs';
 import {buildAudit,renderAuditHTML,renderAuditSummary,filterCounts} from './audit-view.mjs';
 import {eligibleActions,previewBatchPlan,explicitlyRejectedActionIds} from './batch-plan.mjs';
 import {runValidatedPasses} from './batch-runner.mjs';
+import {runShortBulk} from './short-bulk.mjs';
 import {secondPassHTML} from './second-pass.mjs';
 
 async function sha256(bytes) {
@@ -38,10 +39,14 @@ function actionButton(action) {
     '</strong> · '+esc(action.disposition)+'<small>'+esc((blocked?'BLOCKED · ':'')+
     (action.message||action.branch_name||'No narrative supplied'))+'</small></button>';
 }
-export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneEngineJob}={}) {
+export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   if(!root)throw Error('Topology workspace root is required');
+  // One isolated engine per workspace; test injection does not start a Worker.
+  const ownedWorker=runEngine?null:createTopologyWorkerClient();
+  runEngine ||= ownedWorker.run;
+  cancelEngine ||= ownedWorker?()=>ownedWorker.cancel():()=>{};
   const state={epoch:0,source:null,original:null,revision:0,applied:0,history:[],resolutions:[],shortElements:[],shortPreview:null,scene:null,plan:null,findings:[],result:null,
-    selected:new Set(),search:'',filter:'all',category:'all',manualPorts:[],secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false};
+    selected:new Set(),search:'',filter:'all',category:'all',manualPorts:[],secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false,shortBulk:null};
   const canvas=createTopologyCanvas(query(root,'[data-canvas]'),onHits);
   const updateStatus=message=>{query(root,'[data-status]').textContent=message;};
   const displayMessage=message=>{query(root,'[data-hits]').textContent=message;};
@@ -119,7 +124,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     const batchButton=query(root,'[data-auto-fix-all]');
     const allowed=eligibleActions(state.findings,plan.actions||[]);
     if(batchButton){
-      batchButton.disabled=state.busy||allowed.length===0;
+      batchButton.disabled=state.busy||state.batchRunning||allowed.length===0;
       batchButton.textContent='Autofix-All ('+allowed.length+' actions)';
     }
   }
@@ -247,7 +252,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
       ids[0]==='JOIN:'+jointRepairs[0].findingId+':'+jointRepairs[0].moveKey;
     const drop=shortElementRequests.length===1&&ids.length===1&&ids[0]===shortElementRequests[0].id;
     const dropWitness=drop?state.shortElements.find(r=>r.id===ids[0]):null;
-    if(!state.source||state.busy||!ids.length||(joint&&drop)||(!joint&&!drop&&ids.some(id=>!allowed.has(id)))){
+    if(!state.source||state.busy||(state.batchRunning&&receiptKey!=='batch')||!ids.length||(joint&&drop)||(!joint&&!drop&&ids.some(id=>!allowed.has(id)))){
       setFixStatus('Auto fix is not authorized for this selection. No XML was modified.','rejected');
       return;
     }
@@ -388,43 +393,158 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     }
   }
   function autoFix(actionId){return runFix([actionId],'single');}
+
+  // This preview is only a view of source-qualified data already received.
+  // Paginate so one click never constructs an unbounded DOM tree.
+  const SHORT_PREVIEW_PAGE_SIZE=24;
+  function renderShortPreview(){
+    const p=state.shortPreview,panel=query(root,'[data-short-preview]');
+    if(!p||!state.source||p.sha!==state.source.sourceSha256){panel.textContent='';return;}
+    const rows=state.shortElements,total=rows.length;
+    const pages=Math.max(1,Math.ceil(total/SHORT_PREVIEW_PAGE_SIZE));
+    p.page=Math.max(0,Math.min(p.page,pages-1));
+    const start=p.page*SHORT_PREVIEW_PAGE_SIZE;
+    const visible=rows.slice(start,start+SHORT_PREVIEW_PAGE_SIZE);
+    const eligible=rows.filter(r=>r.eligible).length;
+    panel.innerHTML='<h3>Drop elements ≤6 mm, then close</h3>'+
+      '<p role="status">PREVIEW ONLY · '+total+' measured candidates · '+eligible+
+      ' eligible under source checks · working XML unchanged. Select source owners, then explicitly Apply.</p>'+
+      '<p data-short-selection-count>'+p.selected.size+' selected · page '+(p.page+1)+' of '+pages+'</p>'+
+      '<button data-select-gaskets>Select eligible gaskets (all pages)</button>'+
+      '<ul>'+visible.map((r,i)=>'<li><label><input type="checkbox" data-short-index="'+(start+i)+'" '+
+        (!r.eligible?'disabled ':'')+(p.selected.has(r.id)?'checked ':'')+'>'+
+        esc(r.componentType+' · '+Number(r.lengthMm).toFixed(3)+' mm'+
+        (r.lengthBasis==='SOURCE_STRAIGHT_TWO_PORT_SPAN'?'':' source span; physical length unverified')+
+        ' · '+r.componentRefNo+' · '+r.recordCount+' records · weight '+r.weightRemoved)+
+        '</label><small>'+esc((r.nodeKeys||[]).join(', ')+' · '+
+        (r.eligible?'Length basis: straight port spacing':r.reason||'Manual review'))+
+        '</small></li>').join('')+'</ul>'+
+      '<div class="short-preview-pagination"><button data-short-prev '+(!p.page?'disabled':'')+'>Previous</button>'+
+      '<button data-short-next '+(p.page>=pages-1?'disabled':'')+'>Next</button></div>'+
+      (total?'<button data-run-short-drop '+(!p.selected.size?'disabled':'')+
+        '>Apply all '+p.selected.size+' selected &amp; close</button>':
+        '<p>No measurable two-port elements at ≤6 mm.</p>')+
+      '<p>One source-bound transaction and recheck per element. Cancel at any point; only validated revisions are retained.</p>';
+  }
   function previewShortElements(){
     if(!state.source||!state.plan||state.busy||state.batchRunning)return;
-    state.shortPreview={sha:state.source.sourceSha256,epoch:state.epoch};
-    const panel=query(root,'[data-short-preview]');
-    panel.innerHTML='<h3>Drop elements ≤6 mm, then close</h3><p>Choose complete two-port elements. Each selected element is removed and reconnected atomically; a failure retains the last validated copy. Removed weight and source records are recorded in the receipt.</p>'+
-      '<button data-select-gaskets>Select eligible gaskets</button>'+
-      '<ul>'+state.shortElements.map((r,i)=>'<li><label><input type="checkbox" data-short-index="'+i+'" '+(!r.eligible?'disabled':'')+'>'+esc(r.componentType+' · '+r.lengthMm.toFixed(3)+' mm'+(r.lengthBasis==='SOURCE_STRAIGHT_TWO_PORT_SPAN'?'':' source span; physical length unverified')+' · '+r.componentRefNo+' · '+r.recordCount+' records · weight '+r.weightRemoved)+'</label><small>'+esc(r.nodeKeys.join(', ')+' · '+(r.lengthBasis==='SOURCE_STRAIGHT_TWO_PORT_SPAN'?'Length basis: straight port spacing':r.reason)+(r.eligible||r.lengthBasis!=='SOURCE_STRAIGHT_TWO_PORT_SPAN'?'':' · '+r.reason))+'</small></li>').join('')+'</ul>'+
-      (state.shortElements.length?'<button data-run-short-drop>Apply selected drops &amp; close</button>':'<p>No measurable two-port elements at ≤6 mm.</p>');
+    state.shortPreview={sha:state.source.sourceSha256,epoch:state.epoch,page:0,selected:new Set()};
+    renderShortPreview();
+    query(root,'[data-short-preview]').scrollIntoView({block:'nearest'});
+  }
+
+  /** One UI publication for a fully audited sequence (or last validated checkpoint).
+   * Never call runFix() or repaint the canvas per selected element.
+   */
+  function publishShortBulk(outcome){
+    if(!outcome||outcome.originSha256!==state.source?.sourceSha256)
+      throw Error('SHORT_BULK_ORIGINAL_SOURCE_DRIFT');
+    const beforeCount=state.findings.length,applied=outcome.applied||[];
+    if(outcome.latest&&applied.length){
+      const next=outcome.latest;
+      const scene=parseOccurrenceScene(next.source.sourceText,next.source.sourceSha256);
+      const previous=state.source;
+      const reviews=Object.fromEntries(state.gapReviews);
+      state.source=next.source;
+      state.scene=scene;state.plan=next.plan;state.findings=next.findings.findings;
+      state.resolutions=next.findings.resolvedConnections||[];
+      state.shortElements=next.findings.shortElements||[];
+      state.manualPorts=next.findings.manualConnectionPorts||[];
+      state.secondPass=null;state.shortPreview=null;state.selected.clear();
+      state.gapReviews.clear();state.openCases.clear();
+      query(root,'[data-short-preview]').textContent='';
+      for(const [i,pass] of applied.entries()){
+        state.history.push({sourceSha256:pass.sourceSha256,fixedSha256:pass.fixedSha256,
+          actionIds:[pass.id],operations:pass.transaction.operations,validation:pass.validation.checks,
+          reviews:i===0?reviews:{},resolvedConnections:i===applied.length-1?state.resolutions:[]});
+      }
+      state.revision+=applied.length;
+      state.applied+=applied.length;
+      state.fix={sourceSha256:state.source.sourceSha256,receiptKey:'drop',
+        actionIds:applied.map(p=>p.id),xml:state.source.sourceText,
+        name:(previous.name.replace(/\\.xml$/i,'')||'input')+'.bulk-'+applied.length+'.validated.topofix.xml',
+        report:{schema:'xml229-short-element-bulk/v2',
+          status:'VALIDATED_WORKING_COPY_NOT_ENGINEERING_ACCEPTANCE',
+          source:{name:previous.name,sha256:outcome.originSha256},
+          fixedXmlSha256:state.source.sourceSha256,
+          requestedIds:outcome.requested,
+          applied:applied,skipped:outcome.skipped,
+          completed:outcome.completed,failedId:outcome.failedId||null,
+          pendingIds:outcome.pendingIds||[],
+          eligibleOnCurrentXml:next.findings.shortElements.filter(r=>r.eligible).length,
+          stopReason:outcome.stopReason,
+          stopMessage:outcome.stopMessage,findingsBefore:beforeCount,
+          findingsAfter:state.findings.length}};
+      canvas.setScene(scene);sourceMeta();
+      query(root,'[data-gap-review-status]').textContent=
+        'Bulk working revision changed. Review current findings and download source-bound repair history.';
+    }
+    const done=applied.length,skipped=outcome.skipped?.length||0;
+    const selected=outcome.requested?.length||0,failed=outcome.failedId?1:0;
+    const checked=done+skipped+failed,unprocessed=Math.max(0,selected-checked);
+    const nowEligible=state.shortElements.filter(r=>r.eligible).length;
+    if(checked+unprocessed!==selected)throw Error('SHORT_BULK_COUNT_RECONCILIATION_FAILED');
+    const reason=outcome.stopReason||'COMPLETE';
+    const message=(reason==='COMPLETE'?'BULK COMPLETE':'BULK STOPPED · '+reason)+
+      ' · selected '+selected+' = '+done+' validated + '+skipped+' skipped + '+failed+
+      ' failed + '+unprocessed+' unprocessed · eligible on CURRENT XML '+nowEligible+
+      ' · working revision '+state.revision+
+      (outcome.stopMessage?' · '+outcome.stopMessage:'')+
+      (done?' · validated XML, source-linked operations and lineage digests downloadable.':' · no XML changed.');
+    query(root,'[data-progress]').textContent=message;
+    setFixStatus(message,reason==='COMPLETE'&&done?'ready':done?'stopped':'rejected','drop');
+    updateStatus('Selected short-element batch finished. '+done+
+      ' validated; '+skipped+' not eligible on reanalysis. Engineering review remains required.');
   }
   async function dropShortElements(){
-    const preview=state.shortPreview;
-    if(state.busy||state.batchRunning||!preview||preview.epoch!==state.epoch||preview.sha!==state.source.sourceSha256)return;
-    const ids=getNodes(root,'[data-short-index]:checked').map(el=>state.shortElements[Number(el.dataset.shortIndex)]?.id).filter(Boolean);
-    if(!ids.length){setFixStatus('Select one or more eligible elements from the preview.','rejected');return;}
-    const generation=state.epoch,initialSha=state.source.sourceSha256;let index=0;
-    state.batchRunning=true;root.setAttribute('aria-busy','true');
-    const outcome=await runValidatedPasses({initialPlan:{actionIds:[ids[0]]},maxPasses:ids.length,
-      readState:()=>({sha:state.source.sourceSha256,revision:state.revision,fix:state.fix,failure:state.lastFailure}),
-      isCurrent:()=>generation===state.epoch,
-      runPass:async plan=>{
-        const row=state.shortElements.find(r=>r.id===plan.actionIds[0]);
-        if(!row?.eligible)throw Error('Selected element no longer qualifies; inspect the current source preview.');
-        const request={id:row.id,sourceSha256:state.source.sourceSha256,nodeKeys:row.nodeKeys};
-        await runFix([row.id],'drop',[],[request]);
-      },nextPlan:()=>({actionIds:++index<ids.length?[ids[index]]:[]})});
-    if(generation!==state.epoch)return;
-    const {passes,lastFix,stopReason,stopMessage}=outcome;
-    if(lastFix?.sourceSha256===state.source.sourceSha256)state.fix=lastFix;
-    if(passes.length){state.fix={...lastFix,report:{schema:'xml229-short-element-drop-batch/v1',
-      source:{sha256:initialSha,name:state.source.name},fixedXmlSha256:state.source.sourceSha256,
-      passes,stopReason,stopMessage,droppedElementCount:passes.length,
-      removedRecordCount:passes.reduce((sum,p)=>sum+p.operations.filter(o=>o.operation==='REMOVE_SELECTED_SHORT_ELEMENT_RECORD').length,0)},
-      name:state.source.name+'.dropped-'+passes.length+'.validated.topofix.xml'};}
-    const message=(stopReason==='COMPLETE'?'APPLIED':'STOPPED · '+stopMessage)+' · '+passes.length+
-      ' selected elements dropped and reconnected · '+(ids.length-passes.length)+' selected elements remain.';
-    setFixStatus(message,stopReason==='COMPLETE'?'ready':'stopped','drop');query(root,'[data-progress]').textContent=message;
-    state.batchRunning=false;refresh();
+    const p=state.shortPreview;
+    if(state.busy||state.batchRunning||!p||p.epoch!==state.epoch||
+       p.sha!==state.source?.sourceSha256)return;
+    const eligibleIds=new Set(state.shortElements.filter(r=>r.eligible).map(r=>r.id));
+    const ids=[...p.selected].filter(id=>eligibleIds.has(id));
+    if(!ids.length){setFixStatus('Select at least one source-qualified element.','rejected');return;}
+    const generation=state.epoch,source={...state.source};
+    state.batchRunning=true;state.shortBulk=null;refresh();
+    const startedAt=Date.now();
+    let lastBulkStatus='STARTING',lastCompleted=0,lastApplied=0,lastSkipped=0;
+    const paintBulkProgress=()=>{
+      if(generation!==state.epoch||!state.batchRunning)return;
+      const elapsed=Math.floor((Date.now()-startedAt)/1000);
+      query(root,'[data-progress]').textContent=
+        'BULK '+lastBulkStatus+' · '+lastCompleted+'/'+ids.length+
+        ' selected checked · '+lastApplied+' validated · '+lastSkipped+' skipped · '+
+        elapsed+' s elapsed · audit/canvas show PRE-BATCH REVISION '+state.revision+
+        ' (frozen snapshot until final publication). Cancel remains available.';
+    };
+    const heartbeat=setInterval(paintBulkProgress,1000);
+    query(root,'[data-progress]').textContent=
+      'BULK STARTED · 0/'+ids.length+' selected checked. Audit counts and canvas are PRE-BATCH SNAPSHOT at revision '+
+      state.revision+'. Python validates each owner headlessly; canvas refreshes after the batch.';
+    try{
+      const outcome=await runShortBulk({
+        source,shortElements:state.shortElements,selectedIds:ids,runEngine,
+        isCurrent:()=>generation===state.epoch,
+        onCheckpoint:checkpoint=>{if(generation===state.epoch)state.shortBulk=checkpoint;},
+        onProgress:step=>{
+          if(generation!==state.epoch)return;
+          lastBulkStatus=step.status;
+          lastCompleted=step.completed;lastApplied=step.applied;lastSkipped=step.skipped;
+          paintBulkProgress();
+        },
+      });
+      if(generation!==state.epoch)return;
+      state.shortBulk=null;
+      publishShortBulk(outcome);
+    }catch(error){
+      if(generation!==state.epoch)return;
+      const checkpoint=state.shortBulk||{originSha256:source.sourceSha256,latest:null,
+        applied:[],skipped:[],requested:ids,completed:0};
+      state.shortBulk=null;
+      publishShortBulk({...checkpoint,stopReason:'ERROR',stopMessage:error?.message||String(error)});
+    }finally{
+      clearInterval(heartbeat);
+      if(generation===state.epoch){state.batchRunning=false;state.shortBulk=null;refresh();}
+    }
   }
   function renderSecondPass(){
     const panel=query(root,'[data-second-pass]');if(!panel)return;
@@ -554,9 +674,9 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
   function refresh() {
     root.setAttribute('aria-busy',String(state.busy||state.batchRunning));
     renderRecords();renderActions();renderSelection();renderSecondPass();
-    query(root,'[data-analyze]').disabled=!state.source||state.busy;
-    query(root,'[data-cancel]').disabled=!state.busy;
-    getNodes(root,'[data-auto-fix],[data-close-joint],[data-add-second-pass]').forEach(button=>button.disabled=state.busy);
+    query(root,'[data-analyze]').disabled=!state.source||state.busy||state.batchRunning;
+    query(root,'[data-cancel]').disabled=!(state.busy||state.batchRunning);
+    getNodes(root,'[data-auto-fix],[data-close-joint],[data-add-second-pass]').forEach(button=>button.disabled=state.busy||state.batchRunning);
     getNodes(root,'[data-download-working],[data-download-history]').forEach(button=>button.disabled=state.busy||!state.revision);
   }
   function select(ids,add=false) {
@@ -578,7 +698,9 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
       (hits.length>50?'… More than 50 hits; use text search.':'');
   }
   async function load(file) {
+    cancelEngine();
     const generation=++state.epoch;
+    state.shortBulk=null;
     state.source=null;state.original=null;state.revision=0;state.applied=0;state.history=[];state.resolutions=[];state.shortElements=[];state.shortPreview=null;
     const shortPanel=query(root,'[data-short-preview]');if(shortPanel)shortPanel.textContent='';
     state.manualPorts=[];state.secondPass=null;state.openRules.clear();state.openCases.clear();
@@ -670,11 +792,29 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     }
     else if(target.hasAttribute('data-preview-short'))previewShortElements();
     else if(target.hasAttribute('data-select-gaskets')){
-      getNodes(root,'[data-short-index]').forEach(el=>el.checked=!el.disabled&&state.shortElements[Number(el.dataset.shortIndex)].componentType==='GASK');
+      const p=state.shortPreview;if(!p)return;
+      for(const r of state.shortElements)if(r.eligible&&r.componentType==='GASK')p.selected.add(r.id);
+      renderShortPreview();
+    }
+    else if(target.hasAttribute('data-short-prev')){
+      if(state.shortPreview){state.shortPreview.page--;renderShortPreview();}
+    }
+    else if(target.hasAttribute('data-short-next')){
+      if(state.shortPreview){state.shortPreview.page++;renderShortPreview();}
     }
     else if(target.hasAttribute('data-run-short-drop'))dropShortElements();
     else if(target.hasAttribute('data-analyze'))analyze();
-    else if(target.hasAttribute('data-cancel')){state.secondPass=null;state.epoch++;state.busy=false;state.batchRunning=false;refresh();
+    else if(target.hasAttribute('data-cancel')&&state.shortBulk){
+      // Terminate current Worker, then publish ONLY the last pre-Final-verified
+      // checkpoint. Do not invoke a second engine run or leave a half-applied UI.
+      const saved=state.shortBulk;
+      cancelEngine();state.epoch++;state.busy=false;state.batchRunning=false;
+      state.shortBulk=null;
+      publishShortBulk({...saved,stopReason:'CANCELLED',stopMessage:'User cancelled active batch'});
+      refresh();
+    }
+    else if(target.hasAttribute('data-cancel')){cancelEngine();state.secondPass=null;state.shortPreview=null;
+      query(root,'[data-short-preview]').textContent='';state.epoch++;state.busy=false;state.batchRunning=false;refresh();
       state.batch=null;query(root,'[data-batch-confirm]').textContent='';
       query(root,'[data-progress]').textContent='CANCELLED · working revision '+state.revision+' retained.';
       setFixStatus('Operation cancelled. No new working revision applied.','rejected');
@@ -717,6 +857,16 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     else if(target.hasAttribute('data-focus'))canvas.focus(state.selected);
   };
   const changed=event=>{
+    if(event.target.matches('[data-short-index]')){
+      const p=state.shortPreview,r=state.shortElements[Number(event.target.dataset.shortIndex)];
+      if(p&&r?.eligible&&p.epoch===state.epoch&&p.sha===state.source?.sourceSha256){
+        if(event.target.checked)p.selected.add(r.id);else p.selected.delete(r.id);
+        const status=query(root,'[data-short-selection-count]');
+        if(status)status.textContent=p.selected.size+' selected · page '+(p.page+1);
+        const run=query(root,'[data-run-short-drop]');
+        if(run){run.disabled=!p.selected.size;run.textContent='Apply all '+p.selected.size+' selected & close';}
+      }
+    }
     const d=state.secondPass;
     if(d&&event.target.matches('[data-second-source],[data-second-peer]')){
       if(event.target.matches('[data-second-source]')){d.sourceKey=event.target.value;d.peerKey='';}
@@ -757,7 +907,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
   return {getState:()=>({sourceSha256:state.source?.sourceSha256||null,revision:state.revision,applied:state.applied,
     occurrences:state.scene?.records.length||0,actions:state.plan?.actions.length||0,
     selected:[...state.selected],busy:state.busy}),load,analyze,
-    dispose(){state.epoch++;canvas.dispose();root.removeEventListener('toggle',toggled,true);root.removeEventListener('click',click);
+    dispose(){cancelEngine();ownedWorker?.dispose();state.epoch++;canvas.dispose();root.removeEventListener('toggle',toggled,true);root.removeEventListener('click',click);
       root.removeEventListener('change',changed);root.removeEventListener('input',input);}};
 }
 const root=document.querySelector('#xml229-topology-workspace');
