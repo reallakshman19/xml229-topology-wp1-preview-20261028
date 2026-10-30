@@ -40,7 +40,7 @@ def analyze_document(document: Psi116Document, config: ResolverConfig | None = N
         witnesses = [by_key[k] for k in finding.node_keys]
         if not witnesses or any(n.component_type != 'BRAN' for n in witnesses):continue
         parents = [p for n in witnesses for p in nodes if p.branch_index != n.branch_index
-                   and p.semantic_type in {'TEE','OLET'} and p.endpoint == 0 and p.positive
+                   and n.connection_type in {'TEE','OLET'} and p.semantic_type == n.connection_type and p.endpoint == 0 and p.positive
                    and p.node_number == n.node_number and p.position and n.position
                    and p.position.distance_to(n.position) <= config.connection_tolerance_mm]
         if parents:

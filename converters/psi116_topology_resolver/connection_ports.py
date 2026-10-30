@@ -86,12 +86,17 @@ class PortModel:
         if hasattr(self,'closed_keys'):return p.node.key in self.closed_keys
         return bool(bound_closure_records(self.doc,p.node,self.config.connection_tolerance_mm))
 
+    def junction_mismatch(self,a,b):
+        return any(p.node.component_type=='BRAN' and p.node.connection_type in {'TEE','OLET'} and
+                   self.kind(q.group) in {'TEE','OLET'} and p.node.connection_type!=self.kind(q.group)
+                   for p,q in ((a,b),(b,a)))
+
     def compatible(self,a,b,cross=False):
-        if a.group==b.group or self.closed(a) or self.closed(b):return False
+        if a.group==b.group or self.closed(a) or self.closed(b) or self.junction_mismatch(a,b):return False
         x,y=a.node,b.node
         # A declared branch-to-junction connection may have a smaller branch bore.
-        junction=(x.component_type=='BRAN' and x.connection_type in {'TEE','OLET'} and self.kind(b.group) in {'TEE','OLET'}) or \
-                 (y.component_type=='BRAN' and y.connection_type in {'TEE','OLET'} and self.kind(a.group) in {'TEE','OLET'})
+        junction=(x.component_type=='BRAN' and x.connection_type in {'TEE','OLET'} and x.connection_type==self.kind(b.group)) or \
+                 (y.component_type=='BRAN' and y.connection_type in {'TEE','OLET'} and y.connection_type==self.kind(a.group))
         explicit=junction and x.positive and y.positive and x.node_number==y.node_number
         if (x.endpoint==0 or y.endpoint==0) and not explicit:return False
         if explicit:return True  # independently bound source branch/junction identity

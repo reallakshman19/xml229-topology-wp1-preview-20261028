@@ -223,6 +223,34 @@ try{
   if(await page.locator('[data-auto-fix]').count())throw Error('Unqualified '+label+' offered automatic closure');
   result.compatibilityNegatives.push(label+': PASS');
  }
+ // F4: exact declaration/owner matching, including coincident audit conflicts.
+ const junctionNode=(n,kind,ref,end,xyz,extra='')=>`<Node><NodeNumber>${n}</NodeNumber><ComponentType>${kind}</ComponentType><ComponentRefNo>${ref}</ComponentRefNo><Endpoint>${end}</Endpoint><Position>${xyz}</Position>${extra}</Node>`;
+ const junctionFixture=(declared,owner,offset)=>'<PipeStressExport><Branch><Branchname>JUNCTION</Branchname>'+
+  junctionNode(-1,owner,'J',1,'0 0 0')+junctionNode(50,owner,'J',0,'100 0 0')+
+  junctionNode(-1,owner,'J',2,'200 0 0')+junctionNode(-1,owner,'J',3,'100 100 0')+
+  '</Branch><Branch><Branchname>BRANCH</Branchname>'+junctionNode(50,'BRAN','B',1,'100 0 '+offset,'<ConnectionType>'+declared+'</ConnectionType>')+'</Branch></PipeStressExport>';
+ result.junctionAuthority=[];
+ for(const [declared,owner,offset] of [['TEE','TEE',25],['OLET','OLET',25],['TEE','OLET',25],['OLET','TEE',25],['TEE','OLET',0],['OLET','TEE',0]]){
+  await page.locator('[data-file]').setInputFiles({name:'junction-authority.xml',mimeType:'application/xml',buffer:Buffer.from(junctionFixture(declared,owner,offset))});
+  await page.waitForFunction(()=>document.querySelector('[data-occ-summary]')?.textContent?.includes('5 of 5'));
+  await page.locator('[data-analyze]').click();
+  await page.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'),null,{timeout:120000});
+  if(declared===owner){
+   await page.locator('[data-auto-fix]').first().click();
+   await page.waitForFunction(()=>['ready','rejected'].includes(document.querySelector('[data-fix-result]')?.getAttribute('data-result')),null,{timeout:120000});
+   if(await page.locator('[data-fix-result]').getAttribute('data-result')!=='ready')throw Error('Matching '+declared+' authority rejected');
+   const download=page.waitForEvent('download');await page.locator('[data-download-working]').click();
+   const fixed=await readFile(await (await download).path(),'utf8');
+   const branchPosition=await page.evaluate(xml=>new DOMParser().parseFromString(xml,'application/xml').getElementsByTagNameNS('*','Branch')[1].getElementsByTagNameNS('*','Position')[0].textContent,fixed);
+   if(branchPosition!=='100 0 0')throw Error('Matching junction did not close to source owner');
+  }else{
+   if(await page.locator('[data-auto-fix]').count())throw Error('Mismatched junction offered Auto fix');
+   const conflict=page.locator('.audit-item').filter({hasText:'The branch TEE/OLET declaration disagrees'}).first();
+   if(!await conflict.count()||!(await conflict.locator('.audit-remedy').textContent()).includes('re-export and rerun'))throw Error('Junction mismatch lost manual source repair directions');
+   if((await page.locator('[data-resolved]').textContent()).includes('B1:N50:S0'))throw Error('Mismatched junction hidden as resolved');
+  }
+  result.junctionAuthority.push({declared,owner,offset,outcome:declared===owner?'CLOSED':'MANUAL_CONFLICT'});
+ }
  const fittingNodes=[[10,'A',1,0],[20,'A',2,86],[30,'B',1,96],[40,'B',2,182],[50,'C',1,192],[60,'C',2,278]];
  const chain='<PipeStressExport><Branch><Branchname>CHAIN</Branchname>'+fittingNodes.map(([n,ref,end,x])=>
    `<Node><NodeNumber>${n}</NodeNumber><ComponentType>FLAN</ComponentType><ComponentRefNo>${ref}</ComponentRefNo><Endpoint>${end}</Endpoint><Position>${x} 0 0</Position><OutsideDiameter>100</OutsideDiameter></Node>`).join('')+'</Branch></PipeStressExport>';
