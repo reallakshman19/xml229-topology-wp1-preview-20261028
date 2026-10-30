@@ -7,6 +7,7 @@ import {eligibleActions,previewBatchPlan,explicitlyRejectedActionIds} from './ba
 import {runValidatedPasses} from './batch-runner.mjs';
 import {runShortBulk} from './short-bulk.mjs';
 import {secondPassHTML} from './second-pass.mjs';
+import {enqueueManualFix,runManualFixQueue} from './manual-fix-queue.mjs';
 
 async function sha256(bytes) {
   const digest=await crypto.subtle.digest('SHA-256',bytes);
@@ -46,7 +47,14 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   runEngine ||= ownedWorker.run;
   cancelEngine ||= ownedWorker?()=>ownedWorker.cancel():()=>{};
   const state={epoch:0,source:null,original:null,revision:0,applied:0,history:[],resolutions:[],shortElements:[],shortPreview:null,scene:null,plan:null,findings:[],result:null,
-    selected:new Set(),search:'',filter:'all',category:'all',manualPorts:[],secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false,shortBulk:null};
+    selected:new Set(),search:'',filter:'all',category:'all',manualPorts:[],secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false,shortBulk:null,manualQueue:[],manualQueueRunning:false,manualQueueCheckpoint:null,manualQueueStatus:''};
+  // The queue lives alongside Second Pass, without changing the engineering audit.
+  const queuePanel=document.createElement('section');
+  queuePanel.dataset.manualQueue='';
+  queuePanel.className='audit-joint';
+  queuePanel.setAttribute('aria-label','Approved Manual Fix Queue');
+  const secondPanel=query(root,'[data-second-pass]');
+  if(secondPanel)secondPanel.insertAdjacentElement('beforebegin',queuePanel);
   const canvas=createTopologyCanvas(query(root,'[data-canvas]'),onHits);
   const updateStatus=message=>{query(root,'[data-status]').textContent=message;};
   const displayMessage=message=>{query(root,'[data-hits]').textContent=message;};
@@ -338,6 +346,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       const current=acceptAnalysis(recheck,fixedSha);
       const priorReviews=Object.fromEntries(state.gapReviews);
       state.source=nextSource;state.scene=nextScene;state.plan=current.plan;
+      invalidateManualQueue();
       state.resolutions=current.resolutions;
       state.shortElements=current.shortElements;state.shortPreview=null;state.manualPorts=current.manualPorts;state.secondPass=null;state.openCases.clear();
       const shortPanel=query(root,'[data-short-preview]');if(shortPanel)shortPanel.textContent='';
@@ -446,6 +455,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       const previous=state.source;
       const reviews=Object.fromEntries(state.gapReviews);
       state.source=next.source;
+      invalidateManualQueue();
       state.scene=scene;state.plan=next.plan;state.findings=next.findings.findings;
       state.resolutions=next.findings.resolvedConnections||[];
       state.shortElements=next.findings.shortElements||[];
@@ -546,14 +556,171 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       if(generation===state.epoch){state.batchRunning=false;state.shortBulk=null;refresh();}
     }
   }
+
+  function invalidateManualQueue(){
+    state.manualQueue=state.manualQueue.map(entry=>entry.status==='APPROVED'
+      ?{...entry,status:'STALE'}:entry);
+    state.manualQueueStatus='Working XML changed; re-preview and re-approve stale entries.';
+  }
+  function renderManualQueue(){
+    if(!queuePanel.isConnected)return;
+    queuePanel.hidden=!state.plan&&!state.manualQueue.length;
+    if(queuePanel.hidden)return;
+    const approved=state.manualQueue.filter(x=>x.status==='APPROVED');
+    const list=state.manualQueue.map(item=>'<li><strong>'+esc(item.findingId)+'</strong> · '+
+      esc(item.sourceKey)+' → '+esc(item.peerKey)+' · '+esc(item.status)+
+      (item.status==='APPROVED'?'<button data-queue-remove="'+esc(item.id)+'" type="button" '+
+      (state.busy||state.batchRunning?'disabled':'')+'>Remove</button>':'')+'</li>').join('');
+    queuePanel.innerHTML='<h3>Manual Fix Queue · '+approved.length+' approved</h3>'+
+      '<p>Select source and partner in Second Pass, preview, provide evidence, then Add to queue. '+
+      'Only authoritatively qualified and explicitly approved movements execute.</p>'+
+      (state.manualQueue.length?'<ol>'+list+'</ol>':'<p>No approved repairs queued.</p>')+
+      '<div><button data-queue-apply type="button" '+
+      (!approved.length||state.busy||state.batchRunning?'disabled':'')+
+      '>Apply '+approved.length+' approved fix(es) &amp; recheck</button> '+
+      '<button data-queue-clear type="button" '+
+      (!state.manualQueue.length||state.busy||state.batchRunning?'disabled':'')+
+      '>Clear queue</button></div>'+
+      '<p data-queue-status role="status">'+esc(state.manualQueueStatus||
+      'Queued repairs are preview-only until Apply. Full source evidence remains available.')+'</p>';
+  }
+  function queueSecondPass(){
+    const d=state.secondPass;
+    if(state.busy||state.batchRunning||!d?.preview||!d.confirmed||
+       d.evidence.trim().length<10||d.epoch!==state.epoch||
+       d.sourceSha256!==state.source?.sourceSha256)return;
+    try{
+      state.manualQueue=enqueueManualFix(state.manualQueue,d,state.source.sourceSha256);
+      state.manualQueueStatus='Approved exact pair queued. XML unchanged; review other cases or apply the queue.';
+      d.status='QUEUED · '+state.manualQueue.length+' approved pair(s). No XML changes.';
+      renderManualQueue();renderSecondPass();
+    }catch(error){
+      d.status='NOT QUEUED · '+String(error?.message||error);
+      renderSecondPass();
+    }
+  }
+  function publishManualQueue(outcome){
+    if(!outcome||outcome.initialSha256!==state.source?.sourceSha256)
+      throw Error('SECOND_PASS_QUEUE_SOURCE_PUBLISH_DRIFT');
+    const before=state.findings.length,applied=outcome.applied||[];
+    if(outcome.latest&&applied.length){
+      const next=outcome.latest;
+      const scene=parseOccurrenceScene(next.source.sourceText,next.source.sourceSha256);
+      state.source=next.source;state.scene=scene;
+      state.plan=next.plan;state.findings=next.findings.findings;
+      state.resolutions=next.findings.resolvedConnections||[];
+      state.shortElements=next.findings.shortElements||[];
+      state.manualPorts=next.findings.manualConnectionPorts||[];
+      state.selected.clear();state.openCases.clear();state.gapReviews.clear();
+      state.secondPass=null;state.shortPreview=null;
+      const shortPanel=query(root,'[data-short-preview]');
+      if(shortPanel)shortPanel.textContent='';
+      for(const item of applied){
+        state.history.push({sourceSha256:item.sourceSha256,
+          fixedSha256:item.fixedXmlSha256,actionIds:[item.actionId],
+          jointRepairs:[{mode:'SECOND_PASS',findingId:item.findingId,
+            sourceSha256:item.sourceSha256,portKeys:[item.sourceKey,item.peerKey],
+            approvedRepair:item.preview.repair,evidence:item.evidence,confirmed:true}],
+          operations:item.transaction.operations,validation:item.validation.checks,
+          preFinalHandoff:item.preFinal,lineage:item.lineage,
+          lineageSha256:item.lineageSha256});
+      }
+      state.revision+=applied.length;
+      state.applied+=applied.length;
+      state.fix={sourceSha256:state.source.sourceSha256,receiptKey:'manual-queue',
+        xml:state.source.sourceText,
+        name:(state.source.name.replace(/\\.xml$/i,'')||'input')+
+          '.manual-queue-'+applied.length+'.validated.topofix.xml',
+        report:{schema:'xml229-manual-fix-queue/v1',
+          status:'VALIDATED_WORKING_COPY_NOT_ENGINEERING_ACCEPTANCE',
+          originalSourceSha256:outcome.initialSha256,
+          fixedXmlSha256:state.source.sourceSha256,
+          requested:outcome.requested,applied,blocked:outcome.blocked,
+          unprocessed:outcome.pending,stopReason:outcome.stopReason,
+          stopMessage:outcome.message,findingsBefore:before,
+          findingsAfter:state.findings.length}};
+      canvas.setScene(scene);sourceMeta();
+      query(root,'[data-gap-review-status]').textContent=
+        'Manual queue applied. Prior review notes remain in the source-linked repair history.';
+    }
+    const appliedIds=new Set(applied.map(x=>x.id));
+    const blockedIds=new Set((outcome.blocked||[]).map(x=>x.id));
+    const pendingIds=new Set(outcome.pending||[]);
+    state.manualQueue=state.manualQueue.map(entry=>({...entry,status:
+      appliedIds.has(entry.id)?'APPLIED':
+      blockedIds.has(entry.id)?'BLOCKED':
+      pendingIds.has(entry.id)?'STALE':
+      entry.status==='APPROVED'?'STALE':entry.status}));
+    const total=outcome.requested?.length||0,a=applied.length,b=outcome.blocked?.length||0;
+    const remaining=outcome.pending?.length||0;
+    if(total!==a+b+remaining)throw Error('SECOND_PASS_QUEUE_COUNT_MISMATCH');
+    state.manualQueueStatus=(outcome.stopReason==='COMPLETE'?'QUEUE COMPLETE':'QUEUE STOPPED · '+outcome.stopReason)+
+      ' · '+total+' selected = '+a+' applied + '+b+' blocked + '+remaining+' re-review required'+
+      (outcome.message?' · '+outcome.message:'');
+    query(root,'[data-progress]').textContent=state.manualQueueStatus;
+    setFixStatus(state.manualQueueStatus,a?'ready':'rejected','manual-queue');
+    updateStatus('Manual Fix Queue reconciled. '+a+' validated connections; source review remains required.');
+    renderManualQueue();
+  }
+  async function applyManualQueue(){
+    if(state.busy||state.batchRunning||!state.source||!state.plan)return;
+    const entries=state.manualQueue.filter(x=>x.status==='APPROVED');
+    if(!entries.length)return;
+    const generation=state.epoch,original={...state.source};
+    if(entries.some(x=>x.approvedSourceSha256!==original.sourceSha256)){
+      state.manualQueueStatus='Approved queue is stale. Re-preview and approve on the current XML.';
+      renderManualQueue();return;
+    }
+    state.batchRunning=true;state.manualQueueRunning=true;
+    state.manualQueueCheckpoint={initialSha256:original.sourceSha256,
+      latest:null,applied:[],blocked:[],requested:entries.map(x=>x.id),
+      pending:entries.map(x=>x.id)};
+    const startedAt=Date.now();
+    let activeStage='RECHECK',verified=0,remaining=entries.length;
+    const heartbeat=()=>{
+      if(generation!==state.epoch||!state.manualQueueRunning)return;
+      state.manualQueueStatus='QUEUE '+activeStage+' · '+verified+'/'+entries.length+
+        ' verified · '+remaining+' remaining · '+Math.floor((Date.now()-startedAt)/1000)+
+        ' s elapsed. Audit and canvas show the pre-queue revision.';
+      const node=query(root,'[data-queue-status]');
+      if(node)node.textContent=state.manualQueueStatus;
+      query(root,'[data-progress]').textContent=state.manualQueueStatus;
+    };
+    const heartbeatId=setInterval(heartbeat,1000);
+    heartbeat();refresh();
+    try{
+      const outcome=await runManualFixQueue({source:original,entries,runEngine,
+        isCurrent:()=>generation===state.epoch,
+        onCheckpoint:saved=>{if(generation===state.epoch)state.manualQueueCheckpoint=saved;},
+        onProgress:progress=>{
+          if(generation!==state.epoch)return;
+          activeStage=progress.status;verified=progress.applied;
+          remaining=progress.remaining;heartbeat();
+        }});
+      if(generation!==state.epoch)return;
+      publishManualQueue(outcome);
+    }catch(error){
+      if(generation!==state.epoch)return;
+      const saved=state.manualQueueCheckpoint;
+      publishManualQueue({...saved,stopReason:'ERROR',message:String(error?.message||error)});
+    }finally{
+      clearInterval(heartbeatId);
+      if(generation===state.epoch){
+        state.batchRunning=false;state.manualQueueRunning=false;
+        state.manualQueueCheckpoint=null;refresh();
+      }
+    }
+  }
   function renderSecondPass(){
     const panel=query(root,'[data-second-pass]');if(!panel)return;
     panel.hidden=!state.secondPass;
     panel.innerHTML=secondPassHTML(state.secondPass?{...state.secondPass,busy:state.busy||state.batchRunning}:null,state.scene,state.manualPorts);
   }
   function updateSecondApply(){
-    const d=state.secondPass,button=query(root,'[data-apply-second]');
-    if(button)button.disabled=state.busy||!d?.preview||!d.confirmed||d.evidence.trim().length<10;
+    const d=state.secondPass;
+    getNodes(root,'[data-apply-second],[data-queue-second]').forEach(button=>{
+      button.disabled=state.busy||state.batchRunning||!d?.preview||!d.confirmed||d.evidence.trim().length<10;
+    });
   }
   function beginSecondPass(findingId){
     if(state.busy||state.batchRunning)return;
@@ -673,7 +840,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   }
   function refresh() {
     root.setAttribute('aria-busy',String(state.busy||state.batchRunning));
-    renderRecords();renderActions();renderSelection();renderSecondPass();
+    renderRecords();renderActions();renderSelection();renderSecondPass();renderManualQueue();
     query(root,'[data-analyze]').disabled=!state.source||state.busy||state.batchRunning;
     query(root,'[data-cancel]').disabled=!(state.busy||state.batchRunning);
     getNodes(root,'[data-auto-fix],[data-close-joint],[data-add-second-pass]').forEach(button=>button.disabled=state.busy||state.batchRunning);
@@ -703,7 +870,9 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     state.shortBulk=null;
     state.source=null;state.original=null;state.revision=0;state.applied=0;state.history=[];state.resolutions=[];state.shortElements=[];state.shortPreview=null;
     const shortPanel=query(root,'[data-short-preview]');if(shortPanel)shortPanel.textContent='';
-    state.manualPorts=[];state.secondPass=null;state.openRules.clear();state.openCases.clear();
+    state.manualPorts=[];state.secondPass=null;state.manualQueue=[];
+    state.manualQueueCheckpoint=null;state.manualQueueRunning=false;
+    state.manualQueueStatus='';state.openRules.clear();state.openCases.clear();
     state.scene=null;state.plan=null;state.findings=[];state.result=null;state.fix=null;state.batch=null;state.gapReviews.clear();
     query(root,'[data-progress]').textContent='Reading original · no repairs applied.';
     query(root,'[data-gap-review-status]').textContent='No review decisions recorded for this file.';
@@ -778,6 +947,16 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     else if(target.hasAttribute('data-download-gap-review'))downloadGapReview();
     else if(target.hasAttribute('data-close-joint'))closeJoint(target);
     else if(target.hasAttribute('data-add-second-pass'))beginSecondPass(target.dataset.addSecondPass);
+    else if(target.hasAttribute('data-queue-second'))queueSecondPass();
+    else if(target.hasAttribute('data-queue-apply'))applyManualQueue();
+    else if(target.hasAttribute('data-queue-remove')){
+      state.manualQueue=state.manualQueue.filter(x=>x.id!==target.dataset.queueRemove);
+      state.manualQueueStatus='Queued pair removed; source XML unchanged.';renderManualQueue();
+    }
+    else if(target.hasAttribute('data-queue-clear')){
+      state.manualQueue=[];state.manualQueueStatus='Queue cleared; source XML unchanged.';
+      renderManualQueue();
+    }
     else if(target.hasAttribute('data-preview-second'))previewSecondPass();
     else if(target.hasAttribute('data-apply-second'))applySecondPass();
     else if(target.hasAttribute('data-cancel-second')){state.secondPass=null;renderSecondPass();}
@@ -804,6 +983,15 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     }
     else if(target.hasAttribute('data-run-short-drop'))dropShortElements();
     else if(target.hasAttribute('data-analyze'))analyze();
+    else if(target.hasAttribute('data-cancel')&&state.manualQueueRunning){
+      const saved=state.manualQueueCheckpoint;
+      cancelEngine();state.epoch++;state.busy=false;
+      state.batchRunning=false;state.manualQueueRunning=false;
+      state.manualQueueCheckpoint=null;
+      publishManualQueue({...saved,stopReason:'CANCELLED',
+        message:'Operator cancelled. Last validated checkpoint retained.'});
+      refresh();
+    }
     else if(target.hasAttribute('data-cancel')&&state.shortBulk){
       // Terminate current Worker, then publish ONLY the last pre-Final-verified
       // checkpoint. Do not invoke a second engine run or leave a half-applied UI.
@@ -906,7 +1094,8 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   root.addEventListener('input',input);refresh();
   return {getState:()=>({sourceSha256:state.source?.sourceSha256||null,revision:state.revision,applied:state.applied,
     occurrences:state.scene?.records.length||0,actions:state.plan?.actions.length||0,
-    selected:[...state.selected],busy:state.busy}),load,analyze,
+    selected:[...state.selected],busy:state.busy,
+    queued:state.manualQueue.map(x=>({id:x.id,status:x.status})),queueBusy:state.manualQueueRunning}),load,analyze,
     dispose(){cancelEngine();ownedWorker?.dispose();state.epoch++;canvas.dispose();root.removeEventListener('toggle',toggled,true);root.removeEventListener('click',click);
       root.removeEventListener('change',changed);root.removeEventListener('input',input);}};
 }
