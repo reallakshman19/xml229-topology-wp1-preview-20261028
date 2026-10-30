@@ -531,6 +531,28 @@ try{
  if(await page.locator('[data-apply-second]').count()||!await page.locator('[data-download-working]').isDisabled())throw Error('Incompatible manual pair exposed Apply/output');
  result.manualSecondPassNegative='UNKNOWN_DIAMETER_REJECTED';
 
+ // A queued Second Pass must keep XML untouched until explicit queue Apply.
+ // The real PSI116 transaction and full pre-Final replay run in the Worker.
+ await openManualPair(manualPipeFlange,'B1:N30:S0');
+ await page.locator('[data-preview-second]').click();
+ await page.waitForFunction(()=>document.querySelector('[data-second-status]')?.textContent?.includes('PREVIEW ONLY'),null,{timeout:120000});
+ await page.locator('[data-second-evidence]').fill('DRAWING-SYNTHETIC-Q1 explicitly approves exact paired ports');
+ await page.locator('[data-second-confirm]').check();
+ if(await page.locator('[data-queue-second]').isDisabled())throw Error('Qualified confirmed port pair cannot enter queue');
+ await page.locator('[data-queue-second]').click();
+ if(!(await page.locator('[data-manual-queue]').textContent()).includes('1 approved')||
+    !(await page.locator('[data-occ-summary]').textContent()).includes('6 of 6')||
+    !(await page.locator('[data-download-working]').isDisabled()))
+   throw Error('Queue admission did not preserve the unchanged original working XML');
+ await page.locator('[data-queue-apply]').click();
+ await page.waitForFunction(()=>document.querySelector('main')?.getAttribute('aria-busy')==='false'&&
+    /QUEUE COMPLETE|QUEUE STOPPED/.test(document.querySelector('[data-queue-status]')?.textContent||''),null,{timeout:120000});
+ const queueSummary=await page.locator('[data-queue-status]').textContent();
+ if(!queueSummary.includes('QUEUE COMPLETE')||
+    !queueSummary.includes('1 selected = 1 applied + 0 blocked + 0 re-review required')||
+    !(await page.locator('[data-download-working]').isEnabled()))
+   throw Error('Qualified queue did not publish one validated working revision: '+queueSummary);
+ result.manualQueueRealBrowser='PASS: 1 explicitly approved pair, source-bound re-preview, atomic transaction, full replay and final UI publication';
  // Source-evidenced closure resolves without a geometry edit and is exportable.
  const closed='<PipeStressExport><Branch><Branchname>CLOSED</Branchname><Node><NodeNumber>-1</NodeNumber><ComponentType>BRAN</ComponentType><ComponentRefNo>B</ComponentRefNo><Endpoint>1</Endpoint><ConnectionType>CLOS</ConnectionType><Position>0 0 0</Position></Node><Node><NodeNumber>10</NodeNumber><ComponentType>FBLI</ComponentType><ComponentRefNo>F</ComponentRefNo><Endpoint>1</Endpoint><Position>0 0 0</Position></Node><Node><NodeNumber>-1</NodeNumber><ComponentType>FBLI</ComponentType><ComponentRefNo>F</ComponentRefNo><Endpoint>2</Endpoint><Position>32.2 0 0</Position></Node></Branch></PipeStressExport>';
  await page.locator('[data-file]').setInputFiles({name:'closed.xml',mimeType:'application/xml',buffer:Buffer.from(closed)});
