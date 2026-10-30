@@ -5,6 +5,7 @@ import {createTopologyCanvas} from './projected-canvas.mjs';
 import {buildAudit,renderAuditHTML,renderAuditSummary,filterCounts} from './audit-view.mjs';
 import {eligibleActions,previewBatchPlan,explicitlyRejectedActionIds} from './batch-plan.mjs';
 import {runValidatedPasses} from './batch-runner.mjs';
+import {secondPassHTML} from './second-pass.mjs';
 
 async function sha256(bytes) {
   const digest=await crypto.subtle.digest('SHA-256',bytes);
@@ -40,7 +41,7 @@ function actionButton(action) {
 export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneEngineJob}={}) {
   if(!root)throw Error('Topology workspace root is required');
   const state={epoch:0,source:null,original:null,revision:0,applied:0,history:[],resolutions:[],shortElements:[],shortPreview:null,scene:null,plan:null,findings:[],result:null,
-    selected:new Set(),search:'',filter:'all',category:'all',fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false};
+    selected:new Set(),search:'',filter:'all',category:'all',manualPorts:[],secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false};
   const canvas=createTopologyCanvas(query(root,'[data-canvas]'),onHits);
   const updateStatus=message=>{query(root,'[data-status]').textContent=message;};
   const displayMessage=message=>{query(root,'[data-hits]').textContent=message;};
@@ -56,7 +57,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     const findings=JSON.parse(result.topologyFindingsText||'null');
     if(plan?.source?.sha256!==sourceSha||findings?.source?.sha256!==sourceSha||
        !Array.isArray(plan.actions)||!Array.isArray(findings.findings))throw Error('TOPOFIX_PLAN_SOURCE_DRIFT');
-    return {plan,findings:findings.findings,resolutions:findings.resolvedConnections||[],shortElements:findings.shortElements||[]};
+    return {plan,findings:findings.findings,resolutions:findings.resolvedConnections||[],shortElements:findings.shortElements||[],manualPorts:findings.manualConnectionPorts||[]};
   }
   function renderSelection() {
     const ids=[...state.selected],records=ids.map(id=>state.scene?.byId.get(id)).filter(Boolean);
@@ -105,7 +106,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     summary.textContent=renderAuditSummary(audit);
     const visible=renderAuditHTML(audit,{search:state.search,filter:state.filter,
       category:state.category,reviews:Object.fromEntries(state.gapReviews),
-      sourceByKey:state.scene?.byKey});
+      sourceByKey:state.scene?.byKey,openRules:state.openRules.get(state.filter)||null,openCases:state.openCases});
     panel.innerHTML=visible.html;
     const receiptButton=query(root,'[data-download-gap-review]');
     if(receiptButton)receiptButton.disabled=!state.gapReviews.size;
@@ -135,7 +136,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
       if(state.fix.report){
         const receipt=document.createElement('button');
         receipt.type='button';receipt.dataset.downloadBatchReport='';
-        receipt.textContent='Download bulk audit / excluded actions';
+        receipt.textContent=state.fix.receiptKey==='second-pass'?'Download connection repair receipt':'Download bulk audit / excluded actions';
         panel.appendChild(receipt);
       }
     }
@@ -311,7 +312,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
       if(generation!==state.epoch)return;
       if(txn.fixedXmlSha256!==fixedSha||validation.fixedXmlSha256!==fixedSha)
         throw Error('Corrected XML digest mismatch');
-      const suffix=batch?'batch-'+ids.length:joint?'joint-closure':drop?'short-element-drop':'single-fix';
+      const suffix=batch?'batch-'+ids.length:joint?(jointRepairs[0].mode==='SECOND_PASS'?'second-pass':'joint-closure'):drop?'short-element-drop':'single-fix';
       const excluded=[...skippedByPlan,...skippedByEngine];
       const proposed=eligibleActions(state.findings,state.plan.actions).length;
       const beforeCount=state.findings.length;
@@ -333,7 +334,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
       const priorReviews=Object.fromEntries(state.gapReviews);
       state.source=nextSource;state.scene=nextScene;state.plan=current.plan;
       state.resolutions=current.resolutions;
-      state.shortElements=current.shortElements;state.shortPreview=null;
+      state.shortElements=current.shortElements;state.shortPreview=null;state.manualPorts=current.manualPorts;state.secondPass=null;state.openCases.clear();
       const shortPanel=query(root,'[data-short-preview]');if(shortPanel)shortPanel.textContent='';
       state.findings=current.findings;state.result=recheck;state.selected.clear();state.gapReviews.clear();
       state.selected=new Set(changedIds);
@@ -350,12 +351,14 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
         xml:result.topoFixXmlText,
         name:(source.name.replace(/\\.xml$/i,'')||'input')+'.'+suffix+
           '.validated.topofix.xml',
-        report:batch||drop?{schema:drop?'xml229-short-element-drop/v1':'xml229-preview-batch-topofix/v1',
+        report:batch||drop||joint?{schema:drop?'xml229-short-element-drop/v1':joint?'xml229-confirmed-connection/v1':'xml229-preview-batch-topofix/v1',
           status:'VALIDATED_COPY_NOT_ENGINEERING_ACCEPTANCE',
           source:{name:source.name,sha256:source.sourceSha256},
           fixedXmlSha256:fixedSha,
           proposedMutationCount:proposed,
           selectedActionIds:ids,excludedActions:excluded,
+          ...(joint?{connectionApproval:jointRepairs[0],transaction:txn,validation,lineage,
+            findingsBefore:beforeCount,findingsAfter:current.findings.length}:{}),
           ...(drop?{operations:txn.operations,selectedElement:dropWitness,
             selection:shortElementRequests,transaction:txn,validation,lineage,
             preFinalHandoff:JSON.parse(result.topoFixPreFinalHandoffText)}:{}),
@@ -423,6 +426,76 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     setFixStatus(message,stopReason==='COMPLETE'?'ready':'stopped','drop');query(root,'[data-progress]').textContent=message;
     state.batchRunning=false;refresh();
   }
+  function renderSecondPass(){
+    const panel=query(root,'[data-second-pass]');if(!panel)return;
+    panel.hidden=!state.secondPass;
+    panel.innerHTML=secondPassHTML(state.secondPass?{...state.secondPass,busy:state.busy||state.batchRunning}:null,state.scene,state.manualPorts);
+  }
+  function updateSecondApply(){
+    const d=state.secondPass,button=query(root,'[data-apply-second]');
+    if(button)button.disabled=state.busy||!d?.preview||!d.confirmed||d.evidence.trim().length<10;
+  }
+  function beginSecondPass(findingId){
+    if(state.busy||state.batchRunning)return;
+    const finding=state.findings.find(f=>f.finding_id===findingId);if(!finding)return;
+    const keys=(finding.node_keys||[]).filter(k=>state.manualPorts.some(p=>p.key===k&&!p.closed));
+    state.secondPass={sourceSha256:state.source.sourceSha256,epoch:state.epoch,findingId,
+      witnessKeys:finding.node_keys||[],sourceKey:keys[0]||'',peerKey:keys[1]||'',
+      evidence:state.gapReviews.get(findingId)?.note||'',search:'',confirmed:false,preview:null};
+    renderSecondPass();query(root,'[data-second-pass]').scrollIntoView({block:'nearest'});
+  }
+  function useSelectedPartner(){
+    const d=state.secondPass;if(!d||state.busy)return;
+    const records=[...state.selected].map(id=>state.scene.byId.get(id)).filter(Boolean);
+    if(records.length!==1||records[0].key===d.sourceKey||!state.manualPorts.some(p=>p.key===records[0].key&&!p.closed)){
+      d.status='Select exactly one different, open physical port on the canvas or in Source occurrences.';
+    }else{
+      d.peerKey=records[0].key;d.preview=null;d.confirmed=false;
+      d.status='Canvas partner selected. Preview before applying.';
+    }
+    renderSecondPass();
+  }
+  async function previewSecondPass(){
+    const d=state.secondPass;if(!d||state.busy||state.batchRunning||!d.sourceKey||!d.peerKey)return;
+    const generation=state.epoch;
+    const request={mode:'SECOND_PASS',sourceSha256:d.sourceSha256,findingId:d.findingId,portKeys:[d.sourceKey,d.peerKey]};
+    d.preview=null;d.confirmed=false;d.busy=true;d.status='Checking physical ports, movement groups and constraints…';
+    state.busy=true;refresh();
+    try{
+      const result=await runEngine({sourceKind:'xml',sourceText:state.source.sourceText,sourceName:state.source.name,
+        topologyPreFinalOnly:true,options:{outputMode:'enriched-only',analyzeTopology:true,generateTopoFix:false,
+          useTopoFixForCii:false,topologyConnectionPreview:request}});
+      if(generation!==state.epoch||state.secondPass!==d)return;
+      acceptAnalysis(result,d.sourceSha256);
+      const preview=JSON.parse(result.topologyFindingsText).manualConnectionPreview;
+      if(preview?.sourceSha256!==d.sourceSha256||preview.findingId!==d.findingId||
+        JSON.stringify(preview.portKeys)!==JSON.stringify(request.portKeys)||!preview.repair||!Array.isArray(preview.changes))
+        throw Error('Second-pass preview source or selected-port mismatch.');
+      d.preview=preview;d.status='PREVIEW ONLY · working XML and counts unchanged. Inspect the movement, enter evidence and confirm to apply.';
+    }catch(error){
+      if(generation===state.epoch&&state.secondPass===d){
+        const detail=error?.message||String(error);
+        d.status=detail.includes('INCOMPATIBLE_PORTS')?
+          'Cannot close these ports: check matching diameters/bore, facing directions, owner types and closed-end declarations. Correct missing or conflicting source evidence and re-export.':
+          detail.includes('MOVE_GROUP')?'Movement is constrained by restraints, shared ownership or pipe collapse. Select another qualified pair or correct the authoring model and re-export.':
+          'Preview unavailable · '+detail;
+      }
+    }finally{
+      if(generation===state.epoch){state.busy=false;d.busy=false;refresh();}
+    }
+  }
+  async function applySecondPass(){
+    const d=state.secondPass;
+    if(!d?.preview||!d.confirmed||d.evidence.trim().length<10||state.busy||state.batchRunning||
+      d.epoch!==state.epoch||d.sourceSha256!==state.source?.sourceSha256)return;
+    const repair=d.preview.repair;
+    const request={mode:'SECOND_PASS',sourceSha256:d.sourceSha256,findingId:d.findingId,
+      portKeys:[d.sourceKey,d.peerKey],moveKey:repair.movePortKey,targetKey:repair.targetPortKey,
+      approvedRepair:repair,evidence:d.evidence.trim(),confirmed:true};
+    await runFix(['JOIN:'+d.findingId+':'+repair.movePortKey],'second-pass',[request]);
+    if(state.secondPass===d){d.status='NOT APPLIED · '+(state.lastFailure||'Working revision retained.');renderSecondPass();}
+  }
+
   function closeJoint(button){
     if(state.busy)return;
     const item=button.closest('.audit-item');
@@ -473,10 +546,10 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
   }
   function refresh() {
     root.setAttribute('aria-busy',String(state.busy||state.batchRunning));
-    renderRecords();renderActions();renderSelection();
+    renderRecords();renderActions();renderSelection();renderSecondPass();
     query(root,'[data-analyze]').disabled=!state.source||state.busy;
     query(root,'[data-cancel]').disabled=!state.busy;
-    getNodes(root,'[data-auto-fix],[data-close-joint]').forEach(button=>button.disabled=state.busy);
+    getNodes(root,'[data-auto-fix],[data-close-joint],[data-add-second-pass]').forEach(button=>button.disabled=state.busy);
     getNodes(root,'[data-download-working],[data-download-history]').forEach(button=>button.disabled=state.busy||!state.revision);
   }
   function select(ids,add=false) {
@@ -501,6 +574,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     const generation=++state.epoch;
     state.source=null;state.original=null;state.revision=0;state.applied=0;state.history=[];state.resolutions=[];state.shortElements=[];state.shortPreview=null;
     const shortPanel=query(root,'[data-short-preview]');if(shortPanel)shortPanel.textContent='';
+    state.manualPorts=[];state.secondPass=null;state.openRules.clear();state.openCases.clear();
     state.scene=null;state.plan=null;state.findings=[];state.result=null;state.fix=null;state.batch=null;state.gapReviews.clear();
     query(root,'[data-progress]').textContent='Reading original · no repairs applied.';
     query(root,'[data-gap-review-status]').textContent='No review decisions recorded for this file.';
@@ -533,7 +607,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
   async function analyze() {
     if(!state.source||state.busy)return;
     const generation=state.epoch,source=state.source;state.busy=true;
-    state.plan=null;state.findings=[];state.batch=null;
+    state.plan=null;state.findings=[];state.batch=null;state.manualPorts=[];state.secondPass=null;
     query(root,'[data-batch-confirm]').textContent='';setFixStatus('');refresh();updateStatus('Running authoritative PSI116 topology analysis…');
     try {
       const result=await runEngine({sourceKind:'xml',sourceText:source.sourceText,
@@ -555,7 +629,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
         throw Error('PSI116 sidecar structure invalid');
       state.plan=plan;state.findings=findings.findings;state.result=result;
       state.resolutions=findings.resolvedConnections||[];
-      state.shortElements=findings.shortElements||[];
+      state.shortElements=findings.shortElements||[];state.manualPorts=findings.manualConnectionPorts||[];
       updateStatus('Authoritative topology analysis complete. '+plan.actions.length+
         ' plan entries. No Weight/O1/Final/native session was supplied or created.');
     } catch(error) {
@@ -574,13 +648,26 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     else if(target.hasAttribute('data-save-gap-review'))saveGapReview(target);
     else if(target.hasAttribute('data-download-gap-review'))downloadGapReview();
     else if(target.hasAttribute('data-close-joint'))closeJoint(target);
+    else if(target.hasAttribute('data-add-second-pass'))beginSecondPass(target.dataset.addSecondPass);
+    else if(target.hasAttribute('data-preview-second'))previewSecondPass();
+    else if(target.hasAttribute('data-apply-second'))applySecondPass();
+    else if(target.hasAttribute('data-cancel-second')){state.secondPass=null;renderSecondPass();}
+    else if(target.hasAttribute('data-second-use-selection'))useSelectedPartner();
+    else if(target.hasAttribute('data-second-locate')){
+      const d=state.secondPass;if(d){const ids=[d.sourceKey,d.peerKey].map(k=>state.scene.byKey.get(k)?.id).filter(Boolean);select(ids);canvas.focus(ids);}
+    }
+    else if(target.hasAttribute('data-rules-expand')||target.hasAttribute('data-rules-collapse')){
+      const open=target.hasAttribute('data-rules-expand');
+      const rules=getNodes(root,'.audit-rule');state.openRules.set(state.filter,new Set(open?rules.map(r=>r.dataset.ruleCode):[]));
+      rules.forEach(r=>r.open=open);
+    }
     else if(target.hasAttribute('data-preview-short'))previewShortElements();
     else if(target.hasAttribute('data-select-gaskets')){
       getNodes(root,'[data-short-index]').forEach(el=>el.checked=!el.disabled&&state.shortElements[Number(el.dataset.shortIndex)].componentType==='GASK');
     }
     else if(target.hasAttribute('data-run-short-drop'))dropShortElements();
     else if(target.hasAttribute('data-analyze'))analyze();
-    else if(target.hasAttribute('data-cancel')){state.epoch++;state.busy=false;state.batchRunning=false;refresh();
+    else if(target.hasAttribute('data-cancel')){state.secondPass=null;state.epoch++;state.busy=false;state.batchRunning=false;refresh();
       state.batch=null;query(root,'[data-batch-confirm]').textContent='';
       query(root,'[data-progress]').textContent='CANCELLED · working revision '+state.revision+' retained.';
       setFixStatus('Operation cancelled. No new working revision applied.','rejected');
@@ -623,6 +710,13 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     else if(target.hasAttribute('data-focus'))canvas.focus(state.selected);
   };
   const changed=event=>{
+    const d=state.secondPass;
+    if(d&&event.target.matches('[data-second-source],[data-second-peer]')){
+      if(event.target.matches('[data-second-source]')){d.sourceKey=event.target.value;d.peerKey='';}
+      else d.peerKey=event.target.value;
+      d.preview=null;d.confirmed=false;d.status='Selection changed. Preview this exact pair before applying.';renderSecondPass();
+    }
+    if(d&&event.target.matches('[data-second-confirm]')){d.confirmed=event.target.checked;updateSecondApply();}
     if(event.target.matches('[data-file]')&&event.target.files?.[0]){
       const file=event.target.files[0];event.target.value='';load(file);
     }
@@ -631,14 +725,32 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     if(event.target.matches('[data-labels]'))canvas.setShowLabels(event.target.checked);
   };
   const input=event=>{
+    const d=state.secondPass;
+    if(d&&event.target.matches('[data-second-evidence]')){d.evidence=event.target.value;updateSecondApply();}
+    if(d&&event.target.matches('[data-second-search]')){
+      d.search=event.target.value;const position=event.target.selectionStart;renderSecondPass();
+      const input=query(root,'[data-second-search]');input.focus();input.setSelectionRange(position,position);
+    }
     if(event.target.matches('[data-search]')){state.search=event.target.value.trim();renderRecords();renderActions();}
   };
+  const toggled=event=>{
+    if(!event.target.isConnected)return;
+    if(event.target.matches('.audit-rule')){
+      const set=state.openRules.get(state.filter)||new Set(getNodes(root,'.audit-rule[open]').map(r=>r.dataset.ruleCode));
+      if(event.target.open)set.add(event.target.dataset.ruleCode);else set.delete(event.target.dataset.ruleCode);
+      state.openRules.set(state.filter,set);
+    }
+    if(event.target.matches('.audit-case')){
+      if(event.target.open)state.openCases.add(event.target.dataset.caseId);else state.openCases.delete(event.target.dataset.caseId);
+    }
+  };
+  root.addEventListener('toggle',toggled,true);
   root.addEventListener('click',click);root.addEventListener('change',changed);
   root.addEventListener('input',input);refresh();
   return {getState:()=>({sourceSha256:state.source?.sourceSha256||null,revision:state.revision,applied:state.applied,
     occurrences:state.scene?.records.length||0,actions:state.plan?.actions.length||0,
     selected:[...state.selected],busy:state.busy}),load,analyze,
-    dispose(){state.epoch++;canvas.dispose();root.removeEventListener('click',click);
+    dispose(){state.epoch++;canvas.dispose();root.removeEventListener('toggle',toggled,true);root.removeEventListener('click',click);
       root.removeEventListener('change',changed);root.removeEventListener('input',input);}};
 }
 const root=document.querySelector('#xml229-topology-workspace');

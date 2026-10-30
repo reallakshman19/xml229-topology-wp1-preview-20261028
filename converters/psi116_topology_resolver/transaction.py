@@ -22,6 +22,7 @@ MUTATING_DISPOSITIONS = frozenset({
     "REMOVE_FALSE_RIGID",
     "CLOSE_CONFIRMED_PIPE_JOINT",
     "CLOSE_PORT_CONNECTION",
+    "CLOSE_CONFIRMED_PORT_CONNECTION",
 })
 EVIDENCE_ONLY_DISPOSITIONS = frozenset({"KEEP", "MERGE_CARRIER_WITH_COMPONENT"})
 
@@ -413,13 +414,20 @@ def _apply_confirmed_joint(action, locators, operation_id):
         authority=action.authority, source_xml_sha256=_record_sha(moving.record))
 
 
-def _apply_port_connection(result, action, locators, config, operation_start):
+def _apply_port_connection(result, action, locators, config, operation_start, confirmed_requests=()):
     from .connection_ports import PortModel
     model = PortModel(result.document, config)
     requested = action.proposed_changes[0]
-    verified = next((p for p in model.candidates() if
-        {p['movePortKey'],p['targetPortKey']} ==
-        {requested['movePortKey'],requested['targetPortKey']}), None)
+    if action.disposition == 'CLOSE_CONFIRMED_PORT_CONNECTION':
+        from .manual_connections import approved_connection
+        from .joint_repair import repair_action_id
+        if len(confirmed_requests) != 1 or repair_action_id(confirmed_requests[0]) != action.action_id:
+            raise ValueError('SECOND_PASS_EXPLICIT_APPROVAL_REQUIRED')
+        verified = approved_connection(result, confirmed_requests[0], config)
+    else:
+        verified = next((p for p in model.candidates() if
+            {p['movePortKey'],p['targetPortKey']} ==
+            {requested['movePortKey'],requested['targetPortKey']}), None)
     if verified != requested:
         raise ValueError('PORT_REPAIR_WITNESS_OR_POLICY_DRIFT')
     target = locators[verified['targetPortKey']]
@@ -507,7 +515,7 @@ def _validate_transaction(
             True, 'Port/owner fields match the authorized source-bound repair.' if operation.operation == 'CLOSE_COMPONENT_PORT' else
                   'Selected port has exactly the retained port position and NodeNumber.',
             source.position.as_list(), actual.position.as_list()))
-    if any(a.disposition == 'CLOSE_PORT_CONNECTION' for a in actions):
+    if any(a.disposition in {'CLOSE_PORT_CONNECTION','CLOSE_CONFIRMED_PORT_CONNECTION'} for a in actions):
         from .connection_ports import PortModel, FINITE
         model = PortModel(before.document, ResolverConfig())
         shape_ok = True
@@ -521,7 +529,7 @@ def _validate_transaction(
         checks.append(ValidationCheck('FINITE_COMPONENT_GEOMETRY_PRESERVED',shape_ok,True,
             'Every finite component retains all port/owner relative geometry.'))
         for action in actions:
-            if action.disposition != 'CLOSE_PORT_CONNECTION':continue
+            if action.disposition not in {'CLOSE_PORT_CONNECTION','CLOSE_CONFIRMED_PORT_CONNECTION'}:continue
             change=action.proposed_changes[0]
             a=model.by_key[change['movePortKey']];b=model.by_key[change['targetPortKey']]
             pa=after.document.branches[a.branch_index].nodes[a.source_index]
@@ -575,8 +583,8 @@ def apply_topofix_transaction(
                 operations.append(_apply_remove_false_rigid(before, action, locators, f"OP-{len(operations) + 1:06d}"))
             elif action.disposition == 'CLOSE_CONFIRMED_PIPE_JOINT':
                 operations.append(_apply_confirmed_joint(action, locators, f"OP-{len(operations) + 1:06d}"))
-            elif action.disposition == 'CLOSE_PORT_CONNECTION':
-                operations.extend(_apply_port_connection(before, action, locators, config, len(operations)+1))
+            elif action.disposition in {'CLOSE_PORT_CONNECTION','CLOSE_CONFIRMED_PORT_CONNECTION'}:
+                operations.extend(_apply_port_connection(before, action, locators, config, len(operations)+1, policy.joint_repairs))
             else:
                 raise ValueError(f"Unsupported selected disposition {action.disposition}.")
     except (KeyError, TypeError, ValueError) as error:

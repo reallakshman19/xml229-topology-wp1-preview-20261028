@@ -10,6 +10,7 @@ const TOPOLOGY_PACKAGE_FILES = Object.freeze([
   'resolver.py',
   'transaction.py',
   'joint_repair.py',
+  'manual_connections.py',
   'connection_ports.py',
   'short_elements.py',
   'lineage.py',
@@ -24,8 +25,13 @@ from psi116_topology_resolver.lineage import build_topofix_source_lineage, verif
 
 cfg = ResolverConfig()
 result = resolve_psi116(Path(job_topology_input_path))
+findings_payload = result.findings_payload(cfg)
+preview_request = json.loads(job_connection_preview_json)
+if preview_request:
+    from psi116_topology_resolver.manual_connections import preview_connection
+    findings_payload["manualConnectionPreview"] = preview_connection(result, preview_request, cfg)
 Path(job_topology_findings_path).write_text(
-    json.dumps(result.findings_payload(cfg), indent=2, sort_keys=True) + "\\n",
+    json.dumps(findings_payload, indent=2, sort_keys=True) + "\\n",
     encoding="utf-8",
 )
 Path(job_topology_plan_path).write_text(
@@ -196,6 +202,7 @@ export async function runPsi116TopologyStage(pyodide, job, inputPath, jobDir, st
   pyodide.globals.set('job_generate_topofix', generateTopoFix);
   pyodide.globals.set('job_topology_action_ids', actionIds);
   pyodide.globals.set('job_joint_repairs_json', JSON.stringify(options.topologyJointRepairs || []));
+  pyodide.globals.set('job_connection_preview_json', JSON.stringify(options.topologyConnectionPreview || null));
   pyodide.globals.set('job_short_elements_json', JSON.stringify(options.topologyShortElementRequests || []));
   await pyodide.runPythonAsync(TOPOLOGY_SNIPPET);
 

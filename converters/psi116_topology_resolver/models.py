@@ -201,6 +201,7 @@ class ResolutionResult:
 
     def findings_payload(self, config: ResolverConfig) -> dict[str, object]:
         from .short_elements import short_elements
+        from .manual_connections import manual_ports
         counts = Counter(finding.code for finding in self.findings)
         blocking = sum(1 for finding in self.findings if finding.blocking)
         return {
@@ -224,6 +225,7 @@ class ResolutionResult:
             "findings": [finding_to_dict(finding) for finding in self.findings],
             "resolvedConnections": list(self.connection_resolutions),
             "shortElements": short_elements(self.document,config),
+            "manualConnectionPorts": manual_ports(self.document,config),
         }
 
     def fix_plan_payload(self, config: ResolverConfig) -> dict[str, object]:

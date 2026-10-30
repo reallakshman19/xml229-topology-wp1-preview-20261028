@@ -99,6 +99,9 @@ const RECOMMEND=Object.freeze({
  BLOCK_AMBIGUOUS:"No automatic change is authorized. Investigate component ownership and connection evidence.",
 });
 const esc=v=>String(v??"").replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));
+const SECOND_PASS_RULES=new Set(['BRANCH_END_UNVERIFIED','NEAR_MISS_PIPE_JOINT',
+ 'NEAR_MISS_BRANCH_ENDS','COINCIDENT_NODE_IDENTITY_AMBIGUOUS',
+ 'COINCIDENT_NODE_ALIAS_CANDIDATE','PORT_CONNECTION_WITHIN_TOLERANCE']);
 const severity=f=>["ERROR","WARNING","INFO"].includes(f?.severity)?f.severity:"INFO";
 function resolution(action,finding){
  if(finding.blocking||action?.status==="BLOCKED"||(action?.blockers||[]).length)
@@ -174,7 +177,7 @@ function itemHTML(item,reviews={},sourceByKey=null){
    ?(chosen==="REVIEW_SOURCE_RECORD"&&a?.message?a.message:
      MANUAL_GUIDE[f.code]||"Inspect the original source-qualified records and component ownership. Correct the upstream engineering XML/export under human authority, then rerun the PSI116 audit.")
    :(RECOMMEND[chosen]||a?.message||"Review source geometry and ownership manually.");
- return '<article class="audit-item">'+
+ return '<article class="audit-item" data-finding-id="'+esc(f.finding_id)+'">'+
   '<h4 class="audit-item-title">'+esc(item.title)+'</h4>'+
   '<div class="audit-item-top"><span class="audit-severity '+item.severity.toLowerCase()+'">'+esc(item.severity)+'</span>'+
   '<span class="audit-resolution '+fix.kind+'">'+esc(fix.text)+'</span></div>'+
@@ -204,6 +207,9 @@ function itemHTML(item,reviews={},sourceByKey=null){
     '<label>Drawing, P&ID or reasoning reference<input data-gap-review-note type="text" maxlength="250" placeholder="Evidence required" value="'+esc(saved?.note||'')+'"></label>'+
     '<button data-save-gap-review="'+esc(f.finding_id)+'">Save review note</button>'+
     '</div>':'')+
+  (fix.kind==='manual'&&SECOND_PASS_RULES.has(f.code)?
+    '<button data-add-second-pass="'+esc(f.finding_id)+'">Add second pass</button>'+
+    '<p class="audit-context">Select the intended partner, preview the movement and confirm this connection. Separations over 25 mm require this explicit second pass.</p>':'')+
   (canClose?'<div class="audit-joint"><strong>Close this joint · ≤25 mm</strong>'+
     '<label>Keep this port fixed; move the other port to it<select data-joint-target>'+
     pair.map(r=>'<option value="'+esc(r.key)+'">'+esc(r.key+' · '+r.refNo)+'</option>').join('')+'</select></label>'+
@@ -221,7 +227,8 @@ function itemHTML(item,reviews={},sourceByKey=null){
   (a?.authority?'<p><strong>Authority:</strong> '+esc(a.authority)+'</p>':'')+
   '</details></article>';
 }
-export function renderAuditHTML(audit,{search="",filter="all",category="all",reviews={},sourceByKey=null}={}){
+export function renderAuditHTML(audit,{search="",filter="all",category="all",reviews={},sourceByKey=null,
+ openRules=null,openCases=null}={}){
  const q=search.trim().toLowerCase();
  const match=i=>[i.title,i.rule,i.finding.code,i.finding.message,i.finding.branch_name,
   i.action?.action_id,i.action?.disposition,...(i.finding.node_numbers||[]),
@@ -229,8 +236,9 @@ export function renderAuditHTML(audit,{search="",filter="all",category="all",rev
  const relevant=i=>match(i)&&(category==="all"||category===i.category)&&
   (filter==="all"||filter===i.severity.toLowerCase()||filter===i.fix.kind);
  let shown=0;
- const sections=Object.keys(CATEGORIES).map(categoryId=>{
-   const categoryGroups=audit.groups.filter(g=>g.category===categoryId);
+ const manual=filter==='manual';
+ const sections=(manual?['manual']:Object.keys(CATEGORIES)).map(categoryId=>{
+   const categoryGroups=manual?audit.groups:audit.groups.filter(g=>g.category===categoryId);
    const groupHTML=categoryGroups.map(g=>{
      const matches=g.items.filter(relevant);
      if(!matches.length)return "";
@@ -238,20 +246,27 @@ export function renderAuditHTML(audit,{search="",filter="all",category="all",rev
      const sev=matches.some(i=>i.severity==="ERROR")?"ERROR":matches.some(i=>i.severity==="WARNING")?"WARNING":"INFO";
      const autos=new Set(matches.filter(i=>i.fix.kind==="auto").map(i=>i.action?.action_id).filter(Boolean)).size;
      const manuals=matches.filter(i=>i.fix.kind==="manual").length;
-     return '<details class="audit-rule" '+(sev!=="INFO"||g.category==="gaps"?'open':'')+'><summary>'+
+     const expanded=openRules?openRules.has(g.code):!manual&&(sev!=="INFO"||g.category==="gaps");
+     return '<details class="audit-rule" data-rule-code="'+esc(g.code)+'" '+(expanded?'open':'')+'><summary>'+
       '<span class="audit-rule-title">'+esc(g.title)+'</span>'+
       '<span class="audit-rule-stats">'+matches.length+' findings · '+esc(sev)+
       (autos?' · '+autos+' Auto fix actions':'')+(manuals?' · '+manuals+' manual':'')+'</span></summary>'+
       '<p class="audit-rule-why"><strong>Why this rule flags a finding:</strong> '+esc(g.rule)+'</p>'+
-      matches.slice(0,200).map(i=>itemHTML(i,reviews,sourceByKey)).join("")+
+      matches.slice(0,200).map(i=>manual?
+       '<details class="audit-case" data-case-id="'+esc(i.finding.finding_id)+'" '+
+       (openCases?.has(i.finding.finding_id)?'open':'')+'><summary>'+esc(
+        (i.finding.node_numbers?.length?'Node '+i.finding.node_numbers.join(', '):i.finding.node_keys?.join(', '))+
+        ' · '+(i.finding.branch_name||'Source case'))+'</summary>'+itemHTML(i,reviews,sourceByKey)+'</details>':
+       itemHTML(i,reviews,sourceByKey)).join("")+
       (matches.length>200?'<p>Showing 200 findings; narrow search.</p>':'')+'</details>';
    }).filter(Boolean);
    if(!groupHTML.length)return "";
    const count=categoryGroups.flatMap(g=>g.items).filter(relevant).length;
-   const info=CATEGORIES[categoryId];
+   const info=manual?{title:'Manual Fix · By Rule',explain:'Open a rule, then a case. Counts show current unresolved findings; review notes do not close cases.'}:CATEGORIES[categoryId];
    return '<section class="audit-category" data-category-id="'+categoryId+'">'+
      '<h3>'+esc(info.title)+' <span class="audit-category-count">'+count+'</span></h3>'+
      '<p class="audit-category-explain">'+esc(info.explain)+'</p>'+
+     (manual?'<div class="audit-rule-tools"><button data-rules-expand>Expand rules</button><button data-rules-collapse>Collapse rules</button></div>':'')+
      groupHTML.join("")+'</section>';
  }).filter(Boolean);
  const empty=filter==="error"?

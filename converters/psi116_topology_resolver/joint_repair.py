@@ -17,6 +17,17 @@ def with_confirmed_joint_repairs(result, requests, config):
     if len(requests) != 1:
         raise ValueError('Repair one confirmed joint at a time; recheck before the next joint.')
     request = requests[0]
+    if request.get('mode') == 'SECOND_PASS':
+        from .manual_connections import approved_connection
+        repair = approved_connection(result, request, config)
+        action = FixAction(
+            action_id=repair_action_id(request), finding_ids=(request['findingId'],),
+            disposition='CLOSE_CONFIRMED_PORT_CONNECTION', status='PROPOSED', confidence=1.0,
+            authority='USER_CONFIRMED_SECOND_PASS:' + request['evidence'].strip(),
+            message='Apply the explicitly approved physical-port movement; preserve complete finite owners.',
+            proposed_changes=(repair,))
+        return replace(result, fix_actions=tuple(a for a in result.fix_actions
+            if request['findingId'] not in a.finding_ids) + (action,))
     if request.get('sourceSha256') != result.document.source_sha256:
         raise ValueError('JOINT_REPAIR_SOURCE_DRIFT')
     if not isinstance(request.get('evidence'), str) or len(request['evidence'].strip()) < 10:
