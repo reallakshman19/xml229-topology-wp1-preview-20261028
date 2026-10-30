@@ -149,7 +149,7 @@ export async function runManualFixQueue({
         sourceSha256:current.sourceSha256,fixedXmlSha256:fixedSha,
         sourceKey:item.sourceKey,peerKey:item.peerKey,
         evidence:item.designEvidence,actionId,preview:fresh,
-        transaction:txn,validation,preFinal,
+        transaction:txn,validation,preFinal,lineage,
         lineageSha256:await hash(result.topoFixLineageText)};
       if(!isCurrent()){stopReason='CANCELLED';break;}
       applied.push(receipt);pending.shift();
