@@ -461,7 +461,7 @@ try{
  await page.locator('[data-cancel-second]').click();
  if(!await page.locator('[data-second-pass]').isHidden()||!await page.locator('[data-download-working]').isDisabled())throw Error('Cancel changed working copy');
  result.manualPrototypeUsability.cancelLeavesOriginal=true;
- await page.locator('[data-search]').fill('SOURCE');
+ await page.locator('[data-search]').fill('B0:N20:S1');
  if(!(await page.locator('[data-audit-filter="manual"]').textContent()).includes('(1)'))throw Error('Manual rule search count did not narrow to source case');
  await page.locator('[data-search]').fill('');
  if(!(await page.locator('[data-audit-filter="manual"]').textContent()).includes('(3)'))throw Error('Clearing search lost original manual count');
