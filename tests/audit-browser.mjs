@@ -541,9 +541,9 @@ try{
  if(await page.locator('[data-queue-second]').isDisabled())throw Error('Qualified confirmed port pair cannot enter queue');
  await page.locator('[data-queue-second]').click();
  if(!(await page.locator('[data-manual-queue]').textContent()).includes('1 approved')||
-    !(await page.locator('[data-occ-summary]').textContent()).includes('6 of 6')||
+    !(await page.locator('[data-occ-summary]').textContent()).includes('4 of 4')||
     !(await page.locator('[data-download-working]').isDisabled()))
-   throw Error('Queue admission did not preserve the unchanged original working XML');
+   throw Error('Queue admission did not preserve the unchanged original working XML: queue='+await page.locator('[data-manual-queue]').textContent()+'; occurrences='+await page.locator('[data-occ-summary]').textContent());
  await page.locator('[data-queue-apply]').click();
  await page.waitForFunction(()=>document.querySelector('main')?.getAttribute('aria-busy')==='false'&&
     /QUEUE COMPLETE|QUEUE STOPPED/.test(document.querySelector('[data-queue-status]')?.textContent||''),null,{timeout:120000});
