@@ -423,7 +423,7 @@ try{
   const previewBounds=await page.locator('[data-second-pass]').boundingBox();
   const sideBounds=await page.locator('.topo-side').first().boundingBox();
   if(previewBounds.y<sideBounds.y-2||previewBounds.y>sideBounds.y+55)throw Error('Second-pass preview scrolled out of the findings viewport');
-  await page.screenshot({path:path.join(sourceRoot,'preview-test-results','manual-'+kind.toLowerCase()+'-preview.png'),fullPage:true});
+  await page.screenshot({path:path.join(sourceRoot,'preview-test-results','manual-'+kind.toLowerCase()+'-preview.png'),fullPage:false});
   await page.locator('[data-second-evidence]').fill('DRAWING-SYNTHETIC-02 explicitly confirms this connection');
   await page.locator('[data-second-confirm]').check();
   await page.locator('[data-apply-second]').click();
@@ -444,6 +444,39 @@ try{
   await writeFile(path.join(sourceRoot,'preview-test-results','manual-'+kind.toLowerCase()+'-receipt.json'),JSON.stringify(receipt,null,2));
   result.manualSecondPass.push({kind,distanceMm:75,preview:'NO_MUTATION',beforeCount,afterCount:await page.locator('[data-audit-filter="manual"]').textContent(),positions,progress,downloadSha256:receipt.fixedXmlSha256});
  }
+ // Prototype UX checks: navigation state, stale approval and cancellation use real controls.
+ result.manualPrototypeUsability={};
+ await openManualPair(manualPipeFlange,'B1:N30:S0');
+ await page.locator('[data-preview-second]').click();
+ await page.waitForFunction(()=>document.querySelector('[data-second-status]')?.textContent?.includes('PREVIEW ONLY'),null,{timeout:120000});
+ if(await page.locator('.audit-rule[open]').count()!==1||await page.locator('.audit-case[open]').count()!==1)throw Error('Preview redraw lost manual rule/case navigation');
+ result.manualPrototypeUsability.ruleAndCaseExpansionRetained=true;
+ await page.locator('[data-second-evidence]').fill('SYNTHETIC-DRAWING-03 confirms the displayed connection');
+ await page.locator('[data-second-confirm]').check();
+ if(await page.locator('[data-apply-second]').isDisabled())throw Error('Confirmed valid preview did not enable Apply');
+ await page.locator('[data-second-peer]').selectOption('');
+ if(await page.locator('[data-apply-second]').count()||await page.locator('.second-pass-preview').count())throw Error('Edited partner retained obsolete approval');
+ result.manualPrototypeUsability.partnerEditInvalidatesApproval=true;
+ if(!await page.locator('[data-download-working]').isDisabled())throw Error('Partner editing emitted working XML');
+ await page.locator('[data-cancel-second]').click();
+ if(!await page.locator('[data-second-pass]').isHidden()||!await page.locator('[data-download-working]').isDisabled())throw Error('Cancel changed working copy');
+ result.manualPrototypeUsability.cancelLeavesOriginal=true;
+ await page.locator('[data-search]').fill('SOURCE');
+ if(!(await page.locator('[data-audit-filter="manual"]').textContent()).includes('(1)'))throw Error('Manual rule search count did not narrow to source case');
+ await page.locator('[data-search]').fill('');
+ if(!(await page.locator('[data-audit-filter="manual"]').textContent()).includes('(3)'))throw Error('Clearing search lost original manual count');
+ result.manualPrototypeUsability.ruleSearchCountsRefresh=true;
+ await page.screenshot({path:path.join(sourceRoot,'preview-test-results','manual-by-rule-prototype.png'),fullPage:false});
+ await openManualPair(manualPipeFlange,'B1:N30:S0');
+ await page.locator('[data-preview-second]').click();
+ await page.waitForFunction(()=>document.querySelector('[data-second-status]')?.textContent?.includes('PREVIEW ONLY'),null,{timeout:120000});
+ await page.locator('[data-second-evidence]').fill('SYNTHETIC-DRAWING-04 confirms the current source only');
+ await page.locator('[data-second-confirm]').check();
+ await page.locator('[data-file]').setInputFiles({name:'replacement-source.xml',mimeType:'application/xml',buffer:Buffer.from(manualGasket)});
+ await page.waitForFunction(()=>document.querySelector('[data-source-meta]')?.textContent?.includes('replacement-source.xml'));
+ if(!await page.locator('[data-second-pass]').isHidden()||await page.locator('[data-apply-second]').count()||!await page.locator('[data-download-working]').isDisabled())throw Error('Loading replacement source retained old approved repair');
+ if(!(await page.locator('[data-progress]').textContent()).includes('revision 0'))throw Error('Replacement source reused old repair revision');
+ result.manualPrototypeUsability.replacementSourceInvalidatesApproval=true;
  // Unknown diameter cannot be overridden by the new manual control.
  await openManualPair(manualPipeFlange.replaceAll('<OutsideDiameter>100</OutsideDiameter>',''),'B1:N30:S0');
  await page.locator('[data-preview-second]').click();
