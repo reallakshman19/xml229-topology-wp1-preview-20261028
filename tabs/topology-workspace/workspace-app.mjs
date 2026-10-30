@@ -368,11 +368,15 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
       updateStatus('Repair applied and rechecked. Working revision '+state.revision+'.');
     }catch(error){
       if(generation===state.epoch){
-        state.lastFailure=error?.message||String(error);
-        query(root,'[data-progress]').textContent='NOT APPLIED · '+(error?.message||String(error))+
+        const detail=error?.message||String(error);
+        const message=drop?(detail.includes('RECONNECTION')?
+          'The element was retained because its surrounding ports could not reconnect. Check restraints, mating diameters and port directions.':
+          'Drop and close failed validation. The element was retained; reopen the preview and check its current source ports.'):detail;
+        state.lastFailure=message;
+        query(root,'[data-progress]').textContent='NOT APPLIED · '+message+
           ' · working revision '+state.revision+' retained.';
         setFixStatus('Auto fix NOT applied: '+
-        (error?.message||String(error))+'. No corrected XML is available. '+
+        message+(state.fix?.sourceSha256===state.source.sourceSha256?'. Last validated XML and receipt retained. ':'. No new corrected XML was emitted. ')+
         'Current working revision retained.','rejected');
       }
     }finally{
