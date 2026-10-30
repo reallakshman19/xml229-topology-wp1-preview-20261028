@@ -33,6 +33,7 @@ class TransactionPolicy:
     minimum_confidence: float = 0.95
     require_no_blocking_plan_actions: bool = True
     joint_repairs: tuple[dict, ...] = ()
+    short_element_requests: tuple[dict, ...] = ()
 
     def validate(self) -> None:
         if not math.isfinite(float(self.minimum_confidence)) or not 0 <= self.minimum_confidence <= 1:
@@ -539,6 +540,9 @@ def apply_topofix_transaction(
     config = config or ResolverConfig()
     config.validate()
     before = source if isinstance(source, ResolutionResult) else resolve_psi116(source, config)
+    if policy.short_element_requests:
+        from .short_elements import apply_short_element
+        return apply_short_element(before,policy,config)
     if policy.joint_repairs:
         from .joint_repair import with_confirmed_joint_repairs, repair_action_id
         if tuple(policy.selected_action_ids) != tuple(repair_action_id(r) for r in policy.joint_repairs):
