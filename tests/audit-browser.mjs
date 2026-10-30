@@ -354,7 +354,7 @@ try{
  await page.waitForFunction(()=>document.querySelector('main').getAttribute('aria-busy')==='false'&&document.querySelector('[data-fix-result]')?.getAttribute('data-result')==='rejected',null,{timeout:120000});
  result.shortDropRejected=await page.locator('[data-progress]').textContent();
  if(result.shortDropRejected.includes('Traceback')||!result.shortDropRejected.includes('Check restraints, mating diameters and port directions.')||
-  !result.shortDropRejected.includes('0 validated element(s) applied')||!(await page.locator('[data-occ-summary]').textContent()).includes('6 of 6')||
+  !result.shortDropRejected.includes('selected 1 = 0 validated + 0 skipped + 1 failed + 0 unprocessed')||!(await page.locator('[data-occ-summary]').textContent()).includes('6 of 6')||
   !(await page.locator('[data-download-working]').isDisabled())||await page.locator('[data-download-fix]').count())throw Error('Failed reconnection released a partial removal');
  // S1: zero-filled straight gaskets keep the inclusive boundary; curves/junctions are manual.
  result.shortLengthQualification=[];
