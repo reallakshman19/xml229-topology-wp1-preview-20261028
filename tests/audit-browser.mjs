@@ -321,7 +321,7 @@ try{
  await page.locator('[data-run-short-drop]').click();
  await page.waitForFunction(()=>document.querySelector('main').getAttribute('aria-busy')==='false'&&['ready','stopped'].includes(document.querySelector('[data-fix-result]')?.getAttribute('data-result')),null,{timeout:120000});
  result.shortDrop=await page.locator('[data-progress]').textContent();
- if(!result.shortDrop.includes('APPLIED · 1 selected elements dropped and reconnected')||!(await page.locator('[data-occ-summary]').textContent()).includes('4 of 4'))throw Error('Drop did not update working geometry/counts: '+result.shortDrop);
+ if(!result.shortDrop.includes('BULK COMPLETE · 1 validated element(s) applied')||!(await page.locator('[data-occ-summary]').textContent()).includes('4 of 4'))throw Error('Drop did not update working geometry/counts: '+result.shortDrop);
  const shortXmlDownload=page.waitForEvent('download');await page.locator('[data-download-fix]').click();
  const shortXml=await readFile(await (await shortXmlDownload).path(),'utf8');
  const shortPorts=await page.evaluate(xml=>[...new DOMParser().parseFromString(xml,'application/xml').getElementsByTagNameNS('*','Node')].map(n=>({
@@ -329,15 +329,14 @@ try{
  if(JSON.stringify(shortPorts)!==JSON.stringify([{xyz:'0 0 0',ref:'P'},{xyz:'103 0 0',ref:'P'},{xyz:'103 0 0',ref:'F'},{xyz:'189 0 0',ref:'F'}]))throw Error('Drop failed PIPE-first closure or changed retained flange');
  const shortReceiptDownload=page.waitForEvent('download');await page.locator('[data-download-batch-report]').click();
  const shortReceipt=JSON.parse(await readFile(await (await shortReceiptDownload).path(),'utf8'));
- const shortPass=shortReceipt.passes?.[0];
- if(shortReceipt.schema!=='xml229-short-element-drop-batch/v1'||shortReceipt.stopReason!=='COMPLETE'||shortReceipt.droppedElementCount!==1||shortReceipt.removedRecordCount!==2||
+ const shortPass=shortReceipt.applied?.[0];
+ if(shortReceipt.schema!=='xml229-short-element-bulk/v2'||shortReceipt.stopReason!=='COMPLETE'||shortReceipt.applied.length!==1||shortPass.transaction.operations.filter(o=>o.operation==='REMOVE_SELECTED_SHORT_ELEMENT_RECORD').length!==2||
    shortReceipt.fixedXmlSha256!==createHash('sha256').update(shortXml).digest('hex')||
    shortPass.transaction.policy.short_element_requests[0].sourceSha256!==createHash('sha256').update(shortFixture).digest('hex')||
-   shortPass.operations.filter(o=>o.operation==='REMOVE_SELECTED_SHORT_ELEMENT_RECORD').length!==2||
    shortPass.lineage.counts.removedSelectedShortElementOccurrences!==2||shortPass.selectedElement.weightRemoved!==2.5||
    shortPass.selectedElement.lengthBasis!=='SOURCE_STRAIGHT_TWO_PORT_SPAN'||
    !shortPass.validation.checks.some(c=>c.code==='SHORT_ELEMENT_LENGTH_BASIS_QUALIFIED'&&c.passed&&c.details.lengthBasis==='SOURCE_STRAIGHT_TWO_PORT_SPAN')||
-   !shortPass.operations.some(o=>o.before?.includes?.('<ComponentType>RIGID</ComponentType>')))
+   !shortPass.transaction.operations.some(o=>o.before?.includes?.('<ComponentType>RIGID</ComponentType>')))
    throw Error('Short removal receipt lost source selection/tombstones/lineage/weight');
  await writeFile(path.join(sourceRoot,'preview-test-results','short-drop.xml'),shortXml);
  await writeFile(path.join(sourceRoot,'preview-test-results','short-drop-receipt.json'),JSON.stringify(shortReceipt,null,2));
@@ -352,10 +351,10 @@ try{
  await page.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'),null,{timeout:120000});
  await page.locator('[data-preview-short]').click();await page.locator('[data-select-gaskets]').click();
  await page.locator('[data-run-short-drop]').click();
- await page.waitForFunction(()=>document.querySelector('main').getAttribute('aria-busy')==='false'&&document.querySelector('[data-fix-result]')?.getAttribute('data-result')==='stopped',null,{timeout:120000});
+ await page.waitForFunction(()=>document.querySelector('main').getAttribute('aria-busy')==='false'&&document.querySelector('[data-fix-result]')?.getAttribute('data-result')==='rejected',null,{timeout:120000});
  result.shortDropRejected=await page.locator('[data-progress]').textContent();
  if(result.shortDropRejected.includes('Traceback')||!result.shortDropRejected.includes('Check restraints, mating diameters and port directions.')||
-  !result.shortDropRejected.includes('0 selected elements dropped')||!(await page.locator('[data-occ-summary]').textContent()).includes('6 of 6')||
+  !result.shortDropRejected.includes('0 validated element(s) applied')||!(await page.locator('[data-occ-summary]').textContent()).includes('6 of 6')||
   !(await page.locator('[data-download-working]').isDisabled())||await page.locator('[data-download-fix]').count())throw Error('Failed reconnection released a partial removal');
  // S1: zero-filled straight gaskets keep the inclusive boundary; curves/junctions are manual.
  result.shortLengthQualification=[];
@@ -421,7 +420,7 @@ try{
     !(await scalePage.locator('[data-short-preview]').textContent()).includes('130 measured candidates'))
    throw Error('Scale preview must render only one page of 24 out of 130');
  await scalePage.locator('[data-select-gaskets]').click();
- if(!(await scalePage.locator('[data-run-short-drop]').textContent()).includes('Apply next 8 of 130'))
+ if(!(await scalePage.locator('[data-run-short-drop]').textContent()).includes('Apply all 130 selected'))
    throw Error('Selection must expose the bounded eight-owner batch size');
  await scalePage.locator('[data-short-next]').click();
  if(await scalePage.locator('[data-short-index]:checked').count()!==24||
@@ -429,7 +428,7 @@ try{
    throw Error('Selection was lost across short-preview pages');
  if((await scalePage.locator('[data-progress]').textContent()).includes('APPLIED'))
    throw Error('A preview or selection mutated working XML');
- result.shortPreviewScale='PASS: 130 rows, 24/page, selection across pages, explicit batch cap 8, no mutation';
+ result.shortPreviewScale='PASS: 130 rows, 24/page, selection across pages, full-selection bulk intent, no mutation';
  await scalePage.close();
  // Manual Fix is a collapsed rule/case queue. >25 mm repairs require a separate preview and approval.
  const manualNode=(number,kind,ref,end,x,extra='')=>'<Node><NodeNumber>'+number+'</NodeNumber><ComponentType>'+kind+'</ComponentType><ComponentRefNo>'+ref+'</ComponentRefNo><Endpoint>'+end+'</Endpoint><Position>'+x+' 0 0</Position><OutsideDiameter>100</OutsideDiameter>'+extra+'</Node>';
