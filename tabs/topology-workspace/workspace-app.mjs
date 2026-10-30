@@ -505,6 +505,18 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     if(!ids.length){setFixStatus('Select at least one source-qualified element.','rejected');return;}
     const generation=state.epoch,source={...state.source};
     state.batchRunning=true;state.shortBulk=null;refresh();
+    const startedAt=Date.now();
+    let lastBulkStatus='STARTING',lastCompleted=0,lastApplied=0,lastSkipped=0;
+    const paintBulkProgress=()=>{
+      if(generation!==state.epoch||!state.batchRunning)return;
+      const elapsed=Math.floor((Date.now()-startedAt)/1000);
+      query(root,'[data-progress]').textContent=
+        'BULK '+lastBulkStatus+' · '+lastCompleted+'/'+ids.length+
+        ' selected checked · '+lastApplied+' validated · '+lastSkipped+' skipped · '+
+        elapsed+' s elapsed · audit/canvas show PRE-BATCH REVISION '+state.revision+
+        ' (frozen snapshot until final publication). Cancel remains available.';
+    };
+    const heartbeat=setInterval(paintBulkProgress,1000);
     query(root,'[data-progress]').textContent=
       'BULK STARTED · 0/'+ids.length+' selected checked. Audit counts and canvas are PRE-BATCH SNAPSHOT at revision '+
       state.revision+'. Python validates each owner headlessly; canvas refreshes after the batch.';
@@ -515,11 +527,9 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
         onCheckpoint:checkpoint=>{if(generation===state.epoch)state.shortBulk=checkpoint;},
         onProgress:step=>{
           if(generation!==state.epoch)return;
-          query(root,'[data-progress]').textContent='BULK '+step.status+
-            ' · '+step.completed+'/'+step.total+' selected checked · '+step.applied+
-            ' validated · '+step.skipped+' skipped · '+(step.currentEligible??'UNKNOWN')+
-            ' eligible on in-progress source (not yet displayed) · audit/canvas show PRE-BATCH REVISION '+
-            state.revision+' until publication';
+          lastBulkStatus=step.status;
+          lastCompleted=step.completed;lastApplied=step.applied;lastSkipped=step.skipped;
+          paintBulkProgress();
         },
       });
       if(generation!==state.epoch)return;
@@ -532,6 +542,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       state.shortBulk=null;
       publishShortBulk({...checkpoint,stopReason:'ERROR',stopMessage:error?.message||String(error)});
     }finally{
+      clearInterval(heartbeat);
       if(generation===state.epoch){state.batchRunning=false;state.shortBulk=null;refresh();}
     }
   }
