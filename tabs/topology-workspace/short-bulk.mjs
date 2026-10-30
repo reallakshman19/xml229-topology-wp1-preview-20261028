@@ -75,7 +75,7 @@ export async function runShortBulk({
          !Array.isArray(findings?.shortElements))
         throw Error('SHORT_BULK_SOURCE_LINEAGE_OR_RECHECK_DRIFT');
       applied.push({id,sourceSha256:current.sourceSha256,fixedSha256:fixedSha,
-        request,transaction:txn,validation,lineage,preFinal});
+        request,selectedElement:row,transaction:txn,validation,lineage,preFinal});
       current={...current,sourceText:result.topoFixXmlText,sourceSha256:fixedSha};
       rows=findings.shortElements;
       latest={source:current,findings,plan};
