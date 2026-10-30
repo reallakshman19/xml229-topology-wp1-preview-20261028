@@ -407,6 +407,12 @@ try{
   ['PIPE_FLANGE',manualPipeFlange,'B1:N30:S0','B0:N20:S1',[0,175,175,261]],
   ['GASK_PIPE',manualGasket,'B1:N40:S1','B1:N40:S1',[100,103,-100,100]]]){
   await openManualPair(xml,peer);
+  if(kind==='GASK_PIPE'){
+   await page.locator('[data-second-peer]').selectOption('');
+   await page.locator('[data-occ-id$=":B1:N40:S1"]').click();
+   await page.locator('[data-second-use-selection]').click();
+   if(await page.locator('[data-second-peer]').inputValue()!==peer)throw Error('Exact canvas/occurrence partner selection failed');
+  }
   const beforeCount=await page.locator('[data-audit-filter="manual"]').textContent();
   await page.locator('[data-preview-second]').click();
   await page.waitForFunction(()=>/PREVIEW ONLY|Cannot close|Preview unavailable/.test(document.querySelector('[data-second-status]')?.textContent||''),null,{timeout:120000});
@@ -414,6 +420,9 @@ try{
   if(!preview.includes('75.000 mm closure')||!preview.includes('Move '+movedKey))throw Error('Manual preview lacks exact distance or PIPE movement priority: '+preview);
   if(!await page.locator('[data-download-working]').isDisabled()||!await page.locator('[data-apply-second]').isDisabled())throw Error('Preview must not apply XML or allow unconfirmed movement');
   if(await page.locator('[data-audit-filter="manual"]').textContent()!==beforeCount)throw Error('Preview changed findings');
+  const previewBounds=await page.locator('[data-second-pass]').boundingBox();
+  const sideBounds=await page.locator('.topo-side').first().boundingBox();
+  if(previewBounds.y<sideBounds.y-2||previewBounds.y>sideBounds.y+55)throw Error('Second-pass preview scrolled out of the findings viewport');
   await page.screenshot({path:path.join(sourceRoot,'preview-test-results','manual-'+kind.toLowerCase()+'-preview.png'),fullPage:true});
   await page.locator('[data-second-evidence]').fill('DRAWING-SYNTHETIC-02 explicitly confirms this connection');
   await page.locator('[data-second-confirm]').check();

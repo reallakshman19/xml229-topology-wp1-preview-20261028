@@ -442,7 +442,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     state.secondPass={sourceSha256:state.source.sourceSha256,epoch:state.epoch,findingId,
       witnessKeys:finding.node_keys||[],sourceKey:keys[0]||'',peerKey:keys[1]||'',
       evidence:state.gapReviews.get(findingId)?.note||'',search:'',confirmed:false,preview:null};
-    renderSecondPass();query(root,'[data-second-pass]').scrollIntoView({block:'nearest'});
+    renderSecondPass();query(root,'[data-second-pass]').scrollIntoView({block:'start'});
   }
   function useSelectedPartner(){
     const d=state.secondPass;if(!d||state.busy)return;
@@ -466,6 +466,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
         topologyPreFinalOnly:true,options:{outputMode:'enriched-only',analyzeTopology:true,generateTopoFix:false,
           useTopoFixForCii:false,topologyConnectionPreview:request}});
       if(generation!==state.epoch||state.secondPass!==d)return;
+      if(result?.ok!==true)throw Error(result?.error||'The port preview engine rejected this request.');
       acceptAnalysis(result,d.sourceSha256);
       const preview=JSON.parse(result.topologyFindingsText).manualConnectionPreview;
       if(preview?.sourceSha256!==d.sourceSha256||preview.findingId!==d.findingId||
@@ -481,7 +482,13 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
           'Preview unavailable · '+detail;
       }
     }finally{
-      if(generation===state.epoch){state.busy=false;d.busy=false;refresh();}
+      if(generation===state.epoch){
+        state.busy=false;d.busy=false;refresh();
+        if(state.secondPass===d){
+          if(d.preview){const ids=[d.sourceKey,d.peerKey].map(k=>state.scene.byKey.get(k)?.id).filter(Boolean);select(ids);canvas.focus(ids);}
+          query(root,'[data-second-pass]').scrollIntoView({block:'start'});
+        }
+      }
     }
   }
   async function applySecondPass(){
