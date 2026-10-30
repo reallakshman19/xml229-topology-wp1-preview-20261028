@@ -88,7 +88,10 @@ export async function runShortBulk({
     }catch(error){
       if(!isCurrent()){stopReason='CANCELLED';break;}
       stopReason='TRANSACTION_FAILED';
-      stopMessage=String(error?.message||error);
+      const reason=String(error?.message||error);
+      stopMessage=reason.includes('RECONNECTION')
+        ?'Selected element retained: surrounding ports cannot reconnect. Check restraints, mating diameters and port directions.'
+        :reason;
       break; // Fail closed: do not silently skip a failed authoritative transaction.
     }
   }
