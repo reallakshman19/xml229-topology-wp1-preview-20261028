@@ -82,7 +82,7 @@ test('subject categories never masquerade as severity or gap verification',()=>{
  assert.equal(renderAuditHTML(m,{category:'connection'}).shown,2);
  assert.equal(renderAuditHTML(m,{category:'overlap'}).shown,1);
  assert.equal(renderAuditHTML(m,{category:'non_topology'}).shown,0);
- assert.match(renderAuditSummary(m),/3D near-miss and branch-end screening performed/);
+ assert.match(renderAuditSummary(m),/inclusive ≤25 mm repair policy/);
  assert.match(renderAuditHTML(m).html,/Connection topology &amp; node identity/);
  assert.match(renderAuditHTML(m).html,/Overlaps &amp; duplicate geometry/);
  assert.match(renderAuditHTML(m).html,/Component topology &amp; ports/);

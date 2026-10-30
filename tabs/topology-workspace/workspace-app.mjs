@@ -451,6 +451,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     state.source=null;state.original=null;state.revision=0;state.applied=0;state.history=[];state.resolutions=[];
     state.scene=null;state.plan=null;state.findings=[];state.result=null;state.fix=null;state.batch=null;state.gapReviews.clear();
     query(root,'[data-progress]').textContent='Reading original · no repairs applied.';
+    query(root,'[data-gap-review-status]').textContent='No review decisions recorded for this file.';
     state.selected.clear();state.busy=false;state.batchRunning=false;canvas.setScene(null);
     query(root,'[data-source-meta]').textContent='Reading '+file.name+'…';
     displayMessage('');setFixStatus('');refresh();

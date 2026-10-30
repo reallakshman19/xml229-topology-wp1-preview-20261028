@@ -57,7 +57,7 @@ try{
  result.autofixCandidates=await page.locator('[data-auto-fix]').count();
  result.warningFound=await page.locator('.audit-severity.warning').count();
  result.gapCoverage=await page.locator('.audit-coverage').textContent();
- if(!result.gapCoverage.includes('ACTIVE')||!result.gapCoverage.includes('not a complete solver graph'))throw Error('Gap coverage must be bounded and honest');
+ if(!result.gapCoverage.includes('ACTIVE')||!result.gapCoverage.includes('≤25 mm'))throw Error('Port coverage must show the active inclusive repair policy');
  await page.locator('[data-audit-category]').selectOption('gaps');
  result.gapGroups=await page.locator('.audit-rule').count();
  result.gapItems=await page.locator('.audit-item').count();

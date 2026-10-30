@@ -284,5 +284,5 @@ export function renderAuditSummary(audit){
  c.keep+' preserve. By class: '+
  c.categories.gaps+' possible gaps/termination reviews, '+c.categories.connection+' connection/identity, '+c.categories.overlap+' overlap, '+
  c.categories.component+' component topology, '+c.categories.non_topology+' non-topology.'+
- ' 3D near-miss and branch-end screening performed; full connection graph and approved terminations NOT VERIFIED. Original source unchanged.';
+ ' Compatible ports use the inclusive ≤25 mm repair policy; unresolved connections remain for review. Original source unchanged.';
 }
