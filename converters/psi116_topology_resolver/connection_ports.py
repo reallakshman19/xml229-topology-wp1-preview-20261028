@@ -76,7 +76,7 @@ class PortModel:
         self._unindexed_nodes=[]
         for n in self.nodes:
             xyz=n.position.as_list()
-            if all(isfinite(v) for v in xyz):
+            if all(isfinite(v/1e-6) for v in xyz):
                 cell=tuple(floor(v/1e-6) for v in xyz)
                 self._exact_cells.setdefault(cell,[]).append(n)
             else:self._unindexed_nodes.append(n)
@@ -203,7 +203,7 @@ class PortModel:
             try:keys,delta=self.moving_group(moving,target)
             except ValueError:continue
             target_xyz=target.node.position.as_list()
-            if all(isfinite(v) for v in target_xyz):
+            if all(isfinite(v/1e-6) for v in target_xyz):
                 cell=tuple(floor(v/1e-6) for v in target_xyz)
                 nearby=list(self._unindexed_nodes)
                 for dx in (-1,0,1):
