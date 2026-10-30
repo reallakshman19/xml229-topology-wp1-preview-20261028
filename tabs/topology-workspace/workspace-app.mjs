@@ -709,8 +709,10 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     panel.innerHTML=secondPassHTML(state.secondPass?{...state.secondPass,busy:state.busy||state.batchRunning}:null,state.scene,state.manualPorts);
   }
   function updateSecondApply(){
-    const d=state.secondPass,button=query(root,'[data-apply-second]');
-    if(button)button.disabled=state.busy||!d?.preview||!d.confirmed||d.evidence.trim().length<10;
+    const d=state.secondPass;
+    getNodes(root,'[data-apply-second],[data-queue-second]').forEach(button=>{
+      button.disabled=state.busy||state.batchRunning||!d?.preview||!d.confirmed||d.evidence.trim().length<10;
+    });
   }
   function beginSecondPass(findingId){
     if(state.busy||state.batchRunning)return;
