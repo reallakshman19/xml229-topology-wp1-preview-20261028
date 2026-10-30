@@ -47,7 +47,13 @@ def _build_fix_actions(document: Psi116Document, findings: Sequence[Finding],
         changes: tuple[dict[str, object], ...] = ()
         blockers: tuple[str, ...] = (finding.code,) if finding.blocking else ()
 
-        if finding.code == "COINCIDENT_NODE_ALIAS_CANDIDATE":
+        if finding.code == 'PORT_CONNECTION_WITHIN_TOLERANCE':
+            disposition, status, confidence = 'CLOSE_PORT_CONNECTION', 'PROPOSED', 1.0
+            authority = 'OWNER_PORT_CONNECTION_LE_25_MM'
+            changes = (finding.details['portRepair'],)
+            message = finding.message
+            blockers = ()
+        elif finding.code == "COINCIDENT_NODE_ALIAS_CANDIDATE":
             owner_number = int(finding.details.get("ownerNodeNumber"))
             absorbed = tuple(number for number in finding.node_numbers if number != owner_number)
             disposition, status, confidence = "ALIAS_COINCIDENT_NODE", "PROPOSED", 1.0
@@ -133,7 +139,7 @@ def _build_fix_actions(document: Psi116Document, findings: Sequence[Finding],
             blockers = ()
         elif finding.code in {"DUPLICATE_ROUTE_SPAN", "COLLINEAR_ROUTE_OVERLAP"}:
             blockers = ("OVERLAP_OWNERSHIP_NOT_PROVEN",)
-        elif finding.code in {"NEAR_MISS_PIPE_JOINT", "NEAR_MISS_BRANCH_ENDS", "BRANCH_END_UNVERIFIED"}:
+        elif finding.code in {"NEAR_MISS_PIPE_JOINT", "NEAR_MISS_BRANCH_ENDS", "BRANCH_END_UNVERIFIED", "CONNECTION_DECLARATION_CONFLICT"}:
             # Gap evidence is a screening result, never a source-connection authority.
             # Keep it nonblocking to avoid vetoing unrelated, validated transactions.
             disposition, status, confidence = "REVIEW_CONNECTION", "PROPOSED", 0.0

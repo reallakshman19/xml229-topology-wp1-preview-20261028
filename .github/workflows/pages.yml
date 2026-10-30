@@ -46,12 +46,12 @@ jobs:
           node --check tabs/topology-workspace/audit-view.mjs
           node --check tabs/topology-workspace/workspace-app.mjs
           node --check tabs/topology-workspace/batch-plan.mjs
-          node --test tests/audit-view.test.mjs tests/batch-plan.test.mjs
+          node --test tests/*.test.mjs
       - name: Test PSI116 Python connection-gap candidate semantics
         shell: bash
         run: |
           python3 -m compileall -q converters/psi116_topology_resolver
-          python3 -m unittest discover -s tests -p test_connection_gaps.py -v
+          python3 -B -m unittest discover -s tests -v
       - name: Run real PSI116 browser audit against pinned FirstpassXML
         shell: bash
         run: |

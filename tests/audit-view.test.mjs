@@ -82,7 +82,7 @@ test('subject categories never masquerade as severity or gap verification',()=>{
  assert.equal(renderAuditHTML(m,{category:'connection'}).shown,2);
  assert.equal(renderAuditHTML(m,{category:'overlap'}).shown,1);
  assert.equal(renderAuditHTML(m,{category:'non_topology'}).shown,0);
- assert.match(renderAuditSummary(m),/3D near-miss and branch-end screening performed/);
+ assert.match(renderAuditSummary(m),/inclusive ≤25 mm repair policy/);
  assert.match(renderAuditHTML(m).html,/Connection topology &amp; node identity/);
  assert.match(renderAuditHTML(m).html,/Overlaps &amp; duplicate geometry/);
  assert.match(renderAuditHTML(m).html,/Component topology &amp; ports/);
@@ -171,7 +171,7 @@ test('ERROR findings explain severity, why flagged, engineering impact and sourc
  assert.match(empty,/No ERROR findings/);
  assert.match(empty,/not proof of complete network connectivity/);
 });
-test('manual two-port joint offers an executable closure below 25 mm with retained endpoint choice',()=>{
+test('manual two-port joint includes exactly 25 mm with retained endpoint choice',()=>{
  const f={finding_id:'GAP',code:'NEAR_MISS_PIPE_JOINT',severity:'WARNING',node_keys:['A','B']};
  const records=new Map([['A',{key:'A',type:'PIPE',endpoint:'2',position:{x:0,y:0,z:0},refNo:'PIPE-A'}],
   ['B',{key:'B',type:'PIPE',endpoint:'1',position:{x:24.9,y:0,z:0},refNo:'PIPE-B'}]]);
@@ -179,7 +179,20 @@ test('manual two-port joint offers an executable closure below 25 mm with retain
  assert.match(h,/data-close-joint="GAP"/);assert.match(h,/Close joint &amp; recheck/);
  assert.match(h,/data-joint-target/);assert.match(h,/data-joint-confirm/);
  records.get('B').position.x=25;
+ assert.match(renderAuditHTML(buildAudit([f],[]),{sourceByKey:records}).html,/data-close-joint=/);
+ records.get('B').position.x=25.001;
  assert.doesNotMatch(renderAuditHTML(buildAudit([f],[]),{sourceByKey:records}).html,/data-close-joint=/);
  records.get('B').position.x=2;records.get('B').restraint=true;
  assert.doesNotMatch(renderAuditHTML(buildAudit([f],[]),{sourceByKey:records}).html,/data-close-joint=/);
+});
+
+test('Junction declaration conflicts retain source witnesses and upstream correction steps',()=>{
+ const finding={finding_id:'F4',code:'CONNECTION_DECLARATION_CONFLICT',severity:'WARNING',blocking:false,
+  message:'Branch declares TEE; actual owner is OLET.',node_keys:['B1:N50:S0','B0:N50:S1'],node_numbers:[50],
+  details:{autofixAuthorized:false,connectionAuthority:'CONFLICTING_JUNCTION_DECLARATIONS'}};
+ const audit=buildAudit([finding],[]),html=renderAuditHTML(audit).html;
+ assert.match(html,/Connection declarations conflict/);
+ assert.match(html,/TEE\/OLET/);assert.match(html,/re-export and rerun/);
+ assert.match(html,/B1:N50:S0/);assert.match(html,/B0:N50:S1/);
+ assert.doesNotMatch(html,/data-auto-fix=/);
 });

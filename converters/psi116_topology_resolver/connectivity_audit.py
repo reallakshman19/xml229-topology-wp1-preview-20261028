@@ -10,6 +10,7 @@ from typing import Callable
 
 from .models import Finding, NodeRecord, Psi116Document, ResolverConfig
 from .parser import _occurrence_route_nodes
+from .connection_ports import PortModel, bound_closure_records
 
 def _branch_endpoints(doc: Psi116Document) -> tuple[tuple[str, NodeRecord], ...]:
     per_branch = defaultdict(list)
@@ -28,7 +29,7 @@ def _branch_endpoints(doc: Psi116Document) -> tuple[tuple[str, NodeRecord], ...]
     return tuple(endpoints)
 
 def _analyze_connection_gaps(
-    doc: Psi116Document, config: ResolverConfig, add: Callable[..., Finding]
+    doc: Psi116Document, config: ResolverConfig, add: Callable[..., Finding], resolutions=None
 ) -> None:
     """Emit review candidates, not false claims of confirmed disconnection.
 
@@ -64,9 +65,48 @@ def _analyze_connection_gaps(
         )
 
     endpoints = _branch_endpoints(doc)
+    records = [n for b in doc.branches for n in b.nodes]
+    port_model=PortModel(doc,config)
     used_pairs = set()
     for index, (role, node) in enumerate(endpoints):
         if node.position is None:
+            continue
+        shared = [n for n in records if n.branch_index != node.branch_index and n.positive
+                  and n.node_number == node.node_number and n.position and
+                  n.position.distance_to(node.position) <= tolerance]
+        port=port_model.port_by_key.get(node.key)
+        mismatched=[p for p in port_model.ports if port and node.positive and p.node.positive and
+                    p.node.branch_index!=node.branch_index and p.node.node_number==node.node_number and
+                    p.node.position.distance_to(node.position)<=min(25.,screening)+1e-9 and
+                    port_model.junction_mismatch(port,p)]
+        if mismatched:
+            witnesses=[port,*mismatched]
+            add('CONNECTION_DECLARATION_CONFLICT','WARNING',False,
+                'The branch TEE/OLET declaration disagrees with its source-linked physical junction owner. '
+                'Correct the declaration or owner in the authoring model, re-export and rerun TopoFix.',
+                branch_name=node.branch_name,node_keys=tuple(sorted({p.node.key for p in witnesses})),
+                node_numbers=(node.node_number,),component_ref_nos=tuple(sorted({p.node.component_ref_no for p in witnesses if p.node.component_ref_no})),
+                details={'connectionAuthority':'CONFLICTING_JUNCTION_DECLARATIONS','autofixAuthorized':False,
+                         'junctionWitnesses':[{'sourceKey':p.node.key,'declaredType':p.node.connection_type,
+                                              'ownerType':port_model.kind(p.group)} for p in witnesses]})
+            continue
+        closed = [declaration for source in [node,*shared]
+                  for declaration in bound_closure_records(doc,source,tolerance)]
+        if shared and closed:
+            add('CONNECTION_DECLARATION_CONFLICT','WARNING',False,
+                'Shared connection identity conflicts with explicit CLOS evidence; review the branch end declaration.',
+                branch_name=node.branch_name,node_keys=tuple(sorted({node.key, *(n.key for n in shared+closed)})),
+                node_numbers=(node.node_number,),details={'connectionAuthority':'CONFLICTING_SOURCE_DECLARATIONS',
+                    'autofixAuthorized':False})
+            continue
+        if shared or closed:
+            if resolutions is not None:
+                resolutions.append({'code':'EXISTING_CONNECTION' if shared else 'DECLARED_CLOSED_END',
+                    'node_keys':sorted({node.key, *(n.key for n in shared or closed)}),
+                    'message':'Shared source NodeNumber and position establish an existing connection.' if shared else
+                              'Source CLOS evidence establishes a declared closed termination.',
+                    'authority':'SOURCE_NODE_IDENTITY_AND_XYZ' if shared else 'SOURCE_CLOS',
+                    'xmlChanged':False})
             continue
         peers = [(other_role, other, node.position.distance_to(other.position))
                  for j,(other_role,other) in enumerate(endpoints)
@@ -104,6 +144,8 @@ def _analyze_connection_gaps(
                 )
             continue
 
+        nearest_record = min(((node.position.distance_to(n.position),n.key) for n in records
+            if n.branch_index != node.branch_index and n.position), default=(None,None), key=lambda x:x[0])
         add(
             "BRANCH_END_UNVERIFIED", "INFO", False,
             f"Branch {role.lower()} at Node {node.node_number} has no matching "
@@ -115,6 +157,8 @@ def _analyze_connection_gaps(
             component_ref_nos=(node.component_ref_no,) if node.component_ref_no else (),
             details={"endRole":role, "XYZ":node.position.as_list(),
                      "nearestOtherBranchEndMm":peers[0][2] if peers else None,
+                     "nearestSourceRecordMm":nearest_record[0],
+                     "nearestSourceRecordKey":nearest_record[1],
                      "connectionToleranceMm":tolerance,
                      "connectionAuthority":"NOT_ESTABLISHED",
                      "certainty":"TERMINATION_INTENT_UNKNOWN",

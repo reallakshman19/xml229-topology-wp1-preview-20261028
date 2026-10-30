@@ -41,6 +41,7 @@
     <strong data-progress>No repairs applied.</strong>
     <button data-download-working disabled>Download current XML</button>
     <button data-download-history disabled>Download repair history</button>
+    <button data-download-resolutions disabled>Download connection evidence</button>
   </div>
   <div class="topo-grid">
     <aside class="topo-side" aria-label="Findings and original occurrences">
@@ -48,9 +49,10 @@
         <input data-search type="search" placeholder="e.g. 2050, BR-1, RIGID">
       </label>
       <section class="topo-group" aria-label="Rule-based engineering audit"><h2>Engineering audit · grouped by rule</h2>
-        <p class="audit-intro">Auto fix applies to the working copy and reruns the audit. For a confirmed PIPE joint below 25 mm, choose the retained port and use Close joint &amp; recheck.</p>
+        <p class="audit-intro">Auto fix closes compatible connection ports at ≤25 mm, applies the working copy and reruns the audit. Existing connections and declared closed ends resolve automatically with source evidence.</p>
+        <div data-resolved class="audit-resolved"></div>
         <p data-plan-summary>Analyze the XML to see error, warning and informational findings.</p>
-        <p class="audit-coverage" role="status"><strong>Gap screening: ACTIVE (review candidates only).</strong> PSI116 checks small 3D PIPE-end separations and surfaces unverified branch terminations. This is not a complete solver graph, and no gap or termination is certified without engineering connection/design evidence.</p>
+        <p class="audit-coverage" role="status"><strong>Port repair policy: ACTIVE (≤25 mm).</strong> Compatible connection ports can close automatically. Existing shared-node connections and declared closed ends resolve from source evidence. Ambiguous or incompatible connections remain for review.</p>
         <div class="audit-review-toolbar">
           <button type="button" data-download-gap-review disabled>Download gap review receipt</button>
           <p data-gap-review-status aria-live="polite">Review potential gaps and branch ends against design drawings. No review decisions recorded.</p>

@@ -81,7 +81,7 @@ def _operation_index(transaction: TopoFixTransactionResult):
             continue
         require(operation.operation in {
             "ALIAS_NODE_NUMBER", "SET_RIGID_ZERO",
-            "REMOVE_PLAIN_PIPE_NODE_RECORD", "CLOSE_PIPE_JOINT"
+            "REMOVE_PLAIN_PIPE_NODE_RECORD", "CLOSE_PIPE_JOINT", "CLOSE_COMPONENT_PORT"
         } and operation.source_node_key and
             operation.source_node_key not in indexed,
             "TOPOFIX_LINEAGE_OPERATION_KEY_DRIFT")
@@ -107,10 +107,11 @@ def _mutated_source_node(node: ET.Element, operation) -> ET.Element:
             field = ET.Element(namespace + "Rigid")
             expected.insert(0, field)
         field.text = "0"
-    elif operation.operation == 'CLOSE_PIPE_JOINT':
-        require(set(operation.before) == set(operation.after) == {'NodeNumber', 'Position'},
+    elif operation.operation in {'CLOSE_PIPE_JOINT','CLOSE_COMPONENT_PORT'}:
+        require(set(operation.before) == set(operation.after) and
+                set(operation.after) <= {'NodeNumber', 'Position'} and 'Position' in operation.after,
                 'TOPOFIX_LINEAGE_OPERATION_BEFORE_DRIFT')
-        for name in ('NodeNumber', 'Position'):
+        for name in operation.after:
             field = _child(expected, name)
             require(field is not None and field.text == operation.before[name],
                     'TOPOFIX_LINEAGE_OPERATION_BEFORE_DRIFT')
@@ -165,6 +166,7 @@ def build_topofix_source_lineage(transaction: TopoFixTransactionResult) -> dict:
                         "TOPOFIX_LINEAGE_UNDECLARED_XML_CHANGE")
                 status = ("RENUMBERED_CONNECTION" if op is not None and
                           op.operation == "ALIAS_NODE_NUMBER" else
+                          "PORT_CONNECTION_CLOSED" if op is not None and op.operation == 'CLOSE_COMPONENT_PORT' else
                           "PIPE_JOINT_CLOSED" if op is not None and op.operation == 'CLOSE_PIPE_JOINT' else
                           "RIGID_RECLASSIFIED" if op is not None else "RETAINED")
                 fixed_ordinal = position

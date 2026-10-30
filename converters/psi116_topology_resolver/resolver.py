@@ -17,6 +17,7 @@ from .connectivity_audit import _analyze_connection_gaps
 from .models import Finding, Psi116Document, ResolutionResult, ResolverConfig
 from .parser import read_psi116_xml
 from .planner import _build_fix_actions
+from .connection_ports import PortModel
 
 
 def analyze_document(document: Psi116Document, config: ResolverConfig | None = None) -> ResolutionResult:
@@ -29,7 +30,43 @@ def analyze_document(document: Psi116Document, config: ResolverConfig | None = N
     _analyze_rigids(document, add)
     _analyze_pipe_carriers(document, config, add)
     _analyze_overlaps(document, config, add)
-    _analyze_connection_gaps(document, config, add)
+    resolutions = []
+    _analyze_connection_gaps(document, config, add, resolutions)
+    nodes = [n for b in document.branches for n in b.nodes]
+    by_key = {n.key:n for n in nodes}
+    # A BRAN stub references a junction; it is not an incomplete second TEE.
+    for finding in findings[:]:
+        if finding.code != 'JUNCTION_OWNER_INFERRED_FROM_PORT_SET':continue
+        witnesses = [by_key[k] for k in finding.node_keys]
+        if not witnesses or any(n.component_type != 'BRAN' for n in witnesses):continue
+        parents = [p for n in witnesses for p in nodes if p.branch_index != n.branch_index
+                   and n.connection_type in {'TEE','OLET'} and p.semantic_type == n.connection_type and p.endpoint == 0 and p.positive
+                   and p.node_number == n.node_number and p.position and n.position
+                   and p.position.distance_to(n.position) <= config.connection_tolerance_mm]
+        if parents:
+            findings.remove(finding)
+            resolutions.append({'code':'EXISTING_CONNECTION',
+                'node_keys':sorted({*(n.key for n in witnesses), *(n.key for n in parents)}),
+                'message':'Branch stub resolves to the existing parent junction owner.',
+                'authority':'SOURCE_PARENT_JUNCTION','xmlChanged':False})
+    port_model = PortModel(document, config)
+    for repair in port_model.candidates():
+        keys = tuple(sorted({*repair['moveKeys'], repair['targetPortKey']}))
+        ports = {repair['movePortKey'],repair['targetPortKey']}
+        # The physical repair supersedes the same pair's source-order heuristics.
+        owner_keys = {n.key for key in ports for n in port_model.groups[port_model.node_group[key]]}
+        for old in findings[:]:
+            if ((old.code in {'NEAR_MISS_PIPE_JOINT','NEAR_MISS_BRANCH_ENDS',
+                    'COINCIDENT_NODE_ALIAS_CANDIDATE','COINCIDENT_NODE_IDENTITY_AMBIGUOUS',
+                    'SHORT_ROUTE_SPAN','ZERO_LENGTH_ROUTE_SPAN'} and set(old.node_keys) == ports)
+                or (old.code == 'COLLINEAR_ROUTE_OVERLAP' and set(old.node_keys) <= owner_keys)):
+                findings.remove(old)
+        add('PORT_CONNECTION_WITHIN_TOLERANCE','WARNING',False,
+            f"Compatible physical ports are {repair['distanceMm']:.3f} mm apart; automatic closure is permitted by the inclusive 25 mm project policy.",
+            branch_name=by_key[repair['movePortKey']].branch_name,node_keys=keys,
+            node_numbers=tuple(sorted({by_key[k].node_number for k in keys if by_key[k].positive})),
+            length_mm=repair['distanceMm'],details={'portRepair':repair,
+                'connectionAuthority':'OWNER_PORT_CONNECTION_LE_25_MM','autofixAuthorized':True})
     findings.sort(key=lambda item: (item.branch_name, item.node_numbers, item.code, item.finding_id))
     normalized = tuple(
         Finding(
@@ -52,6 +89,7 @@ def analyze_document(document: Psi116Document, config: ResolverConfig | None = N
         document=document,
         findings=normalized,
         fix_actions=_build_fix_actions(document, normalized, config),
+        connection_resolutions=tuple({(r['code'],tuple(r['node_keys'])):r for r in resolutions}.values()),
     )
 
 

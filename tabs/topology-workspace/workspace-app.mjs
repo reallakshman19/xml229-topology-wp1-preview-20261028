@@ -4,6 +4,7 @@ import {parseOccurrenceScene, affectedOccurrenceIds, escapeValue as esc} from '.
 import {createTopologyCanvas} from './projected-canvas.mjs';
 import {buildAudit,renderAuditHTML,renderAuditSummary,filterCounts} from './audit-view.mjs';
 import {eligibleActions,previewBatchPlan,explicitlyRejectedActionIds} from './batch-plan.mjs';
+import {runValidatedPasses} from './batch-runner.mjs';
 
 async function sha256(bytes) {
   const digest=await crypto.subtle.digest('SHA-256',bytes);
@@ -38,8 +39,8 @@ function actionButton(action) {
 }
 export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneEngineJob}={}) {
   if(!root)throw Error('Topology workspace root is required');
-  const state={epoch:0,source:null,original:null,revision:0,applied:0,history:[],scene:null,plan:null,findings:[],result:null,
-    selected:new Set(),search:'',filter:'all',category:'all',fix:null,batch:null,gapReviews:new Map(),busy:false};
+  const state={epoch:0,source:null,original:null,revision:0,applied:0,history:[],resolutions:[],scene:null,plan:null,findings:[],result:null,
+    selected:new Set(),search:'',filter:'all',category:'all',fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false};
   const canvas=createTopologyCanvas(query(root,'[data-canvas]'),onHits);
   const updateStatus=message=>{query(root,'[data-status]').textContent=message;};
   const displayMessage=message=>{query(root,'[data-hits]').textContent=message;};
@@ -55,7 +56,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     const findings=JSON.parse(result.topologyFindingsText||'null');
     if(plan?.source?.sha256!==sourceSha||findings?.source?.sha256!==sourceSha||
        !Array.isArray(plan.actions)||!Array.isArray(findings.findings))throw Error('TOPOFIX_PLAN_SOURCE_DRIFT');
-    return {plan,findings:findings.findings};
+    return {plan,findings:findings.findings,resolutions:findings.resolvedConnections||[]};
   }
   function renderSelection() {
     const ids=[...state.selected],records=ids.map(id=>state.scene?.byId.get(id)).filter(Boolean);
@@ -79,6 +80,13 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     const plan=state.plan;
     const summary=query(root,'[data-plan-summary]');
     const panel=query(root,'[data-issues]');
+    const resolved=query(root,'[data-resolved]');
+    if(resolved)resolved.innerHTML=state.resolutions.length?
+      '<details><summary>'+state.resolutions.length+' connections / terminations automatically resolved · source evidence</summary><ul>'+
+      state.resolutions.map((r,i)=>'<li><button data-resolved-index="'+i+'">'+esc(r.code.replaceAll('_',' '))+
+        ' · '+esc(r.node_keys.join(', '))+'</button><p>'+esc(r.message)+'</p></li>').join('')+'</ul></details>':'';
+    const evidence=query(root,'[data-download-resolutions]');
+    if(evidence)evidence.disabled=!state.plan||state.busy;
     if(!plan){
       summary.textContent='Analyze XML to see findings grouped by engineering rule.';
       panel.innerHTML='';
@@ -117,7 +125,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     if(!panel)return;
     panel.setAttribute('data-result',kind);
     panel.textContent=message;
-    if(kind==='ready'&&state.fix?.receiptKey===actionId){
+    if(['ready','stopped','rejected'].includes(kind)&&state.fix?.sourceSha256===state.source?.sourceSha256){
       const button=document.createElement('button');
       button.type='button';button.setAttribute('data-download-fix','');
       button.textContent='Download validated corrected XML';
@@ -195,6 +203,15 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     a.href=url;a.download=state.source.name+'.revision-'+state.revision+(history?'.repairs.json':'.topofix.xml');
     document.body.appendChild(a);a.click();a.remove();window.setTimeout(()=>URL.revokeObjectURL(url),1000);
   }
+  function downloadResolutions(){
+    if(!state.source||!state.plan)return;
+    const receipt={schema:'topofix-connection-evidence/v1',sourceSha256:state.source.sourceSha256,
+      toleranceMm:25,resolvedConnections:state.resolutions,remainingFindings:state.findings,
+      workingRevision:state.revision,xmlChangedByResolution:false};
+    const a=document.createElement('a'),url=URL.createObjectURL(new Blob([JSON.stringify(receipt,null,2)],{type:'application/json'}));
+    a.href=url;a.download=state.source.name+'.connection-evidence.json';document.body.appendChild(a);a.click();a.remove();
+    window.setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }
   function planAutoFixAll(){
     if(state.busy||!state.plan||!state.source)return;
     const plan=previewBatchPlan(state.findings,state.plan.actions||[],state.scene?.byKey);
@@ -206,7 +223,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
       plan.actionIds.length+' conflict-free actions selected for one validated transaction. '+
       skipped+' overlapping/unsafe for this batch; '+excluded+
       ' KEEP, evidence-only, manual or otherwise ineligible actions excluded. '+
-      'This does not repair gaps or prove network connectivity. Original file will not change.';
+      'Includes compatible port closures at ≤25 mm. Original file will not change.';
     if(!plan.actionIds.length){
       panel.textContent+=' No safe batch available; review items individually.';
       return;
@@ -232,7 +249,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     const generation=state.epoch,source=state.source,batch=receiptKey==='batch';
     const skippedByPlan=batch?[...(state.batch?.skipped||[])]:[];
     const skippedByEngine=[];
-    state.busy=true;state.fix=null;refresh();
+    state.busy=true;state.lastFailure='';refresh();
     query(root,'[data-progress]').textContent='APPLYING · '+ids.length+' action(s). Waiting for validation and working-copy recheck…';
     setFixStatus('Applying '+ids.length+' selected PSI116 action(s) to an isolated copy. '+
       'Any rejected action will be excluded from the next full validation attempt.');
@@ -311,11 +328,13 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
       const current=acceptAnalysis(recheck,fixedSha);
       const priorReviews=Object.fromEntries(state.gapReviews);
       state.source=nextSource;state.scene=nextScene;state.plan=current.plan;
+      state.resolutions=current.resolutions;
       state.findings=current.findings;state.result=recheck;state.selected.clear();state.gapReviews.clear();
       state.selected=new Set(changedIds);
       state.revision++;state.applied+=ids.length;
       state.history.push({sourceSha256:source.sourceSha256,fixedSha256:fixedSha,
-        actionIds:ids,operations:txn.operations,validation:validation.checks,jointRepairs,reviews:priorReviews});
+        actionIds:ids,operations:txn.operations,validation:validation.checks,jointRepairs,reviews:priorReviews,
+        resolvedConnections:current.resolutions});
       canvas.setScene(nextScene);sourceMeta();
       query(root,'[data-gap-review-status]').textContent='Working copy changed. Prior source review notes are in the repair history; review current findings.';
       query(root,'[data-progress]').textContent='APPLIED · revision '+state.revision+' · '+
@@ -340,6 +359,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
       updateStatus('Repair applied and rechecked. Working revision '+state.revision+'.');
     }catch(error){
       if(generation===state.epoch){
+        state.lastFailure=error?.message||String(error);
         query(root,'[data-progress]').textContent='NOT APPLIED · '+(error?.message||String(error))+
           ' · working revision '+state.revision+' retained.';
         setFixStatus('Auto fix NOT applied: '+
@@ -365,13 +385,43 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     const request={sourceSha256:state.source.sourceSha256,findingId:finding.finding_id,moveKey,targetKey,evidence};
     return runFix(['JOIN:'+finding.finding_id+':'+moveKey],'joint',[request]);
   }
-  function autoFixAll(){
+  async function autoFixAll(){
     const b=state.batch;
     if(!b||b.epoch!==state.epoch||b.sourceSha256!==state.source?.sourceSha256||
        !b.actionIds.length)return;
-    return runFix(b.actionIds,'batch');
+    state.batchRunning=true;root.setAttribute('aria-busy','true');
+    const generation=state.epoch,initialSha=state.source.sourceSha256;
+    const initialFindings=state.findings.length,initialApplied=state.applied;
+    const outcome=await runValidatedPasses({initialPlan:b,
+      readState:()=>({sha:state.source.sourceSha256,revision:state.revision,fix:state.fix,failure:state.lastFailure}),
+      isCurrent:()=>generation===state.epoch,
+      runPass:async plan=>{state.batch={...plan,sourceSha256:state.source.sourceSha256,epoch:state.epoch};await runFix(plan.actionIds,'batch');},
+      nextPlan:()=>previewBatchPlan(state.findings,state.plan.actions,state.scene.byKey)});
+    if(generation!==state.epoch)return;
+    const {passes,lastFix,stopReason,stopMessage}=outcome;
+    state.batch=null;
+    const remaining=eligibleActions(state.findings,state.plan.actions).length;
+    if(lastFix&&lastFix.sourceSha256===state.source.sourceSha256)state.fix=lastFix;
+    if(passes.length&&(passes.length>1||stopReason!=='COMPLETE')){
+      state.fix={...lastFix,report:{schema:'xml229-preview-batch-topofix/v2',
+        status:'VALIDATED_COPY_NOT_ENGINEERING_ACCEPTANCE',source:{name:state.source.name,sha256:initialSha},
+        fixedXmlSha256:state.source.sourceSha256,passes,stopReason,stopMessage,
+        appliedActionCount:state.applied-initialApplied,remainingEligibleActions:remaining},
+        name:state.source.name+'.batch-'+(state.applied-initialApplied)+'.validated.topofix.xml'};
+    }
+    if(stopReason!=='COMPLETE'||passes.length>1){
+      const stopped=stopReason!=='COMPLETE';
+      const message=(stopped?'STOPPED: '+stopReason+' · '+stopMessage+' · ':'APPLIED · ')+
+        passes.length+' validated passes · '+(state.applied-initialApplied)+' action(s) · findings '+
+        initialFindings+' → '+state.findings.length+' · '+remaining+' eligible actions remain.'+
+        (stopped&&state.fix?' Last validated XML and receipt retained.':'');
+      setFixStatus(message,stopped?'stopped':'ready','batch');
+      query(root,'[data-progress]').textContent=message;
+    }
+    state.batchRunning=false;refresh();
   }
   function refresh() {
+    root.setAttribute('aria-busy',String(state.busy||state.batchRunning));
     renderRecords();renderActions();renderSelection();
     query(root,'[data-analyze]').disabled=!state.source||state.busy;
     query(root,'[data-cancel]').disabled=!state.busy;
@@ -398,10 +448,11 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
   }
   async function load(file) {
     const generation=++state.epoch;
-    state.source=null;state.original=null;state.revision=0;state.applied=0;state.history=[];
+    state.source=null;state.original=null;state.revision=0;state.applied=0;state.history=[];state.resolutions=[];
     state.scene=null;state.plan=null;state.findings=[];state.result=null;state.fix=null;state.batch=null;state.gapReviews.clear();
     query(root,'[data-progress]').textContent='Reading original · no repairs applied.';
-    state.selected.clear();state.busy=false;canvas.setScene(null);
+    query(root,'[data-gap-review-status]').textContent='No review decisions recorded for this file.';
+    state.selected.clear();state.busy=false;state.batchRunning=false;canvas.setScene(null);
     query(root,'[data-source-meta]').textContent='Reading '+file.name+'…';
     displayMessage('');setFixStatus('');refresh();
     try {
@@ -430,7 +481,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
   async function analyze() {
     if(!state.source||state.busy)return;
     const generation=state.epoch,source=state.source;state.busy=true;
-    state.plan=null;state.findings=[];state.fix=null;state.batch=null;
+    state.plan=null;state.findings=[];state.batch=null;
     query(root,'[data-batch-confirm]').textContent='';setFixStatus('');refresh();updateStatus('Running authoritative PSI116 topology analysis…');
     try {
       const result=await runEngine({sourceKind:'xml',sourceText:source.sourceText,
@@ -451,6 +502,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
       if(!Array.isArray(plan.actions)||!Array.isArray(findings.findings))
         throw Error('PSI116 sidecar structure invalid');
       state.plan=plan;state.findings=findings.findings;state.result=result;
+      state.resolutions=findings.resolvedConnections||[];
       updateStatus('Authoritative topology analysis complete. '+plan.actions.length+
         ' plan entries. No Weight/O1/Final/native session was supplied or created.');
     } catch(error) {
@@ -470,7 +522,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     else if(target.hasAttribute('data-download-gap-review'))downloadGapReview();
     else if(target.hasAttribute('data-close-joint'))closeJoint(target);
     else if(target.hasAttribute('data-analyze'))analyze();
-    else if(target.hasAttribute('data-cancel')){state.epoch++;state.busy=false;refresh();
+    else if(target.hasAttribute('data-cancel')){state.epoch++;state.busy=false;state.batchRunning=false;refresh();
       state.batch=null;query(root,'[data-batch-confirm]').textContent='';
       query(root,'[data-progress]').textContent='CANCELLED · working revision '+state.revision+' retained.';
       setFixStatus('Operation cancelled. No new working revision applied.','rejected');
@@ -483,6 +535,12 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     else if(target.hasAttribute('data-download-batch-report'))downloadBatchReport();
     else if(target.hasAttribute('data-download-working'))downloadCurrent();
     else if(target.hasAttribute('data-download-history'))downloadCurrent(true);
+    else if(target.hasAttribute('data-download-resolutions'))downloadResolutions();
+    else if(target.hasAttribute('data-resolved-index')){
+      const row=state.resolutions[Number(target.dataset.resolvedIndex)];
+      const ids=(row?.node_keys||[]).map(k=>state.scene.byKey.get(k)?.id).filter(Boolean);
+      select(ids);canvas.focus(ids);
+    }
     else if(target.hasAttribute('data-download-fix'))downloadFix();
     else if(target.hasAttribute('data-auto-fix'))autoFix(target.dataset.autoFix);
     else if(target.hasAttribute('data-audit-action')){
