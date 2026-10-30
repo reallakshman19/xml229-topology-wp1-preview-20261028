@@ -223,6 +223,34 @@ try{
   if(await page.locator('[data-auto-fix]').count())throw Error('Unqualified '+label+' offered automatic closure');
   result.compatibilityNegatives.push(label+': PASS');
  }
+ // F4: exact declaration/owner matching, including coincident audit conflicts.
+ const junctionNode=(n,kind,ref,end,xyz,extra='')=>`<Node><NodeNumber>${n}</NodeNumber><ComponentType>${kind}</ComponentType><ComponentRefNo>${ref}</ComponentRefNo><Endpoint>${end}</Endpoint><Position>${xyz}</Position>${extra}</Node>`;
+ const junctionFixture=(declared,owner,offset)=>'<PipeStressExport><Branch><Branchname>JUNCTION</Branchname>'+
+  junctionNode(-1,owner,'J',1,'0 0 0')+junctionNode(50,owner,'J',0,'100 0 0')+
+  junctionNode(-1,owner,'J',2,'200 0 0')+junctionNode(-1,owner,'J',3,'100 100 0')+
+  '</Branch><Branch><Branchname>BRANCH</Branchname>'+junctionNode(50,'BRAN','B',1,'100 0 '+offset,'<ConnectionType>'+declared+'</ConnectionType>')+'</Branch></PipeStressExport>';
+ result.junctionAuthority=[];
+ for(const [declared,owner,offset] of [['TEE','TEE',25],['OLET','OLET',25],['TEE','OLET',25],['OLET','TEE',25],['TEE','OLET',0],['OLET','TEE',0]]){
+  await page.locator('[data-file]').setInputFiles({name:'junction-authority.xml',mimeType:'application/xml',buffer:Buffer.from(junctionFixture(declared,owner,offset))});
+  await page.waitForFunction(()=>document.querySelector('[data-occ-summary]')?.textContent?.includes('5 of 5'));
+  await page.locator('[data-analyze]').click();
+  await page.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'),null,{timeout:120000});
+  if(declared===owner){
+   await page.locator('[data-auto-fix]').first().click();
+   await page.waitForFunction(()=>['ready','rejected'].includes(document.querySelector('[data-fix-result]')?.getAttribute('data-result')),null,{timeout:120000});
+   if(await page.locator('[data-fix-result]').getAttribute('data-result')!=='ready')throw Error('Matching '+declared+' authority rejected');
+   const download=page.waitForEvent('download');await page.locator('[data-download-working]').click();
+   const fixed=await readFile(await (await download).path(),'utf8');
+   const branchPosition=await page.evaluate(xml=>new DOMParser().parseFromString(xml,'application/xml').getElementsByTagNameNS('*','Branch')[1].getElementsByTagNameNS('*','Position')[0].textContent,fixed);
+   if(branchPosition!=='100 0 0')throw Error('Matching junction did not close to source owner');
+  }else{
+   if(await page.locator('[data-auto-fix]').count())throw Error('Mismatched junction offered Auto fix');
+   const conflict=page.locator('.audit-item').filter({hasText:'The branch TEE/OLET declaration disagrees'}).first();
+   if(!await conflict.count()||!(await conflict.locator('.audit-remedy').textContent()).includes('re-export and rerun'))throw Error('Junction mismatch lost manual source repair directions');
+   if((await page.locator('[data-resolved]').textContent()).includes('B1:N50:S0'))throw Error('Mismatched junction hidden as resolved');
+  }
+  result.junctionAuthority.push({declared,owner,offset,outcome:declared===owner?'CLOSED':'MANUAL_CONFLICT'});
+ }
  const fittingNodes=[[10,'A',1,0],[20,'A',2,86],[30,'B',1,96],[40,'B',2,182],[50,'C',1,192],[60,'C',2,278]];
  const chain='<PipeStressExport><Branch><Branchname>CHAIN</Branchname>'+fittingNodes.map(([n,ref,end,x])=>
    `<Node><NodeNumber>${n}</NodeNumber><ComponentType>FLAN</ComponentType><ComponentRefNo>${ref}</ComponentRefNo><Endpoint>${end}</Endpoint><Position>${x} 0 0</Position><OutsideDiameter>100</OutsideDiameter></Node>`).join('')+'</Branch></PipeStressExport>';
@@ -269,10 +297,10 @@ try{
  await failurePage.close();
  // Optional short-element removal: complete GASK + RIGID owner, then PIPE-first closure.
  const shortNode=(n,kind,ref,end,x,extra='')=>`<Node><NodeNumber>${n}</NodeNumber><ComponentType>${kind}</ComponentType><ComponentRefNo>${ref}</ComponentRefNo><Endpoint>${end}</Endpoint><Position>${x} 0 0</Position><OutsideDiameter>100</OutsideDiameter>${extra}</Node>`;
- const shortFixture='<PipeStressExport><Branch><Branchname>SHORT-DROP</Branchname>'+
+ const shortFixture=('<PipeStressExport><Branch><Branchname>SHORT-DROP</Branchname>'+
   shortNode(10,'PIPE','P',1,0)+shortNode(20,'PIPE','P',2,100)+
   shortNode(-1,'GASK','SHORT',1,100,'<Weight>2.5</Weight>')+shortNode(30,'RIGID','SHORT',2,103)+
-  shortNode(-1,'FLAN','F',1,103)+shortNode(40,'RIGID','F',2,189)+'</Branch></PipeStressExport>';
+  shortNode(-1,'FLAN','F',1,103)+shortNode(40,'RIGID','F',2,189)+'</Branch></PipeStressExport>').replaceAll('</Node>','<BendRadius>0</BendRadius><AlphaAngle>0</AlphaAngle></Node>');
  await page.locator('[data-file]').setInputFiles({name:'short-drop.xml',mimeType:'application/xml',buffer:Buffer.from(shortFixture)});
  await page.waitForFunction(()=>document.querySelector('[data-occ-summary]')?.textContent?.includes('6 of 6'));
  await page.locator('[data-analyze]').click();
@@ -301,6 +329,8 @@ try{
    shortPass.transaction.policy.short_element_requests[0].sourceSha256!==createHash('sha256').update(shortFixture).digest('hex')||
    shortPass.operations.filter(o=>o.operation==='REMOVE_SELECTED_SHORT_ELEMENT_RECORD').length!==2||
    shortPass.lineage.counts.removedSelectedShortElementOccurrences!==2||shortPass.selectedElement.weightRemoved!==2.5||
+   shortPass.selectedElement.lengthBasis!=='SOURCE_STRAIGHT_TWO_PORT_SPAN'||
+   !shortPass.validation.checks.some(c=>c.code==='SHORT_ELEMENT_LENGTH_BASIS_QUALIFIED'&&c.passed&&c.details.lengthBasis==='SOURCE_STRAIGHT_TWO_PORT_SPAN')||
    !shortPass.operations.some(o=>o.before?.includes?.('<ComponentType>RIGID</ComponentType>')))
    throw Error('Short removal receipt lost source selection/tombstones/lineage/weight');
  await writeFile(path.join(sourceRoot,'preview-test-results','short-drop.xml'),shortXml);
@@ -321,6 +351,38 @@ try{
  if(result.shortDropRejected.includes('Traceback')||!result.shortDropRejected.includes('Check restraints, mating diameters and port directions.')||
   !result.shortDropRejected.includes('0 selected elements dropped')||!(await page.locator('[data-occ-summary]').textContent()).includes('6 of 6')||
   !(await page.locator('[data-download-working]').isDisabled())||await page.locator('[data-download-fix]').count())throw Error('Failed reconnection released a partial removal');
+ // S1: zero-filled straight gaskets keep the inclusive boundary; curves/junctions are manual.
+ result.shortLengthQualification=[];
+ for(const length of [6,6.001]){
+  const sample=shortFixture.replaceAll('103 0 0',(100+length)+' 0 0').replaceAll('189 0 0',(186+length)+' 0 0');
+  await page.locator('[data-file]').setInputFiles({name:'short-length-boundary.xml',mimeType:'application/xml',buffer:Buffer.from(sample)});
+  await page.waitForFunction(()=>document.querySelector('[data-occ-summary]')?.textContent?.includes('6 of 6'));
+  await page.locator('[data-analyze]').click();
+  await page.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'),null,{timeout:120000});
+  await page.locator('[data-preview-short]').click();
+  if(length===6){
+   if(await page.locator('[data-short-index]:not(:disabled)').count()!==1||!(await page.locator('[data-short-preview]').textContent()).includes('Length basis: straight port spacing'))throw Error('Zero-filled exactly 6 mm gasket lost qualification');
+   await page.locator('[data-select-gaskets]').click();await page.locator('[data-run-short-drop]').click();
+   await page.waitForFunction(()=>document.querySelector('main').getAttribute('aria-busy')==='false'&&document.querySelector('[data-fix-result]')?.getAttribute('data-result')==='ready',null,{timeout:120000});
+   if(!(await page.locator('[data-occ-summary]').textContent()).includes('4 of 4'))throw Error('Exactly 6 mm gasket was not dropped and closed');
+  }else if(await page.locator('[data-short-index]').count())throw Error('6.001 mm gasket offered by drop preview');
+  result.shortLengthQualification.push({kind:'GASK',length,zeroFilled:true,outcome:length===6?'DROPPED_AND_CLOSED':'OVER_LIMIT'});
+ }
+ const curved='<PipeStressExport><Branch><Branchname>CURVED</Branchname>'+
+  junctionNode(10,'PIPE','P',1,'100 0 0','<OutsideDiameter>100</OutsideDiameter>')+junctionNode(20,'PIPE','P',2,'4.1 0 0','<OutsideDiameter>100</OutsideDiameter>')+
+  junctionNode(-1,'ELBO','SHORT',1,'4.1 0 0','<BendRadius>4.1</BendRadius><AlphaAngle>90</AlphaAngle>')+junctionNode(-1,'ELBO','SHORT',0,'0 0 0')+junctionNode(30,'RIGID','SHORT',2,'0 4.1 0')+
+  junctionNode(-1,'FLAN','F',1,'0 4.1 0','<OutsideDiameter>100</OutsideDiameter>')+junctionNode(40,'RIGID','F',2,'0 90.1 0','<OutsideDiameter>100</OutsideDiameter>')+'</Branch></PipeStressExport>';
+ for(const [kind,sample] of [['ELBO',curved],['TEE',shortFixture.replace('<ComponentType>GASK</ComponentType>','<ComponentType>TEE</ComponentType>')],['OLET',shortFixture.replace('<ComponentType>GASK</ComponentType>','<ComponentType>OLET</ComponentType>')]]){
+  await page.locator('[data-file]').setInputFiles({name:'unqualified-length.xml',mimeType:'application/xml',buffer:Buffer.from(sample)});
+  await page.waitForFunction(()=>!document.querySelector('[data-analyze]').disabled);
+  await page.locator('[data-analyze]').click();
+  await page.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'),null,{timeout:120000});
+  await page.locator('[data-preview-short]').click();
+  const preview=await page.locator('[data-short-preview]').textContent();
+  if(await page.locator('[data-short-index]:disabled').count()!==1||!preview.includes('physical length unverified')||!preview.includes('not qualified by endpoint distance'))throw Error(kind+' chord was promoted to a physical length');
+  result.shortLengthQualification.push({kind,outcome:'MANUAL_LENGTH_UNQUALIFIED'});
+ }
+ await page.screenshot({path:path.join(sourceRoot,'preview-test-results','short-length-guard.png'),fullPage:true});
  // Source-evidenced closure resolves without a geometry edit and is exportable.
  const closed='<PipeStressExport><Branch><Branchname>CLOSED</Branchname><Node><NodeNumber>-1</NodeNumber><ComponentType>BRAN</ComponentType><ComponentRefNo>B</ComponentRefNo><Endpoint>1</Endpoint><ConnectionType>CLOS</ConnectionType><Position>0 0 0</Position></Node><Node><NodeNumber>10</NodeNumber><ComponentType>FBLI</ComponentType><ComponentRefNo>F</ComponentRefNo><Endpoint>1</Endpoint><Position>0 0 0</Position></Node><Node><NodeNumber>-1</NodeNumber><ComponentType>FBLI</ComponentType><ComponentRefNo>F</ComponentRefNo><Endpoint>2</Endpoint><Position>32.2 0 0</Position></Node></Branch></PipeStressExport>';
  await page.locator('[data-file]').setInputFiles({name:'closed.xml',mimeType:'application/xml',buffer:Buffer.from(closed)});

@@ -1,6 +1,6 @@
 /** Human-readable PSI116 rule audit. Presentation only: all severities and witnesses come from findings. */
 const RULES=Object.freeze({
- CONNECTION_DECLARATION_CONFLICT:["Connection and closure declarations conflict","A shared source node is also declared CLOS. Reconcile the branch connection/termination declaration before changing it."],
+ CONNECTION_DECLARATION_CONFLICT:["Connection declarations conflict","Source-linked records disagree about a junction owner or closed termination. Reconcile the branch declaration with the actual physical owner before changing the connection."],
  PORT_CONNECTION_WITHIN_TOLERANCE:["Connection within 25 mm tolerance","Compatible physical ports have a unique counterpart within the inclusive project tolerance. Auto fix closes the interface and preserves finite component geometry."],
  NEAR_MISS_PIPE_JOINT:["Possible pipe-joint gap","Adjacent source PIPE occurrences have separated ends within the 3D near-miss screening range. Verify intended connection; source ordering alone is not proof."],
  NEAR_MISS_BRANCH_ENDS:["Possible gap between branch ends","Pipe endpoints in different branches nearly meet but do not coincide within the connection tolerance. Confirm design connectivity before joining."],
@@ -58,6 +58,7 @@ const CATEGORY_BY_RULE=Object.freeze({
  INSTRUMENT_RIGID_EVIDENCE_REQUIRED:"non_topology"
 });
 const MANUAL_GUIDE=Object.freeze({
+ CONNECTION_DECLARATION_CONFLICT:"Compare the source branch ConnectionType with its actual junction owner and any CLOS declaration. Correct the mismatched TEE/OLET declaration, owner link or termination in the authoring model, re-export and rerun TopoFix. Matching node numbers or positions do not resolve contradictory declarations.",
  NEAR_MISS_PIPE_JOINT:"Confirm that these PIPE ports should connect. For an eligible joint at ≤25 mm, choose the retained port and use Close joint & recheck below. The other port moves to it; both component records remain. For shared or complex ownership, repair the authoring model and re-export.",
  NEAR_MISS_BRANCH_ENDS:"Check the intended branch connection. For an eligible pair of PIPE ports at ≤25 mm, choose the retained port and use Close joint & recheck. If the separation is intentional, record that outcome; shared or complex joints require upstream repair.",
  BRANCH_END_UNVERIFIED:"No compatible port connection qualified under the ≤25 mm policy. Check this branch head/tail HREF/TREF and its target component/port in the authoring model. Restore a missing target in the export or correct its position/link, re-export and rerun TopoFix; document an intentional boundary instead when applicable.",

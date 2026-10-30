@@ -185,3 +185,14 @@ test('manual two-port joint includes exactly 25 mm with retained endpoint choice
  records.get('B').position.x=2;records.get('B').restraint=true;
  assert.doesNotMatch(renderAuditHTML(buildAudit([f],[]),{sourceByKey:records}).html,/data-close-joint=/);
 });
+
+test('Junction declaration conflicts retain source witnesses and upstream correction steps',()=>{
+ const finding={finding_id:'F4',code:'CONNECTION_DECLARATION_CONFLICT',severity:'WARNING',blocking:false,
+  message:'Branch declares TEE; actual owner is OLET.',node_keys:['B1:N50:S0','B0:N50:S1'],node_numbers:[50],
+  details:{autofixAuthorized:false,connectionAuthority:'CONFLICTING_JUNCTION_DECLARATIONS'}};
+ const audit=buildAudit([finding],[]),html=renderAuditHTML(audit).html;
+ assert.match(html,/Connection declarations conflict/);
+ assert.match(html,/TEE\/OLET/);assert.match(html,/re-export and rerun/);
+ assert.match(html,/B1:N50:S0/);assert.match(html,/B0:N50:S1/);
+ assert.doesNotMatch(html,/data-auto-fix=/);
+});

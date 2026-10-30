@@ -1,9 +1,47 @@
 """Explicitly selected short-element removal + port closure, on an isolated copy."""
 from collections import Counter
 from dataclasses import replace
+from math import isfinite
+import xml.etree.ElementTree as ET
 from .connection_ports import PortModel, SUPPORTED
 from .models import FixAction
 from .resolver import resolve_psi116
+
+STRAIGHT_TWO_PORT_TYPES=frozenset({'PIPE','GASK','FLAN','VALV','RIGID','REDU','COUP','INST'})
+
+
+def _length_basis(group, first, last, kind):
+    """Qualify straight source port spacing; never infer a curve's arc length."""
+    if kind in {'ELBO','TEE','OLET'}:
+        return 'UNQUALIFIED_CURVED_OR_JUNCTION', 'Physical centerline length or junction topology is not qualified by endpoint distance. Review the source geometry before removal.'
+    # This straight two-port profile accepts blank/zero curvature defaults, as
+    # present on the supplied GASK/RIGID records. Type and segment geometry are
+    # still required; a zero field alone never proves a straight component.
+    for node in group:
+        for field in ET.fromstring(node.raw_xml):
+            if str(field.tag).rsplit('}',1)[-1] not in {'BendRadius','AlphaAngle'}:continue
+            text=(field.text or '').strip()
+            if not text:continue
+            try:value=float(text)
+            except ValueError:
+                return 'UNQUALIFIED_CURVATURE_METADATA', 'Curvature metadata is invalid. Correct the source radius/angle and recheck before removal.'
+            if not isfinite(value) or value!=0:
+                return 'UNQUALIFIED_CURVATURE_METADATA', 'Nonzero or invalid curvature metadata requires a qualified physical centerline length. Review the source geometry before removal.'
+    if kind not in STRAIGHT_TWO_PORT_TYPES:
+        return 'UNQUALIFIED_COMPONENT_PROFILE', 'A straight two-port length profile is not established for this component. Review its source geometry.'
+    start=first.position.as_list();end=last.position.as_list()
+    delta=[b-a for a,b in zip(start,end)];length=first.position.distance_to(last.position)
+    for node in group:
+        relative=[v-a for v,a in zip(node.position.as_list(),start)]
+        if length<=1e-9:
+            on_segment=node.position.distance_to(first.position)<=1e-6
+        else:
+            along=sum(v*d for v,d in zip(relative,delta))/length
+            perpendicular=sum((v-along*d/length)**2 for v,d in zip(relative,delta))
+            on_segment=-1e-6<=along<=length+1e-6 and perpendicular<=1e-12
+        if not on_segment:
+            return 'UNQUALIFIED_NONSTRAIGHT_GEOMETRY', 'Source owner points do not lie on the straight segment between its ports. Review physical centerline length before removal.'
+    return 'SOURCE_STRAIGHT_TWO_PORT_SPAN', ''
 
 
 def short_elements(doc, config):
@@ -18,13 +56,16 @@ def short_elements(doc, config):
         if span>6+1e-9:continue
         first=next(p for p in ports if p.node.endpoint==1)
         last=next(p for p in ports if p.node.endpoint==2)
+        kind=m.kind(gid)
+        length_basis,length_reason=_length_basis(g,first.node,last.node,kind)
         order=m.branch_groups[g[0].branch_index];index=order.index(gid)
         left=m.group_ports.get(order[index-1],[]) if index else []
         right=m.group_ports.get(order[index+1],[]) if index+1<len(order) else []
         a=next((p for p in left if p.node.endpoint==2),left[-1] if left else None)
         b=next((p for p in right if p.node.endpoint==1),right[0] if right else None)
         reason=''
-        if m.kind(gid) not in SUPPORTED or m.kind(gid) in {'BRAN','FBLI','CAP'}:reason='Boundary/unsupported component requires source review.'
+        if length_reason:reason=length_reason
+        elif kind not in SUPPORTED or kind in {'BRAN','FBLI','CAP'}:reason='Boundary/unsupported component requires source review.'
         elif not g[0].component_ref_no or refs[(g[0].branch_index,g[0].component_ref_no)]!=1:reason='Component owner is not unique.'
         elif {n.key for n in source_nodes if n.branch_index==g[0].branch_index and n.component_ref_no==g[0].component_ref_no}!={n.key for n in g}:reason='Owner includes unmeasured or non-port source records.'
         elif any(not n.raw_component_type for n in g):reason='Explicit component type is required.'
@@ -35,8 +76,9 @@ def short_elements(doc, config):
         elif not m.compatible(a,b,a.node.branch_index!=b.node.branch_index):reason='Surrounding diameter/direction/closure evidence does not qualify.'
         rows.append({'id':f'SHORT:{g[0].branch_index}:{g[0].component_ref_no}',
             'sourceSha256':doc.source_sha256,'branchIndex':g[0].branch_index,'branchName':g[0].branch_name,
-            'componentType':m.kind(gid),'componentRefNo':g[0].component_ref_no,
-            'lengthMm':span,'nodeKeys':[n.key for n in g],'recordCount':len(g),
+            'componentType':kind,'componentRefNo':g[0].component_ref_no,
+            'lengthMm':first.node.position.distance_to(last.node.position) if not length_reason else span,
+            'measuredSpanMm':span,'lengthBasis':length_basis,'nodeKeys':[n.key for n in g],'recordCount':len(g),
             'weightRemoved':sum(n.weight or 0 for n in g),'eligible':not reason,'reason':reason,
             'leftKey':a.node.key if a else None,'rightKey':b.node.key if b else None})
     return rows
@@ -110,7 +152,8 @@ def apply_short_element(before, policy, config):
     identity=lambda n:(n.branch_index,n.component_ref_no,n.component_type,n.endpoint)
     closed_left=after.document.branches[li[0]].nodes[li[1]];closed_right=after.document.branches[ri[0]].nodes[ri[1]]
     checks=[
-        ValidationCheck('SHORT_ELEMENT_LENGTH_LE_6',row['lengthMm']<=6+1e-9,True,'Selected physical component span is ≤6 mm.',row['lengthMm'],6),
+        ValidationCheck('SHORT_ELEMENT_LENGTH_BASIS_QUALIFIED',row['lengthBasis']=='SOURCE_STRAIGHT_TWO_PORT_SPAN',True,'Source owner qualifies as a straight two-port component.',details={'lengthBasis':row['lengthBasis']}),
+        ValidationCheck('SHORT_ELEMENT_LENGTH_LE_6',row['lengthMm']<=6+1e-9,True,'Qualified straight component length is ≤6 mm.',row['lengthMm'],6,{'lengthBasis':row['lengthBasis'],'measuredSpanMm':row['measuredSpanMm']}),
         ValidationCheck('SELECTED_RECORD_REMOVAL_ACCOUNTED',len(original)-len(removed)==len(actual_nodes),True,'Only selected source records were removed.',len(original),len(actual_nodes),{'removed':len(removed)}),
         ValidationCheck('RETAINED_COMPONENT_OWNERS_PRESERVED',Counter(map(identity,expected))==Counter(map(identity,actual_nodes)),True,'All retained component/port identities are preserved.'),
         ValidationCheck('RESTRAINTS_PRESERVED',sum(n.has_restraint for n in original)==sum(n.has_restraint for n in actual_nodes),True,'No restraint was removed.'),

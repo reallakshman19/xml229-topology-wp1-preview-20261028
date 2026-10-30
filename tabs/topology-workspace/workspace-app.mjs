@@ -391,7 +391,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     const panel=query(root,'[data-short-preview]');
     panel.innerHTML='<h3>Drop elements ≤6 mm, then close</h3><p>Choose complete two-port elements. Each selected element is removed and reconnected atomically; a failure retains the last validated copy. Removed weight and source records are recorded in the receipt.</p>'+
       '<button data-select-gaskets>Select eligible gaskets</button>'+
-      '<ul>'+state.shortElements.map((r,i)=>'<li><label><input type="checkbox" data-short-index="'+i+'" '+(!r.eligible?'disabled':'')+'>'+esc(r.componentType+' · '+r.lengthMm.toFixed(3)+' mm · '+r.componentRefNo+' · '+r.recordCount+' records · weight '+r.weightRemoved)+'</label><small>'+esc(r.nodeKeys.join(', ')+(r.eligible?'':' · '+r.reason))+'</small></li>').join('')+'</ul>'+
+      '<ul>'+state.shortElements.map((r,i)=>'<li><label><input type="checkbox" data-short-index="'+i+'" '+(!r.eligible?'disabled':'')+'>'+esc(r.componentType+' · '+r.lengthMm.toFixed(3)+' mm'+(r.lengthBasis==='SOURCE_STRAIGHT_TWO_PORT_SPAN'?'':' source span; physical length unverified')+' · '+r.componentRefNo+' · '+r.recordCount+' records · weight '+r.weightRemoved)+'</label><small>'+esc(r.nodeKeys.join(', ')+' · '+(r.lengthBasis==='SOURCE_STRAIGHT_TWO_PORT_SPAN'?'Length basis: straight port spacing':r.reason)+(r.eligible||r.lengthBasis!=='SOURCE_STRAIGHT_TWO_PORT_SPAN'?'':' · '+r.reason))+'</small></li>').join('')+'</ul>'+
       (state.shortElements.length?'<button data-run-short-drop>Apply selected drops &amp; close</button>':'<p>No measurable two-port elements at ≤6 mm.</p>');
   }
   async function dropShortElements(){
