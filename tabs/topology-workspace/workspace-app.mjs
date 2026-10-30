@@ -469,7 +469,10 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
           fixedXmlSha256:state.source.sourceSha256,
           requestedIds:outcome.requested,
           applied:applied,skipped:outcome.skipped,
-          completed:outcome.completed,stopReason:outcome.stopReason,
+          completed:outcome.completed,failedId:outcome.failedId||null,
+          pendingIds:outcome.pendingIds||[],
+          eligibleOnCurrentXml:next.findings.shortElements.filter(r=>r.eligible).length,
+          stopReason:outcome.stopReason,
           stopMessage:outcome.stopMessage,findingsBefore:beforeCount,
           findingsAfter:state.findings.length}};
       canvas.setScene(scene);sourceMeta();
@@ -477,10 +480,15 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
         'Bulk working revision changed. Review current findings and download source-bound repair history.';
     }
     const done=applied.length,skipped=outcome.skipped?.length||0;
+    const selected=outcome.requested?.length||0,failed=outcome.failedId?1:0;
+    const checked=done+skipped+failed,unprocessed=Math.max(0,selected-checked);
+    const nowEligible=state.shortElements.filter(r=>r.eligible).length;
+    if(checked+unprocessed!==selected)throw Error('SHORT_BULK_COUNT_RECONCILIATION_FAILED');
     const reason=outcome.stopReason||'COMPLETE';
     const message=(reason==='COMPLETE'?'BULK COMPLETE':'BULK STOPPED · '+reason)+
-      ' · '+done+' validated element(s) applied, '+skipped+' skipped, '+
-      (outcome.requested?.length||0)+' selected · working revision '+state.revision+
+      ' · selected '+selected+' = '+done+' validated + '+skipped+' skipped + '+failed+
+      ' failed + '+unprocessed+' unprocessed · eligible on CURRENT XML '+nowEligible+
+      ' · working revision '+state.revision+
       (outcome.stopMessage?' · '+outcome.stopMessage:'')+
       (done?' · current XML and full receipts downloadable.':' · no XML changed.');
     query(root,'[data-progress]').textContent=message;
@@ -498,7 +506,8 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     const generation=state.epoch,source={...state.source};
     state.batchRunning=true;state.shortBulk=null;refresh();
     query(root,'[data-progress]').textContent=
-      'BULK STARTED · 0/'+ids.length+' checked. Python validates each selected owner; canvas refreshes once at the end.';
+      'BULK STARTED · 0/'+ids.length+' selected checked. Audit counts and canvas are PRE-BATCH SNAPSHOT at revision '+
+      state.revision+'. Python validates each owner headlessly; canvas refreshes after the batch.';
     try{
       const outcome=await runShortBulk({
         source,shortElements:state.shortElements,selectedIds:ids,runEngine,
@@ -507,8 +516,10 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
         onProgress:step=>{
           if(generation!==state.epoch)return;
           query(root,'[data-progress]').textContent='BULK '+step.status+
-            ' · '+step.completed+'/'+step.total+' checked · '+step.applied+
-            ' validated · '+step.skipped+' skipped · original file unchanged until final publication';
+            ' · '+step.completed+'/'+step.total+' selected checked · '+step.applied+
+            ' validated · '+step.skipped+' skipped · '+(step.currentEligible??'UNKNOWN')+
+            ' eligible on in-progress source (not yet displayed) · audit/canvas show PRE-BATCH REVISION '+
+            state.revision+' until publication';
         },
       });
       if(generation!==state.epoch)return;
