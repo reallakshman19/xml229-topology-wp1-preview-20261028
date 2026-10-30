@@ -19,18 +19,20 @@ export async function runShortBulk({
     throw Error('SHORT_BULK_INVALID_SELECTION');
   let current={...source},rows=shortElements;
   const applied=[],skipped=[],requested=[...selectedIds];
-  let latest=null,completed=0,stopReason='COMPLETE',stopMessage='';
+  let latest=null,completed=0,stopReason='COMPLETE',stopMessage='',failedId=null;
   for(const id of requested){
     if(!isCurrent()){stopReason='CANCELLED';break;}
     const row=rows.find(r=>r.id===id);
     if(!row?.eligible||row.sourceSha256!==current.sourceSha256){
       skipped.push({id,reason:row?.reason||'NOT_ELIGIBLE_ON_CURRENT_REVISION'});
       completed++;
-      onProgress({completed,total:requested.length,applied:applied.length,skipped:skipped.length,id,status:'SKIPPED'});
+      onProgress({completed,total:requested.length,applied:applied.length,skipped:skipped.length,
+        currentEligible:rows.filter(r=>r.eligible).length,id,status:'SKIPPED'});
       continue;
     }
     try{
-      onProgress({completed,total:requested.length,applied:applied.length,skipped:skipped.length,id,status:'APPLYING'});
+      onProgress({completed,total:requested.length,applied:applied.length,skipped:skipped.length,
+        currentEligible:rows.filter(r=>r.eligible).length,id,status:'APPLYING'});
       const request={id:row.id,sourceSha256:current.sourceSha256,nodeKeys:[...row.nodeKeys]};
       const result=await runEngine({
         sourceKind:'xml',sourceText:current.sourceText,sourceName:current.name,topologyPreFinalOnly:true,
@@ -84,10 +86,12 @@ export async function runShortBulk({
       // UI saves it without repainting the canvas or presenting individual prompts.
       onCheckpoint({originSha256:source.sourceSha256,latest,
         applied:[...applied],skipped:[...skipped],requested,completed});
-      onProgress({completed,total:requested.length,applied:applied.length,skipped:skipped.length,id,status:'VALIDATED'});
+      onProgress({completed,total:requested.length,applied:applied.length,skipped:skipped.length,
+        currentEligible:rows.filter(r=>r.eligible).length,id,status:'VALIDATED'});
     }catch(error){
       if(!isCurrent()){stopReason='CANCELLED';break;}
       stopReason='TRANSACTION_FAILED';
+      failedId=id;
       const reason=String(error?.message||error);
       stopMessage=reason.includes('RECONNECTION')
         ?'Selected element retained: surrounding ports cannot reconnect. Check restraints, mating diameters and port directions.'
@@ -96,5 +100,6 @@ export async function runShortBulk({
     }
   }
   return {originSha256:source.sourceSha256,latest,applied,skipped,requested,
-    completed,stopReason,stopMessage};
+    completed,failedId,pendingIds:requested.slice(completed+(failedId?1:0)),
+    currentEligible:rows.filter(r=>r.eligible).length,stopReason,stopMessage};
 }
