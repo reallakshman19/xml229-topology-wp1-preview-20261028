@@ -416,7 +416,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
         (r.lengthBasis==='SOURCE_STRAIGHT_TWO_PORT_SPAN'?'':' source span; physical length unverified')+
         ' · '+r.componentRefNo+' · '+r.recordCount+' records · weight '+r.weightRemoved)+
         '</label><small>'+esc((r.nodeKeys||[]).join(', ')+' · '+
-        (r.eligible?'Source-qualified straight two-port profile':r.reason||'Manual review'))+
+        (r.eligible?'Length basis: straight port spacing':r.reason||'Manual review'))+
         '</small></li>').join('')+'</ul>'+
       '<div class="short-preview-pagination"><button data-short-prev '+(!p.page?'disabled':'')+'>Previous</button>'+
       '<button data-short-next '+(p.page>=pages-1?'disabled':'')+'>Next</button></div>'+
