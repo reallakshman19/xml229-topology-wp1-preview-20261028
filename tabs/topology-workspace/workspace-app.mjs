@@ -396,6 +396,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   // This preview is only a view of source-qualified data already received.
   // Paginate so one click never constructs an unbounded DOM tree.
   const SHORT_PREVIEW_PAGE_SIZE=24;
+  const MAX_SHORT_DROP_PER_BATCH=8; // bounds receipt memory and reviewable validated steps
   function renderShortPreview(){
     const p=state.shortPreview,panel=query(root,'[data-short-preview]');
     if(!p||!state.source||p.sha!==state.source.sourceSha256){panel.textContent='';return;}
@@ -421,7 +422,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       '<div class="short-preview-pagination"><button data-short-prev '+(!p.page?'disabled':'')+'>Previous</button>'+
       '<button data-short-next '+(p.page>=pages-1?'disabled':'')+'>Next</button></div>'+
       (total?'<button data-run-short-drop '+(!p.selected.size?'disabled':'')+
-        '>Apply '+p.selected.size+' selected drops &amp; close</button>':
+        '>Apply next '+Math.min(p.selected.size,MAX_SHORT_DROP_PER_BATCH)+' of '+p.selected.size+' selected &amp; close</button>':
         '<p>No measurable two-port elements at ≤6 mm.</p>')+
       '<p>One source-bound transaction and recheck per element. Cancel at any point; only validated revisions are retained.</p>';
   }
@@ -436,7 +437,8 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     if(state.busy||state.batchRunning||!preview||preview.epoch!==state.epoch||
        preview.sha!==state.source.sourceSha256)return;
     const eligibleIds=new Set(state.shortElements.filter(r=>r.eligible).map(r=>r.id));
-    const ids=[...preview.selected].filter(id=>eligibleIds.has(id));
+    const requestedIds=[...preview.selected].filter(id=>eligibleIds.has(id));
+    const ids=requestedIds.slice(0,MAX_SHORT_DROP_PER_BATCH);
     if(!ids.length){setFixStatus('Select one or more eligible source-qualified elements.','rejected');return;}
     const generation=state.epoch,initialSha=state.source.sourceSha256;
     let index=0;
@@ -460,10 +462,12 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       if(passes.length){state.fix={...lastFix,report:{schema:'xml229-short-element-drop-batch/v1',
         source:{sha256:initialSha,name:state.source.name},fixedXmlSha256:state.source.sourceSha256,
         passes,stopReason,stopMessage,droppedElementCount:passes.length,
+        requestedElementCount:requestedIds.length,deferredElementCount:requestedIds.length-ids.length,
         removedRecordCount:passes.reduce((sum,p)=>sum+(p.operations||[]).filter(o=>o.operation==='REMOVE_SELECTED_SHORT_ELEMENT_RECORD').length,0)},
         name:state.source.name+'.dropped-'+passes.length+'.validated.topofix.xml'};}
       const message=(stopReason==='COMPLETE'?'APPLIED':'STOPPED · '+stopMessage)+' · '+passes.length+
-        ' selected elements dropped and reconnected · '+(ids.length-passes.length)+' selected elements remain.';
+        ' selected elements dropped and reconnected · '+(requestedIds.length-passes.length)+
+        ' selected elements remain. Reopen short preview and select remaining on the new working revision.';
       setFixStatus(message,stopReason==='COMPLETE'?'ready':'stopped','drop');
       query(root,'[data-progress]').textContent=message;
     }catch(error){
@@ -784,7 +788,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
         const status=query(root,'[data-short-selection-count]');
         if(status)status.textContent=p.selected.size+' selected · page '+(p.page+1);
         const run=query(root,'[data-run-short-drop]');
-        if(run){run.disabled=!p.selected.size;run.textContent='Apply '+p.selected.size+' selected drops & close';}
+        if(run){run.disabled=!p.selected.size;run.textContent='Apply next '+Math.min(p.selected.size,MAX_SHORT_DROP_PER_BATCH)+' of '+p.selected.size+' selected & close';}
       }
     }
     const d=state.secondPass;
