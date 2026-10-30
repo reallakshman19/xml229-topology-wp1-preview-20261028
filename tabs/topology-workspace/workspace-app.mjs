@@ -388,43 +388,89 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     }
   }
   function autoFix(actionId){return runFix([actionId],'single');}
+
+  // This preview is only a view of source-qualified data already received.
+  // Paginate so one click never constructs an unbounded DOM tree.
+  const SHORT_PREVIEW_PAGE_SIZE=24;
+  function renderShortPreview(){
+    const p=state.shortPreview,panel=query(root,'[data-short-preview]');
+    if(!p||!state.source||p.sha!==state.source.sourceSha256){panel.textContent='';return;}
+    const rows=state.shortElements,total=rows.length;
+    const pages=Math.max(1,Math.ceil(total/SHORT_PREVIEW_PAGE_SIZE));
+    p.page=Math.max(0,Math.min(p.page,pages-1));
+    const start=p.page*SHORT_PREVIEW_PAGE_SIZE;
+    const visible=rows.slice(start,start+SHORT_PREVIEW_PAGE_SIZE);
+    const eligible=rows.filter(r=>r.eligible).length;
+    panel.innerHTML='<h3>Drop elements ≤6 mm, then close</h3>'+
+      '<p role="status">PREVIEW ONLY · '+total+' measured candidates · '+eligible+
+      ' eligible under source checks · working XML unchanged. Select source owners, then explicitly Apply.</p>'+
+      '<p data-short-selection-count>'+p.selected.size+' selected · page '+(p.page+1)+' of '+pages+'</p>'+
+      '<button data-select-gaskets>Select eligible gaskets (all pages)</button>'+
+      '<ul>'+visible.map((r,i)=>'<li><label><input type="checkbox" data-short-index="'+(start+i)+'" '+
+        (!r.eligible?'disabled ':'')+(p.selected.has(r.id)?'checked ':'')+'>'+
+        esc(r.componentType+' · '+Number(r.lengthMm).toFixed(3)+' mm'+
+        (r.lengthBasis==='SOURCE_STRAIGHT_TWO_PORT_SPAN'?'':' source span; physical length unverified')+
+        ' · '+r.componentRefNo+' · '+r.recordCount+' records · weight '+r.weightRemoved)+
+        '</label><small>'+esc((r.nodeKeys||[]).join(', ')+' · '+
+        (r.eligible?'Source-qualified straight two-port profile':r.reason||'Manual review'))+
+        '</small></li>').join('')+'</ul>'+
+      '<div class="short-preview-pagination"><button data-short-prev '+(!p.page?'disabled':'')+'>Previous</button>'+
+      '<button data-short-next '+(p.page>=pages-1?'disabled':'')+'>Next</button></div>'+
+      (total?'<button data-run-short-drop '+(!p.selected.size?'disabled':'')+
+        '>Apply '+p.selected.size+' selected drops &amp; close</button>':
+        '<p>No measurable two-port elements at ≤6 mm.</p>')+
+      '<p>One source-bound transaction and recheck per element. Cancel at any point; only validated revisions are retained.</p>';
+  }
   function previewShortElements(){
     if(!state.source||!state.plan||state.busy||state.batchRunning)return;
-    state.shortPreview={sha:state.source.sourceSha256,epoch:state.epoch};
-    const panel=query(root,'[data-short-preview]');
-    panel.innerHTML='<h3>Drop elements ≤6 mm, then close</h3><p>Choose complete two-port elements. Each selected element is removed and reconnected atomically; a failure retains the last validated copy. Removed weight and source records are recorded in the receipt.</p>'+
-      '<button data-select-gaskets>Select eligible gaskets</button>'+
-      '<ul>'+state.shortElements.map((r,i)=>'<li><label><input type="checkbox" data-short-index="'+i+'" '+(!r.eligible?'disabled':'')+'>'+esc(r.componentType+' · '+r.lengthMm.toFixed(3)+' mm'+(r.lengthBasis==='SOURCE_STRAIGHT_TWO_PORT_SPAN'?'':' source span; physical length unverified')+' · '+r.componentRefNo+' · '+r.recordCount+' records · weight '+r.weightRemoved)+'</label><small>'+esc(r.nodeKeys.join(', ')+' · '+(r.lengthBasis==='SOURCE_STRAIGHT_TWO_PORT_SPAN'?'Length basis: straight port spacing':r.reason)+(r.eligible||r.lengthBasis!=='SOURCE_STRAIGHT_TWO_PORT_SPAN'?'':' · '+r.reason))+'</small></li>').join('')+'</ul>'+
-      (state.shortElements.length?'<button data-run-short-drop>Apply selected drops &amp; close</button>':'<p>No measurable two-port elements at ≤6 mm.</p>');
+    state.shortPreview={sha:state.source.sourceSha256,epoch:state.epoch,page:0,selected:new Set()};
+    renderShortPreview();
+    query(root,'[data-short-preview]').scrollIntoView({block:'nearest'});
   }
   async function dropShortElements(){
     const preview=state.shortPreview;
-    if(state.busy||state.batchRunning||!preview||preview.epoch!==state.epoch||preview.sha!==state.source.sourceSha256)return;
-    const ids=getNodes(root,'[data-short-index]:checked').map(el=>state.shortElements[Number(el.dataset.shortIndex)]?.id).filter(Boolean);
-    if(!ids.length){setFixStatus('Select one or more eligible elements from the preview.','rejected');return;}
-    const generation=state.epoch,initialSha=state.source.sourceSha256;let index=0;
-    state.batchRunning=true;root.setAttribute('aria-busy','true');
-    const outcome=await runValidatedPasses({initialPlan:{actionIds:[ids[0]]},maxPasses:ids.length,
-      readState:()=>({sha:state.source.sourceSha256,revision:state.revision,fix:state.fix,failure:state.lastFailure}),
-      isCurrent:()=>generation===state.epoch,
-      runPass:async plan=>{
-        const row=state.shortElements.find(r=>r.id===plan.actionIds[0]);
-        if(!row?.eligible)throw Error('Selected element no longer qualifies; inspect the current source preview.');
-        const request={id:row.id,sourceSha256:state.source.sourceSha256,nodeKeys:row.nodeKeys};
-        await runFix([row.id],'drop',[],[request]);
-      },nextPlan:()=>({actionIds:++index<ids.length?[ids[index]]:[]})});
-    if(generation!==state.epoch)return;
-    const {passes,lastFix,stopReason,stopMessage}=outcome;
-    if(lastFix?.sourceSha256===state.source.sourceSha256)state.fix=lastFix;
-    if(passes.length){state.fix={...lastFix,report:{schema:'xml229-short-element-drop-batch/v1',
-      source:{sha256:initialSha,name:state.source.name},fixedXmlSha256:state.source.sourceSha256,
-      passes,stopReason,stopMessage,droppedElementCount:passes.length,
-      removedRecordCount:passes.reduce((sum,p)=>sum+p.operations.filter(o=>o.operation==='REMOVE_SELECTED_SHORT_ELEMENT_RECORD').length,0)},
-      name:state.source.name+'.dropped-'+passes.length+'.validated.topofix.xml'};}
-    const message=(stopReason==='COMPLETE'?'APPLIED':'STOPPED · '+stopMessage)+' · '+passes.length+
-      ' selected elements dropped and reconnected · '+(ids.length-passes.length)+' selected elements remain.';
-    setFixStatus(message,stopReason==='COMPLETE'?'ready':'stopped','drop');query(root,'[data-progress]').textContent=message;
-    state.batchRunning=false;refresh();
+    if(state.busy||state.batchRunning||!preview||preview.epoch!==state.epoch||
+       preview.sha!==state.source.sourceSha256)return;
+    const eligibleIds=new Set(state.shortElements.filter(r=>r.eligible).map(r=>r.id));
+    const ids=[...preview.selected].filter(id=>eligibleIds.has(id));
+    if(!ids.length){setFixStatus('Select one or more eligible source-qualified elements.','rejected');return;}
+    const generation=state.epoch,initialSha=state.source.sourceSha256;
+    let index=0;
+    state.batchRunning=true;refresh();
+    try{
+      const outcome=await runValidatedPasses({initialPlan:{actionIds:[ids[0]]},maxPasses:ids.length,
+        readState:()=>({sha:state.source.sourceSha256,revision:state.revision,fix:state.fix,failure:state.lastFailure}),
+        isCurrent:()=>generation===state.epoch,
+        runPass:async plan=>{
+          if(generation!==state.epoch)throw Error('Source or request changed.');
+          const row=state.shortElements.find(r=>r.id===plan.actionIds[0]);
+          if(!row?.eligible)throw Error('Selected element no longer qualifies; re-preview current source.');
+          query(root,'[data-progress]').textContent='PROCESSING · short element '+(index+1)+'/'+ids.length+
+            ' · revision '+state.revision+' · cancel remains available.';
+          const request={id:row.id,sourceSha256:state.source.sourceSha256,nodeKeys:row.nodeKeys};
+          await runFix([row.id],'drop',[],[request]);
+        },nextPlan:()=>({actionIds:++index<ids.length?[ids[index]]:[]})});
+      if(generation!==state.epoch)return;
+      const {passes,lastFix,stopReason,stopMessage}=outcome;
+      if(lastFix?.sourceSha256===state.source.sourceSha256)state.fix=lastFix;
+      if(passes.length){state.fix={...lastFix,report:{schema:'xml229-short-element-drop-batch/v1',
+        source:{sha256:initialSha,name:state.source.name},fixedXmlSha256:state.source.sourceSha256,
+        passes,stopReason,stopMessage,droppedElementCount:passes.length,
+        removedRecordCount:passes.reduce((sum,p)=>sum+(p.operations||[]).filter(o=>o.operation==='REMOVE_SELECTED_SHORT_ELEMENT_RECORD').length,0)},
+        name:state.source.name+'.dropped-'+passes.length+'.validated.topofix.xml'};}
+      const message=(stopReason==='COMPLETE'?'APPLIED':'STOPPED · '+stopMessage)+' · '+passes.length+
+        ' selected elements dropped and reconnected · '+(ids.length-passes.length)+' selected elements remain.';
+      setFixStatus(message,stopReason==='COMPLETE'?'ready':'stopped','drop');
+      query(root,'[data-progress]').textContent=message;
+    }catch(error){
+      if(generation===state.epoch){
+        const message='STOPPED · '+(error?.message||String(error))+
+          ' · revision '+state.revision+' retained. No unvalidated XML published.';
+        setFixStatus(message,'stopped','drop');query(root,'[data-progress]').textContent=message;
+      }
+    }finally{
+      if(generation===state.epoch){state.batchRunning=false;refresh();}
+    }
   }
   function renderSecondPass(){
     const panel=query(root,'[data-second-pass]');if(!panel)return;
