@@ -46,3 +46,22 @@ test('invalid native or Final request rejected before dispatch',async()=>{
  await assert.rejects(c.run({...validJob,options:{...validJob.options,useTopoFixForCii:true}}),/PREFINAL_ONLY/);
  c.dispose();
 });
+
+test('idle worker recycles after eight completed jobs to bound Pyodide scratch growth',async()=>{
+ const c=createTopologyWorkerClient({WorkerCtor:FakeWorker,jobTimeoutMs:1000});
+ let first;
+ for(let i=0;i<8;i++){
+   const p=c.run(validJob),w=FakeWorker.instances.at(-1);
+   first ||= w;
+   assert.equal(w,first,'do not recycle before eight validated job results');
+   w.emit('message',{type:'RESULT',id:w.sent.at(-1).id,result:{ok:true,pass:i}});
+   assert.equal((await p).pass,i);
+   if(i<7)assert.equal(w.terminated,false);
+ }
+ assert.equal(first.terminated,true);
+ const next=c.run(validJob),w2=FakeWorker.instances.at(-1);
+ assert.notEqual(w2,first);
+ w2.emit('message',{type:'RESULT',id:w2.sent[0].id,result:{ok:true}});
+ await next;
+ c.dispose();
+});
