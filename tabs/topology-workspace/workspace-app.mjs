@@ -674,21 +674,27 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     state.manualQueueCheckpoint={initialSha256:original.sourceSha256,
       latest:null,applied:[],blocked:[],requested:entries.map(x=>x.id),
       pending:entries.map(x=>x.id)};
-    state.manualQueueStatus='QUEUE STARTED · 0/'+entries.length+
-      ' verified. Audit and canvas remain on the pre-queue revision.';
-    refresh();
+    const startedAt=Date.now();
+    let activeStage='RECHECK',verified=0,remaining=entries.length;
+    const heartbeat=()=>{
+      if(generation!==state.epoch||!state.manualQueueRunning)return;
+      state.manualQueueStatus='QUEUE '+activeStage+' · '+verified+'/'+entries.length+
+        ' verified · '+remaining+' remaining · '+Math.floor((Date.now()-startedAt)/1000)+
+        ' s elapsed. Audit and canvas show the pre-queue revision.';
+      const node=query(root,'[data-queue-status]');
+      if(node)node.textContent=state.manualQueueStatus;
+      query(root,'[data-progress]').textContent=state.manualQueueStatus;
+    };
+    const heartbeatId=setInterval(heartbeat,1000);
+    heartbeat();refresh();
     try{
       const outcome=await runManualFixQueue({source:original,entries,runEngine,
         isCurrent:()=>generation===state.epoch,
         onCheckpoint:saved=>{if(generation===state.epoch)state.manualQueueCheckpoint=saved;},
         onProgress:progress=>{
           if(generation!==state.epoch)return;
-          state.manualQueueStatus='QUEUE '+progress.status+' · '+progress.applied+
-            '/'+progress.total+' verified · '+progress.remaining+' remaining. '+
-            'Audit/canvas show the pre-queue revision; Cancel remains available.';
-          const node=query(root,'[data-queue-status]');
-          if(node)node.textContent=state.manualQueueStatus;
-          query(root,'[data-progress]').textContent=state.manualQueueStatus;
+          activeStage=progress.status;verified=progress.applied;
+          remaining=progress.remaining;heartbeat();
         }});
       if(generation!==state.epoch)return;
       publishManualQueue(outcome);
@@ -697,6 +703,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       const saved=state.manualQueueCheckpoint;
       publishManualQueue({...saved,stopReason:'ERROR',message:String(error?.message||error)});
     }finally{
+      clearInterval(heartbeatId);
       if(generation===state.epoch){
         state.batchRunning=false;state.manualQueueRunning=false;
         state.manualQueueCheckpoint=null;refresh();
