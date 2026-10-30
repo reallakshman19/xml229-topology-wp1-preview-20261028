@@ -4,7 +4,7 @@ Finite component ports translate together. PIPE ports may extend/shorten the pip
 Source records and negative helper identities are retained, never discarded.
 """
 from dataclasses import dataclass
-from math import sqrt, isfinite
+from math import sqrt, isfinite, floor
 
 FINITE = frozenset({'FLAN','GASK','VALV','INST','RIGID','REDU','ELBO','TEE','OLET','COUP','FBLI','CAP'})
 SUPPORTED = FINITE | {'PIPE','BRAN'}
@@ -39,6 +39,14 @@ class PortModel:
         self.doc, self.config = doc, config
         self.nodes = [n for b in doc.branches for n in b.nodes if n.position]
         self.by_key = {n.key:n for n in self.nodes}
+        # Exact candidates: same-branch contact and shared positive NodeNumber.
+        # All original Euclidean distance checks remain authoritative.
+        self._global_order = {n.key:i for i,n in enumerate(self.nodes)}
+        self._nodes_by_branch = {}
+        self._positive_by_number = {}
+        for n in self.nodes:
+            self._nodes_by_branch.setdefault(n.branch_index, []).append(n)
+            if n.positive:self._positive_by_number.setdefault(n.node_number, []).append(n)
         self.groups, self.node_group, self.branch_groups = [], {}, {}
         for branch in doc.branches:
             groups=[]
@@ -54,6 +62,24 @@ class PortModel:
                 gid=len(self.groups);self.groups.append(group);ids.append(gid)
                 for n in group:self.node_group[n.key]=gid
             self.branch_groups[branch.index]=ids
+        self._kinds = tuple(next((n.component_type for n in g if n.component_type!='RIGID'),
+                                 g[0].component_type) for g in self.groups)
+        self._pipe_group_by_node = {n.key:gid for gid,g in enumerate(self.groups)
+            if self._kinds[gid]=='PIPE' for n in g}
+        self._source_collapsed_pipe_groups = frozenset(
+            gid for gid,g in enumerate(self.groups) if self._kinds[gid]=='PIPE'
+            and len(g)>1 and max(sum((a-b)**2 for a,b in
+                zip(g[0].position.as_list(),q.position.as_list())) for q in g[1:])<=1e-12)
+        # Exact 1e-6 proximity: 27 neighboring 3D cells cover every possible
+        # match; final membership still uses the original Euclidean test.
+        self._exact_cells={}
+        self._unindexed_nodes=[]
+        for n in self.nodes:
+            xyz=n.position.as_list()
+            if all(isfinite(v) for v in xyz):
+                cell=tuple(floor(v/1e-6) for v in xyz)
+                self._exact_cells.setdefault(cell,[]).append(n)
+            else:self._unindexed_nodes.append(n)
         self.ports=[];self.group_ports={}
         for gid,group in enumerate(self.groups):
             kind=self.kind(gid)
@@ -79,8 +105,7 @@ class PortModel:
         self.closed_keys={p.node.key for p in self.ports if self.closed(p)}
 
     def kind(self,gid):
-        kinds=[n.component_type for n in self.groups[gid]]
-        return next((k for k in kinds if k!='RIGID'),kinds[0])
+        return self._kinds[gid]
 
     def closed(self,p):
         if hasattr(self,'closed_keys'):return p.node.key in self.closed_keys
@@ -122,7 +147,15 @@ class PortModel:
                 raise ValueError('UNSUPPORTED_POPULATED_OWNER')
             more=[]
             if gid is not None and self.kind(gid) in FINITE:more+=self.groups[gid]
-            for other in self.nodes:
+            # Only nodes in the same branch or bearing an identical positive
+            # shared NodeNumber can satisfy the original predicate.
+            possible=self._nodes_by_branch[n.branch_index]
+            if n.positive:
+                extras=[o for o in self._positive_by_number.get(n.node_number, ())
+                        if o.branch_index!=n.branch_index]
+                if extras:
+                    possible=sorted((*possible,*extras),key=lambda o:self._global_order[o.key])
+            for other in possible:
                 shared=n.positive and other.positive and n.node_number==other.node_number
                 if shared and n.position.distance_to(other.position)>self.config.connection_tolerance_mm:
                     if (target.node.positive and other.node_number==target.node.node_number and
@@ -133,9 +166,15 @@ class PortModel:
                 if other.key not in move:move.add(other.key);pending.append(other.key)
         if target.node.key in move and any(abs(v)>1e-9 for v in delta):raise ValueError('ALREADY_CONNECTED_MOVE_GROUP')
         if any(self.by_key[k].has_restraint for k in move) and any(abs(v)>1e-9 for v in delta):raise ValueError('RESTRAINED_MOVE_GROUP')
-        # The moving group's connection points must not collapse a PIPE body.
-        for gid,g in enumerate(self.groups):
-            if self.kind(gid)!='PIPE':continue
+        # Unchanged PIPE groups keep their geometry. Retain rejection of any
+        # pre-existing collapse outside moved groups, but permit a move that
+        # actually repairs a previously collapsed pipe.
+        touched={self._pipe_group_by_node[k] for k in move
+                 if k in self._pipe_group_by_node}
+        if self._source_collapsed_pipe_groups - touched:
+            raise ValueError('PIPE_COLLAPSE')
+        for gid in touched:
+            g=self.groups[gid]
             points=[]
             for n in g:
                 xyz=n.position.as_list()
@@ -163,12 +202,24 @@ class PortModel:
         for moving,target in choices:
             try:keys,delta=self.moving_group(moving,target)
             except ValueError:continue
-            target_cluster=[n for n in self.nodes if n.position.distance_to(target.node.position)<=1e-6]
+            target_xyz=target.node.position.as_list()
+            if all(isfinite(v) for v in target_xyz):
+                cell=tuple(floor(v/1e-6) for v in target_xyz)
+                nearby=list(self._unindexed_nodes)
+                for dx in (-1,0,1):
+                    for dy in (-1,0,1):
+                        for dz in (-1,0,1):
+                            nearby.extend(self._exact_cells.get((cell[0]+dx,cell[1]+dy,cell[2]+dz),()))
+            else:nearby=self.nodes
+            target_cluster=[n for n in nearby if n.position.distance_to(target.node.position)<=1e-6]
             identities=([target.node.node_number] if target.node.positive else
                 sorted({n.node_number for n in target_cluster if n.positive and n.key not in keys}))
             if len(identities)>1:continue
             owner=identities[0] if identities else None
-            aliases={n.key:owner for n in self.nodes if n.key in keys and n.positive and owner is not None
+            # Only moved keys can be aliased; avoid another whole-model scan.
+            moved_nodes=sorted((self.by_key[k] for k in keys),
+                               key=lambda n:self._global_order[n.key])
+            aliases={n.key:owner for n in moved_nodes if n.positive and owner is not None
                      and n.position.distance_to(moving.node.position)<=1e-6 and n.node_number!=owner}
             if not any(abs(v)>1e-9 for v in delta) and not aliases:raise ValueError('NO_XML_CHANGE')
             return {'movePortKey':moving.node.key,'targetPortKey':target.node.key,
@@ -199,10 +250,31 @@ class PortModel:
                     d=a.node.position.distance_to(b.node.position)
                     if d<=1e-6 and self.kind(a.group)!='BRAN' and self.kind(b.group)!='BRAN':occupied.update((a.node.key,b.node.key))
                     if d<=min(25.,self.config.joint_repair_threshold_mm)+1e-9:pairs[tuple(sorted((a.node.key,b.node.key)))]=(a,b)
+        # 25 mm spatial cells bound candidate search but never replace the
+        # inclusive exact-distance and engineering compatibility tests.
+        bucket_size=25.
+        def cell(p):
+            xyz=p.node.position.as_list()
+            return tuple(floor(v/bucket_size) for v in xyz) if all(isfinite(v) for v in xyz) else None
+        cells=[cell(p) for p in self.ports]
+        finite_grid={}
+        for i,c in enumerate(cells):
+            if c is not None:finite_grid.setdefault(c,[]).append(i)
+        unindexed=[i for i,c in enumerate(cells) if c is None]
         for i,a in enumerate(self.ports):
             if a.node.key in occupied:continue
             if self.kind(a.group)=='BRAN' and a.node.key not in boundary:continue
-            for b in self.ports[i+1:]:
+            c=cells[i]
+            if c is None:indices=range(i+1,len(self.ports))
+            else:
+                indexes=set(unindexed)
+                for dx in (-1,0,1):
+                    for dy in (-1,0,1):
+                        for dz in (-1,0,1):
+                            indexes.update(finite_grid.get((c[0]+dx,c[1]+dy,c[2]+dz),()))
+                indices=sorted(j for j in indexes if j>i)
+            for j in indices:
+                b=self.ports[j]
                 if b.node.key in occupied or a.node.branch_index==b.node.branch_index:continue
                 if self.kind(b.group)=='BRAN' and b.node.key not in boundary:continue
                 if a.node.key not in boundary and b.node.key not in boundary:continue
