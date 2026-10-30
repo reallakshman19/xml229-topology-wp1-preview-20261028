@@ -622,7 +622,8 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
             sourceSha256:item.sourceSha256,portKeys:[item.sourceKey,item.peerKey],
             approvedRepair:item.preview.repair,evidence:item.evidence,confirmed:true}],
           operations:item.transaction.operations,validation:item.validation.checks,
-          preFinalHandoff:item.preFinal,lineageSha256:item.lineageSha256});
+          preFinalHandoff:item.preFinal,lineage:item.lineage,
+          lineageSha256:item.lineageSha256});
       }
       state.revision+=applied.length;
       state.applied+=applied.length;
