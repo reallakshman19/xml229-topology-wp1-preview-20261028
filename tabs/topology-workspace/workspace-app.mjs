@@ -1,5 +1,5 @@
 /** XML229 WP1: standalone source-only topology inspection; no engineering acceptance. */
-import {runXmlCii2019StandaloneEngineJob} from '../xml-cii-2019-standalone/xml-cii-workflow-engine-client.js';
+import {runTopologyWorkerJob, cancelTopologyWorkerJobs} from './topology-worker-client.mjs';
 import {parseOccurrenceScene, affectedOccurrenceIds, escapeValue as esc} from './occurrence-scene.mjs';
 import {createTopologyCanvas} from './projected-canvas.mjs';
 import {buildAudit,renderAuditHTML,renderAuditSummary,filterCounts} from './audit-view.mjs';
@@ -38,7 +38,7 @@ function actionButton(action) {
     '</strong> · '+esc(action.disposition)+'<small>'+esc((blocked?'BLOCKED · ':'')+
     (action.message||action.branch_name||'No narrative supplied'))+'</small></button>';
 }
-export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneEngineJob}={}) {
+export function mountTopologyWorkspace(root, {runEngine=runTopologyWorkerJob,cancelEngine=cancelTopologyWorkerJobs}={}) {
   if(!root)throw Error('Topology workspace root is required');
   const state={epoch:0,source:null,original:null,revision:0,applied:0,history:[],resolutions:[],shortElements:[],shortPreview:null,scene:null,plan:null,findings:[],result:null,
     selected:new Set(),search:'',filter:'all',category:'all',manualPorts:[],secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false};
@@ -601,7 +601,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     root.setAttribute('aria-busy',String(state.busy||state.batchRunning));
     renderRecords();renderActions();renderSelection();renderSecondPass();
     query(root,'[data-analyze]').disabled=!state.source||state.busy;
-    query(root,'[data-cancel]').disabled=!state.busy;
+    query(root,'[data-cancel]').disabled=!(state.busy||state.batchRunning);
     getNodes(root,'[data-auto-fix],[data-close-joint],[data-add-second-pass]').forEach(button=>button.disabled=state.busy);
     getNodes(root,'[data-download-working],[data-download-history]').forEach(button=>button.disabled=state.busy||!state.revision);
   }
@@ -624,6 +624,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
       (hits.length>50?'… More than 50 hits; use text search.':'');
   }
   async function load(file) {
+    cancelEngine();
     const generation=++state.epoch;
     state.source=null;state.original=null;state.revision=0;state.applied=0;state.history=[];state.resolutions=[];state.shortElements=[];state.shortPreview=null;
     const shortPanel=query(root,'[data-short-preview]');if(shortPanel)shortPanel.textContent='';
@@ -716,11 +717,20 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     }
     else if(target.hasAttribute('data-preview-short'))previewShortElements();
     else if(target.hasAttribute('data-select-gaskets')){
-      getNodes(root,'[data-short-index]').forEach(el=>el.checked=!el.disabled&&state.shortElements[Number(el.dataset.shortIndex)].componentType==='GASK');
+      const p=state.shortPreview;if(!p)return;
+      for(const r of state.shortElements)if(r.eligible&&r.componentType==='GASK')p.selected.add(r.id);
+      renderShortPreview();
+    }
+    else if(target.hasAttribute('data-short-prev')){
+      if(state.shortPreview){state.shortPreview.page--;renderShortPreview();}
+    }
+    else if(target.hasAttribute('data-short-next')){
+      if(state.shortPreview){state.shortPreview.page++;renderShortPreview();}
     }
     else if(target.hasAttribute('data-run-short-drop'))dropShortElements();
     else if(target.hasAttribute('data-analyze'))analyze();
-    else if(target.hasAttribute('data-cancel')){state.secondPass=null;state.epoch++;state.busy=false;state.batchRunning=false;refresh();
+    else if(target.hasAttribute('data-cancel')){cancelEngine();state.secondPass=null;state.shortPreview=null;
+      query(root,'[data-short-preview]').textContent='';state.epoch++;state.busy=false;state.batchRunning=false;refresh();
       state.batch=null;query(root,'[data-batch-confirm]').textContent='';
       query(root,'[data-progress]').textContent='CANCELLED · working revision '+state.revision+' retained.';
       setFixStatus('Operation cancelled. No new working revision applied.','rejected');
@@ -763,6 +773,16 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     else if(target.hasAttribute('data-focus'))canvas.focus(state.selected);
   };
   const changed=event=>{
+    if(event.target.matches('[data-short-index]')){
+      const p=state.shortPreview,r=state.shortElements[Number(event.target.dataset.shortIndex)];
+      if(p&&r?.eligible&&p.epoch===state.epoch&&p.sha===state.source?.sourceSha256){
+        if(event.target.checked)p.selected.add(r.id);else p.selected.delete(r.id);
+        const status=query(root,'[data-short-selection-count]');
+        if(status)status.textContent=p.selected.size+' selected · page '+(p.page+1);
+        const run=query(root,'[data-run-short-drop]');
+        if(run){run.disabled=!p.selected.size;run.textContent='Apply '+p.selected.size+' selected drops & close';}
+      }
+    }
     const d=state.secondPass;
     if(d&&event.target.matches('[data-second-source],[data-second-peer]')){
       if(event.target.matches('[data-second-source]')){d.sourceKey=event.target.value;d.peerKey='';}
@@ -803,7 +823,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
   return {getState:()=>({sourceSha256:state.source?.sourceSha256||null,revision:state.revision,applied:state.applied,
     occurrences:state.scene?.records.length||0,actions:state.plan?.actions.length||0,
     selected:[...state.selected],busy:state.busy}),load,analyze,
-    dispose(){state.epoch++;canvas.dispose();root.removeEventListener('toggle',toggled,true);root.removeEventListener('click',click);
+    dispose(){cancelEngine();state.epoch++;canvas.dispose();root.removeEventListener('toggle',toggled,true);root.removeEventListener('click',click);
       root.removeEventListener('change',changed);root.removeEventListener('input',input);}};
 }
 const root=document.querySelector('#xml229-topology-workspace');
