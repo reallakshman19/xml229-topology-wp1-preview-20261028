@@ -490,7 +490,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       ' failed + '+unprocessed+' unprocessed · eligible on CURRENT XML '+nowEligible+
       ' · working revision '+state.revision+
       (outcome.stopMessage?' · '+outcome.stopMessage:'')+
-      (done?' · current XML and full receipts downloadable.':' · no XML changed.');
+      (done?' · validated XML, source-linked operations and lineage digests downloadable.':' · no XML changed.');
     query(root,'[data-progress]').textContent=message;
     setFixStatus(message,reason==='COMPLETE'&&done?'ready':done?'stopped':'rejected','drop');
     updateStatus('Selected short-element batch finished. '+done+
