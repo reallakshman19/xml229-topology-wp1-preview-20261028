@@ -12,7 +12,7 @@ export async function runValidatedPasses({initialPlan,readState,runPass,nextPlan
   if(seen.has(current.sha)){stopReason='REPEATED_OUTPUT';stopMessage='Repeated output identity.';break;}
   seen.add(current.sha);plan=nextPlan();
   if(!plan.actionIds.length)break;
-  if(pass===maxPasses-1){stopReason='PASS_LIMIT';stopMessage='Eight-pass limit reached.';}
+  if(pass===maxPasses-1){stopReason='PASS_LIMIT';stopMessage=maxPasses+'-pass limit reached.';}
  }
  return {passes,lastFix,stopReason,stopMessage};
 }

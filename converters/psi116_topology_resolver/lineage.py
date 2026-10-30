@@ -81,7 +81,7 @@ def _operation_index(transaction: TopoFixTransactionResult):
             continue
         require(operation.operation in {
             "ALIAS_NODE_NUMBER", "SET_RIGID_ZERO",
-            "REMOVE_PLAIN_PIPE_NODE_RECORD", "CLOSE_PIPE_JOINT", "CLOSE_COMPONENT_PORT"
+            "REMOVE_PLAIN_PIPE_NODE_RECORD", "REMOVE_SELECTED_SHORT_ELEMENT_RECORD", "CLOSE_PIPE_JOINT", "CLOSE_COMPONENT_PORT"
         } and operation.source_node_key and
             operation.source_node_key not in indexed,
             "TOPOFIX_LINEAGE_OPERATION_KEY_DRIFT")
@@ -136,6 +136,7 @@ def build_topofix_source_lineage(transaction: TopoFixTransactionResult) -> dict:
     known_keys = set()
     rows = []
     removed = 0
+    removed_selected = 0
     changed = 0
     for bi, (source_branch, fixed_branch, record_branch) in enumerate(
             zip(original, fixed, transaction.source_result.document.branches)):
@@ -150,14 +151,17 @@ def build_topofix_source_lineage(transaction: TopoFixTransactionResult) -> dict:
             key = record.key
             known_keys.add(key)
             op = operation_index.get(key)
-            removed_here = op is not None and op.operation == "REMOVE_PLAIN_PIPE_NODE_RECORD"
+            removed_here = op is not None and op.operation in {"REMOVE_PLAIN_PIPE_NODE_RECORD","REMOVE_SELECTED_SHORT_ELEMENT_RECORD"}
             if removed_here:
-                require(record.semantic_type == "PIPE",
+                selected = op.operation == 'REMOVE_SELECTED_SHORT_ELEMENT_RECORD'
+                authorized = {key for request in transaction.policy.short_element_requests for key in request.get('nodeKeys',[])}
+                require((selected and key in authorized) or (not selected and record.semantic_type == "PIPE"),
                         "TOPOFIX_LINEAGE_UNSAFE_REMOVAL")
-                status = "REMOVED_PLAIN_PIPE"
+                status = "REMOVED_SELECTED_SHORT_ELEMENT" if selected else "REMOVED_PLAIN_PIPE"
                 fixed_ordinal = None
                 fixed_digest = None
                 removed += 1
+                removed_selected += selected
             else:
                 require(position < len(after),
                         "TOPOFIX_LINEAGE_FINAL_CENSUS_DRIFT")
@@ -196,7 +200,8 @@ def build_topofix_source_lineage(transaction: TopoFixTransactionResult) -> dict:
         "counts": {"sourceNodeOccurrences": len(rows),
                    "fixedNodeOccurrences": len(rows) - removed,
                    "retainedNodeOccurrences": len(rows) - removed,
-                   "removedPlainPipeOccurrences": removed,
+                   "removedPlainPipeOccurrences": removed - removed_selected,
+                   "removedSelectedShortElementOccurrences": removed_selected,
                    "changedRetainedOccurrences": changed},
         "sourceOccurrenceMap": rows,
         "sourceXmlMutated": False,

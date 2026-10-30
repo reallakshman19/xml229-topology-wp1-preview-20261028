@@ -39,7 +39,7 @@ function actionButton(action) {
 }
 export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneEngineJob}={}) {
   if(!root)throw Error('Topology workspace root is required');
-  const state={epoch:0,source:null,original:null,revision:0,applied:0,history:[],resolutions:[],scene:null,plan:null,findings:[],result:null,
+  const state={epoch:0,source:null,original:null,revision:0,applied:0,history:[],resolutions:[],shortElements:[],shortPreview:null,scene:null,plan:null,findings:[],result:null,
     selected:new Set(),search:'',filter:'all',category:'all',fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false};
   const canvas=createTopologyCanvas(query(root,'[data-canvas]'),onHits);
   const updateStatus=message=>{query(root,'[data-status]').textContent=message;};
@@ -56,7 +56,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     const findings=JSON.parse(result.topologyFindingsText||'null');
     if(plan?.source?.sha256!==sourceSha||findings?.source?.sha256!==sourceSha||
        !Array.isArray(plan.actions)||!Array.isArray(findings.findings))throw Error('TOPOFIX_PLAN_SOURCE_DRIFT');
-    return {plan,findings:findings.findings,resolutions:findings.resolvedConnections||[]};
+    return {plan,findings:findings.findings,resolutions:findings.resolvedConnections||[],shortElements:findings.shortElements||[]};
   }
   function renderSelection() {
     const ids=[...state.selected],records=ids.map(id=>state.scene?.byId.get(id)).filter(Boolean);
@@ -77,6 +77,8 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
       (matching.length>350?'<p>Showing first 350 matches. Narrow the search.</p>':'');
   }
   function renderActions() {
+    const shortButton=query(root,'[data-preview-short]');
+    if(shortButton)shortButton.disabled=!state.plan||state.busy||state.batchRunning;
     const plan=state.plan;
     const summary=query(root,'[data-plan-summary]');
     const panel=query(root,'[data-issues]');
@@ -236,13 +238,15 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     cancel.type='button';cancel.dataset.cancelAutoFixAll='';
     cancel.textContent='Cancel batch';panel.appendChild(cancel);
   }
-  async function runFix(actionIds,receiptKey='single',jointRepairs=[]){
+  async function runFix(actionIds,receiptKey='single',jointRepairs=[],shortElementRequests=[]){
     const allowed=new Set(eligibleActions(state.findings,state.plan?.actions||[])
       .map(a=>a.action_id));
     let ids=[...new Set(actionIds)].sort();
     const joint=jointRepairs.length===1&&ids.length===1&&
       ids[0]==='JOIN:'+jointRepairs[0].findingId+':'+jointRepairs[0].moveKey;
-    if(!state.source||state.busy||!ids.length||(!joint&&ids.some(id=>!allowed.has(id)))){
+    const drop=shortElementRequests.length===1&&ids.length===1&&ids[0]===shortElementRequests[0].id;
+    const dropWitness=drop?state.shortElements.find(r=>r.id===ids[0]):null;
+    if(!state.source||state.busy||!ids.length||(joint&&drop)||(!joint&&!drop&&ids.some(id=>!allowed.has(id)))){
       setFixStatus('Auto fix is not authorized for this selection. No XML was modified.','rejected');
       return;
     }
@@ -260,7 +264,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
           sourceName:source.name,topologyPreFinalOnly:true,
           options:{outputMode:'enriched-only',analyzeTopology:true,
             generateTopoFix:true,useTopoFixForCii:false,topologyActionIds:ids,
-            topologyJointRepairs:jointRepairs}});
+            topologyJointRepairs:jointRepairs,topologyShortElementRequests:shortElementRequests}});
         if(generation!==state.epoch)return;
         txn=JSON.parse(result?.topoFixTransactionText||'null');
         validation=JSON.parse(result?.topoFixValidationText||'null');
@@ -307,7 +311,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
       if(generation!==state.epoch)return;
       if(txn.fixedXmlSha256!==fixedSha||validation.fixedXmlSha256!==fixedSha)
         throw Error('Corrected XML digest mismatch');
-      const suffix=batch?'batch-'+ids.length:joint?'joint-closure':'single-fix';
+      const suffix=batch?'batch-'+ids.length:joint?'joint-closure':drop?'short-element-drop':'single-fix';
       const excluded=[...skippedByPlan,...skippedByEngine];
       const proposed=eligibleActions(state.findings,state.plan.actions).length;
       const beforeCount=state.findings.length;
@@ -329,6 +333,8 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
       const priorReviews=Object.fromEntries(state.gapReviews);
       state.source=nextSource;state.scene=nextScene;state.plan=current.plan;
       state.resolutions=current.resolutions;
+      state.shortElements=current.shortElements;state.shortPreview=null;
+      const shortPanel=query(root,'[data-short-preview]');if(shortPanel)shortPanel.textContent='';
       state.findings=current.findings;state.result=recheck;state.selected.clear();state.gapReviews.clear();
       state.selected=new Set(changedIds);
       state.revision++;state.applied+=ids.length;
@@ -344,12 +350,15 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
         xml:result.topoFixXmlText,
         name:(source.name.replace(/\\.xml$/i,'')||'input')+'.'+suffix+
           '.validated.topofix.xml',
-        report:batch?{schema:'xml229-preview-batch-topofix/v1',
+        report:batch||drop?{schema:drop?'xml229-short-element-drop/v1':'xml229-preview-batch-topofix/v1',
           status:'VALIDATED_COPY_NOT_ENGINEERING_ACCEPTANCE',
           source:{name:source.name,sha256:source.sourceSha256},
           fixedXmlSha256:fixedSha,
           proposedMutationCount:proposed,
           selectedActionIds:ids,excludedActions:excluded,
+          ...(drop?{operations:txn.operations,selectedElement:dropWitness,
+            selection:shortElementRequests,transaction:txn,validation,lineage,
+            preFinalHandoff:JSON.parse(result.topoFixPreFinalHandoffText)}:{}),
           validationChecks:validation.checks}:null};
       setFixStatus('APPLIED to working copy: '+ids.length+' action(s), '+
         validation.checks.length+' validation checks, output SHA256 '+fixedSha+
@@ -372,6 +381,44 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     }
   }
   function autoFix(actionId){return runFix([actionId],'single');}
+  function previewShortElements(){
+    if(!state.source||!state.plan||state.busy||state.batchRunning)return;
+    state.shortPreview={sha:state.source.sourceSha256,epoch:state.epoch};
+    const panel=query(root,'[data-short-preview]');
+    panel.innerHTML='<h3>Drop elements ≤6 mm, then close</h3><p>Choose complete two-port elements. Each selected element is removed and reconnected atomically; a failure retains the last validated copy. Removed weight and source records are recorded in the receipt.</p>'+
+      '<button data-select-gaskets>Select eligible gaskets</button>'+
+      '<ul>'+state.shortElements.map((r,i)=>'<li><label><input type="checkbox" data-short-index="'+i+'" '+(!r.eligible?'disabled':'')+'>'+esc(r.componentType+' · '+r.lengthMm.toFixed(3)+' mm · '+r.componentRefNo+' · '+r.recordCount+' records · weight '+r.weightRemoved)+'</label><small>'+esc(r.nodeKeys.join(', ')+(r.eligible?'':' · '+r.reason))+'</small></li>').join('')+'</ul>'+
+      (state.shortElements.length?'<button data-run-short-drop>Apply selected drops &amp; close</button>':'<p>No measurable two-port elements at ≤6 mm.</p>');
+  }
+  async function dropShortElements(){
+    const preview=state.shortPreview;
+    if(state.busy||state.batchRunning||!preview||preview.epoch!==state.epoch||preview.sha!==state.source.sourceSha256)return;
+    const ids=getNodes(root,'[data-short-index]:checked').map(el=>state.shortElements[Number(el.dataset.shortIndex)]?.id).filter(Boolean);
+    if(!ids.length){setFixStatus('Select one or more eligible elements from the preview.','rejected');return;}
+    const generation=state.epoch,initialSha=state.source.sourceSha256;let index=0;
+    state.batchRunning=true;root.setAttribute('aria-busy','true');
+    const outcome=await runValidatedPasses({initialPlan:{actionIds:[ids[0]]},maxPasses:ids.length,
+      readState:()=>({sha:state.source.sourceSha256,revision:state.revision,fix:state.fix,failure:state.lastFailure}),
+      isCurrent:()=>generation===state.epoch,
+      runPass:async plan=>{
+        const row=state.shortElements.find(r=>r.id===plan.actionIds[0]);
+        if(!row?.eligible)throw Error('Selected element no longer qualifies; inspect the current source preview.');
+        const request={id:row.id,sourceSha256:state.source.sourceSha256,nodeKeys:row.nodeKeys};
+        await runFix([row.id],'drop',[],[request]);
+      },nextPlan:()=>({actionIds:++index<ids.length?[ids[index]]:[]})});
+    if(generation!==state.epoch)return;
+    const {passes,lastFix,stopReason,stopMessage}=outcome;
+    if(lastFix?.sourceSha256===state.source.sourceSha256)state.fix=lastFix;
+    if(passes.length){state.fix={...lastFix,report:{schema:'xml229-short-element-drop-batch/v1',
+      source:{sha256:initialSha,name:state.source.name},fixedXmlSha256:state.source.sourceSha256,
+      passes,stopReason,stopMessage,droppedElementCount:passes.length,
+      removedRecordCount:passes.reduce((sum,p)=>sum+p.operations.filter(o=>o.operation==='REMOVE_SELECTED_SHORT_ELEMENT_RECORD').length,0)},
+      name:state.source.name+'.dropped-'+passes.length+'.validated.topofix.xml'};}
+    const message=(stopReason==='COMPLETE'?'APPLIED':'STOPPED · '+stopMessage)+' · '+passes.length+
+      ' selected elements dropped and reconnected · '+(ids.length-passes.length)+' selected elements remain.';
+    setFixStatus(message,stopReason==='COMPLETE'?'ready':'stopped','drop');query(root,'[data-progress]').textContent=message;
+    state.batchRunning=false;refresh();
+  }
   function closeJoint(button){
     if(state.busy)return;
     const item=button.closest('.audit-item');
@@ -448,7 +495,8 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
   }
   async function load(file) {
     const generation=++state.epoch;
-    state.source=null;state.original=null;state.revision=0;state.applied=0;state.history=[];state.resolutions=[];
+    state.source=null;state.original=null;state.revision=0;state.applied=0;state.history=[];state.resolutions=[];state.shortElements=[];state.shortPreview=null;
+    const shortPanel=query(root,'[data-short-preview]');if(shortPanel)shortPanel.textContent='';
     state.scene=null;state.plan=null;state.findings=[];state.result=null;state.fix=null;state.batch=null;state.gapReviews.clear();
     query(root,'[data-progress]').textContent='Reading original · no repairs applied.';
     query(root,'[data-gap-review-status]').textContent='No review decisions recorded for this file.';
@@ -503,6 +551,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
         throw Error('PSI116 sidecar structure invalid');
       state.plan=plan;state.findings=findings.findings;state.result=result;
       state.resolutions=findings.resolvedConnections||[];
+      state.shortElements=findings.shortElements||[];
       updateStatus('Authoritative topology analysis complete. '+plan.actions.length+
         ' plan entries. No Weight/O1/Final/native session was supplied or created.');
     } catch(error) {
@@ -521,6 +570,11 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     else if(target.hasAttribute('data-save-gap-review'))saveGapReview(target);
     else if(target.hasAttribute('data-download-gap-review'))downloadGapReview();
     else if(target.hasAttribute('data-close-joint'))closeJoint(target);
+    else if(target.hasAttribute('data-preview-short'))previewShortElements();
+    else if(target.hasAttribute('data-select-gaskets')){
+      getNodes(root,'[data-short-index]').forEach(el=>el.checked=!el.disabled&&state.shortElements[Number(el.dataset.shortIndex)].componentType==='GASK');
+    }
+    else if(target.hasAttribute('data-run-short-drop'))dropShortElements();
     else if(target.hasAttribute('data-analyze'))analyze();
     else if(target.hasAttribute('data-cancel')){state.epoch++;state.busy=false;state.batchRunning=false;refresh();
       state.batch=null;query(root,'[data-batch-confirm]').textContent='';

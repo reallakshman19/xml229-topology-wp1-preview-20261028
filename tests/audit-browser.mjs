@@ -267,6 +267,59 @@ try{
  const failureXml=await readFile(await (await failureXmlDownload).path(),'utf8');
  if(createHash('sha256').update(failureXml).digest('hex')!==failureReceipt.fixedXmlSha256)throw Error('Retained XML does not match retained receipt');
  await failurePage.close();
+ // Optional short-element removal: complete GASK + RIGID owner, then PIPE-first closure.
+ const shortNode=(n,kind,ref,end,x,extra='')=>`<Node><NodeNumber>${n}</NodeNumber><ComponentType>${kind}</ComponentType><ComponentRefNo>${ref}</ComponentRefNo><Endpoint>${end}</Endpoint><Position>${x} 0 0</Position><OutsideDiameter>100</OutsideDiameter>${extra}</Node>`;
+ const shortFixture='<PipeStressExport><Branch><Branchname>SHORT-DROP</Branchname>'+
+  shortNode(10,'PIPE','P',1,0)+shortNode(20,'PIPE','P',2,100)+
+  shortNode(-1,'GASK','SHORT',1,100,'<Weight>2.5</Weight>')+shortNode(30,'RIGID','SHORT',2,103)+
+  shortNode(-1,'FLAN','F',1,103)+shortNode(40,'RIGID','F',2,189)+'</Branch></PipeStressExport>';
+ await page.locator('[data-file]').setInputFiles({name:'short-drop.xml',mimeType:'application/xml',buffer:Buffer.from(shortFixture)});
+ await page.waitForFunction(()=>document.querySelector('[data-occ-summary]')?.textContent?.includes('6 of 6'));
+ await page.locator('[data-analyze]').click();
+ await page.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'),null,{timeout:120000});
+ await page.locator('[data-preview-short]').click();
+ const shortPreview=await page.locator('[data-short-preview]').textContent();
+ if(!shortPreview.includes('GASK · 3.000 mm · SHORT · 2 records · weight 2.5')||!shortPreview.includes('B0:N30:S3'))throw Error('Short preview missing complete owner/length/weight/source census');
+ await page.locator('[data-select-gaskets]').click();
+ if(await page.locator('[data-short-index]:checked').count()!==1)throw Error('Gasket selection included unrelated elements');
+ await mkdir(path.join(sourceRoot,'preview-test-results'),{recursive:true});
+ await page.screenshot({path:path.join(sourceRoot,'preview-test-results','short-drop-preview.png'),fullPage:true});
+ await page.locator('[data-run-short-drop]').click();
+ await page.waitForFunction(()=>document.querySelector('main').getAttribute('aria-busy')==='false'&&['ready','stopped'].includes(document.querySelector('[data-fix-result]')?.getAttribute('data-result')),null,{timeout:120000});
+ result.shortDrop=await page.locator('[data-progress]').textContent();
+ if(!result.shortDrop.includes('APPLIED · 1 selected elements dropped and reconnected')||!(await page.locator('[data-occ-summary]').textContent()).includes('4 of 4'))throw Error('Drop did not update working geometry/counts: '+result.shortDrop);
+ const shortXmlDownload=page.waitForEvent('download');await page.locator('[data-download-fix]').click();
+ const shortXml=await readFile(await (await shortXmlDownload).path(),'utf8');
+ const shortPorts=await page.evaluate(xml=>[...new DOMParser().parseFromString(xml,'application/xml').getElementsByTagNameNS('*','Node')].map(n=>({
+  xyz:n.getElementsByTagNameNS('*','Position')[0].textContent,ref:n.getElementsByTagNameNS('*','ComponentRefNo')[0].textContent})),shortXml);
+ if(JSON.stringify(shortPorts)!==JSON.stringify([{xyz:'0 0 0',ref:'P'},{xyz:'103 0 0',ref:'P'},{xyz:'103 0 0',ref:'F'},{xyz:'189 0 0',ref:'F'}]))throw Error('Drop failed PIPE-first closure or changed retained flange');
+ const shortReceiptDownload=page.waitForEvent('download');await page.locator('[data-download-batch-report]').click();
+ const shortReceipt=JSON.parse(await readFile(await (await shortReceiptDownload).path(),'utf8'));
+ const shortPass=shortReceipt.passes?.[0];
+ if(shortReceipt.schema!=='xml229-short-element-drop-batch/v1'||shortReceipt.stopReason!=='COMPLETE'||shortReceipt.droppedElementCount!==1||shortReceipt.removedRecordCount!==2||
+   shortReceipt.fixedXmlSha256!==createHash('sha256').update(shortXml).digest('hex')||
+   shortPass.transaction.policy.short_element_requests[0].sourceSha256!==createHash('sha256').update(shortFixture).digest('hex')||
+   shortPass.operations.filter(o=>o.operation==='REMOVE_SELECTED_SHORT_ELEMENT_RECORD').length!==2||
+   shortPass.lineage.counts.removedSelectedShortElementOccurrences!==2||shortPass.selectedElement.weightRemoved!==2.5||
+   !shortPass.operations.some(o=>o.before?.includes?.('<ComponentType>RIGID</ComponentType>')))
+   throw Error('Short removal receipt lost source selection/tombstones/lineage/weight');
+ await writeFile(path.join(sourceRoot,'preview-test-results','short-drop.xml'),shortXml);
+ await writeFile(path.join(sourceRoot,'preview-test-results','short-drop-receipt.json'),JSON.stringify(shortReceipt,null,2));
+ await page.screenshot({path:path.join(sourceRoot,'preview-test-results','short-drop-applied.png'),fullPage:true});
+ result.shortDropReceipt='PASS: source-bound whole owner, two tombstones, removed weight, lineage and matching XML hash';
+ // A qualified interface with both neighbours restrained must fail atomically.
+ const blockedShort=shortFixture.replaceAll('<ComponentType>PIPE</ComponentType>','<ComponentType>PIPE</ComponentType><Restraint>X</Restraint>')
+  .replaceAll('<ComponentType>FLAN</ComponentType>','<ComponentType>FLAN</ComponentType><Restraint>X</Restraint>');
+ await page.locator('[data-file]').setInputFiles({name:'short-drop-blocked.xml',mimeType:'application/xml',buffer:Buffer.from(blockedShort)});
+ await page.waitForFunction(()=>document.querySelector('[data-occ-summary]')?.textContent?.includes('6 of 6'));
+ await page.locator('[data-analyze]').click();
+ await page.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'),null,{timeout:120000});
+ await page.locator('[data-preview-short]').click();await page.locator('[data-select-gaskets]').click();
+ await page.locator('[data-run-short-drop]').click();
+ await page.waitForFunction(()=>document.querySelector('main').getAttribute('aria-busy')==='false'&&document.querySelector('[data-fix-result]')?.getAttribute('data-result')==='stopped',null,{timeout:120000});
+ result.shortDropRejected=await page.locator('[data-progress]').textContent();
+ if(!result.shortDropRejected.includes('0 selected elements dropped')||!(await page.locator('[data-occ-summary]').textContent()).includes('6 of 6')||
+  !(await page.locator('[data-download-working]').isDisabled())||await page.locator('[data-download-fix]').count())throw Error('Failed reconnection released a partial removal');
  // Source-evidenced closure resolves without a geometry edit and is exportable.
  const closed='<PipeStressExport><Branch><Branchname>CLOSED</Branchname><Node><NodeNumber>-1</NodeNumber><ComponentType>BRAN</ComponentType><ComponentRefNo>B</ComponentRefNo><Endpoint>1</Endpoint><ConnectionType>CLOS</ConnectionType><Position>0 0 0</Position></Node><Node><NodeNumber>10</NodeNumber><ComponentType>FBLI</ComponentType><ComponentRefNo>F</ComponentRefNo><Endpoint>1</Endpoint><Position>0 0 0</Position></Node><Node><NodeNumber>-1</NodeNumber><ComponentType>FBLI</ComponentType><ComponentRefNo>F</ComponentRefNo><Endpoint>2</Endpoint><Position>32.2 0 0</Position></Node></Branch></PipeStressExport>';
  await page.locator('[data-file]').setInputFiles({name:'closed.xml',mimeType:'application/xml',buffer:Buffer.from(closed)});

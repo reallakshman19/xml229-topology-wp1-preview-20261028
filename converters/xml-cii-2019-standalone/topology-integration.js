@@ -11,6 +11,7 @@ const TOPOLOGY_PACKAGE_FILES = Object.freeze([
   'transaction.py',
   'joint_repair.py',
   'connection_ports.py',
+  'short_elements.py',
   'lineage.py',
 ]);
 
@@ -46,6 +47,7 @@ if job_generate_topofix:
     transaction = apply_topofix_transaction(
         result,
         policy=TransactionPolicy(selected_action_ids=tuple(job_topology_action_ids),
+                                 short_element_requests=tuple(json.loads(job_short_elements_json)),
                                  joint_repairs=tuple(json.loads(job_joint_repairs_json))),
         config=cfg,
     )
@@ -194,6 +196,7 @@ export async function runPsi116TopologyStage(pyodide, job, inputPath, jobDir, st
   pyodide.globals.set('job_generate_topofix', generateTopoFix);
   pyodide.globals.set('job_topology_action_ids', actionIds);
   pyodide.globals.set('job_joint_repairs_json', JSON.stringify(options.topologyJointRepairs || []));
+  pyodide.globals.set('job_short_elements_json', JSON.stringify(options.topologyShortElementRequests || []));
   await pyodide.runPythonAsync(TOPOLOGY_SNIPPET);
 
   const status = JSON.parse(readOptional(pyodide, paths.status) || '{}');
