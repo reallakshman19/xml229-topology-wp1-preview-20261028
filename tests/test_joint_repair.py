@@ -86,6 +86,6 @@ class JointRepair(unittest.TestCase):
     def test_automatic_plan_never_invents_connection_confirmation(self):
         result=resolve_psi116(fixture())
         self.assertFalse(any(a.disposition=='CLOSE_CONFIRMED_PIPE_JOINT' for a in result.fix_actions))
-        self.assertIn('PORT_CONNECTION_WITHIN_TOLERANCE',[f.code for f in result.findings])
+        self.assertIn('NEAR_MISS_PIPE_JOINT',[f.code for f in result.findings])
 
 if __name__=='__main__': unittest.main()

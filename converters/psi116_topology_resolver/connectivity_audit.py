@@ -10,6 +10,7 @@ from typing import Callable
 
 from .models import Finding, NodeRecord, Psi116Document, ResolverConfig
 from .parser import _occurrence_route_nodes
+from .connection_ports import bound_closure_records
 
 def _branch_endpoints(doc: Psi116Document) -> tuple[tuple[str, NodeRecord], ...]:
     per_branch = defaultdict(list)
@@ -72,9 +73,8 @@ def _analyze_connection_gaps(
         shared = [n for n in records if n.branch_index != node.branch_index and n.positive
                   and n.node_number == node.node_number and n.position and
                   n.position.distance_to(node.position) <= tolerance]
-        closed = [n for n in records if n.branch_index in {node.branch_index, *(s.branch_index for s in shared)} and
-                  n.connection_type == 'CLOS' and n.position and
-                  n.position.distance_to(node.position) <= tolerance]
+        closed = [declaration for source in [node,*shared]
+                  for declaration in bound_closure_records(doc,source,tolerance)]
         if shared and closed:
             add('CONNECTION_DECLARATION_CONFLICT','WARNING',False,
                 'Shared connection identity conflicts with explicit CLOS evidence; review the branch end declaration.',

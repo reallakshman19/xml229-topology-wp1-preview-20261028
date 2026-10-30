@@ -4,10 +4,29 @@ Finite component ports translate together. PIPE ports may extend/shorten the pip
 Source records and negative helper identities are retained, never discarded.
 """
 from dataclasses import dataclass
-from math import sqrt
+from math import sqrt, isfinite
 
 FINITE = frozenset({'FLAN','GASK','VALV','INST','RIGID','REDU','ELBO','TEE','OLET','COUP','FBLI','CAP'})
 SUPPORTED = FINITE | {'PIPE','BRAN'}
+MOVE_ORDER = {'PIPE':0, 'FLAN':1, 'VALV':2, 'ELBO':3}
+
+def bound_closure_records(doc, node, tolerance=0.5):
+    """A CLOS declaration belongs to an owner/port or the exact branch boundary."""
+    branch=doc.branches[node.branch_index]
+    physical=[n for n in branch.nodes if n.position and n.component_type not in {'BRAN','ATTA','SUPPORT','ANCI'}]
+    result=[]
+    for declaration in branch.nodes:
+        if declaration.connection_type!='CLOS' or not declaration.position or not node.position:continue
+        distance=declaration.position.distance_to(node.position)
+        direct=declaration.key==node.key or (node.positive and declaration.positive and
+                declaration.node_number==node.node_number and distance<=tolerance)
+        owner=(bool(node.component_ref_no) and declaration.component_ref_no==node.component_ref_no and
+               declaration.endpoint==node.endpoint and distance<=1e-6)
+        boundary=(declaration.component_type=='BRAN' and distance<=1e-6 and physical and
+            ((declaration.endpoint==1 and declaration.source_index==0 and node.key==physical[0].key) or
+             (declaration.endpoint==2 and declaration.source_index==len(branch.nodes)-1 and node.key==physical[-1].key)))
+        if direct or owner or boundary:result.append(declaration)
+    return result
 
 @dataclass(frozen=True)
 class Port:
@@ -65,9 +84,7 @@ class PortModel:
 
     def closed(self,p):
         if hasattr(self,'closed_keys'):return p.node.key in self.closed_keys
-        n=p.node
-        return any(x.connection_type=='CLOS' and x.branch_index==n.branch_index and
-                   x.position.distance_to(n.position)<=self.config.connection_tolerance_mm for x in self.nodes)
+        return bool(bound_closure_records(self.doc,p.node,self.config.connection_tolerance_mm))
 
     def compatible(self,a,b,cross=False):
         if a.group==b.group or self.closed(a) or self.closed(b):return False
@@ -75,9 +92,19 @@ class PortModel:
         # A declared branch-to-junction connection may have a smaller branch bore.
         junction=(x.component_type=='BRAN' and x.connection_type in {'TEE','OLET'} and self.kind(b.group) in {'TEE','OLET'}) or \
                  (y.component_type=='BRAN' and y.connection_type in {'TEE','OLET'} and self.kind(a.group) in {'TEE','OLET'})
-        if (x.endpoint==0 or y.endpoint==0) and not junction:return False
-        if not junction and x.outside_diameter and y.outside_diameter and abs(x.outside_diameter-y.outside_diameter)>.5:return False
-        if cross and a.normal and b.normal and sum(x*y for x,y in zip(a.normal,b.normal))>-.9:return False
+        explicit=junction and x.positive and y.positive and x.node_number==y.node_number
+        if (x.endpoint==0 or y.endpoint==0) and not explicit:return False
+        if explicit:return True  # independently bound source branch/junction identity
+        diameters=(x.outside_diameter,y.outside_diameter)
+        if not all(v is not None and isfinite(v) and v>0 for v in diameters):return False
+        if abs(diameters[0]-diameters[1])>.5:return False
+        walls=(x.wall_thickness,y.wall_thickness)
+        if all(v is not None and isfinite(v) and v>0 for v in walls):
+            if abs((diameters[0]-2*walls[0])-(diameters[1]-2*walls[1]))>.5:return False
+        for normal in (a.normal,b.normal):
+            if normal is None or len(normal)!=3 or not all(isfinite(v) for v in normal):return False
+            if abs(sum(v*v for v in normal)-1)>.001:return False
+        if sum(v*w for v,w in zip(a.normal,b.normal))>-.9:return False
         return True
 
     def moving_group(self,p,target):
@@ -117,8 +144,8 @@ class PortModel:
         distance=a.node.position.distance_to(b.node.position)
         if distance>min(25.,self.config.joint_repair_threshold_mm)+1e-9:raise ValueError('PORT_DISTANCE_EXCEEDS_POLICY')
         # Keep the more constrained/finite owner. Try the other side if the first is anchored.
-        def priority(p):return (self.kind(p.group) in FINITE,p.node.positive,-p.node.branch_index,-p.node.source_index)
-        target,moving=sorted((a,b),key=priority,reverse=True)
+        def priority(p):return (MOVE_ORDER.get(self.kind(p.group),4),-p.node.branch_index,-p.node.source_index)
+        moving,target=sorted((a,b),key=priority)
         choices=[(moving,target),(target,moving)]
         for moving,target in choices:
             try:keys,delta=self.moving_group(moving,target)

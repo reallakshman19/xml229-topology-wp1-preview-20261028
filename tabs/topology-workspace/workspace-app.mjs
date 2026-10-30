@@ -4,6 +4,7 @@ import {parseOccurrenceScene, affectedOccurrenceIds, escapeValue as esc} from '.
 import {createTopologyCanvas} from './projected-canvas.mjs';
 import {buildAudit,renderAuditHTML,renderAuditSummary,filterCounts} from './audit-view.mjs';
 import {eligibleActions,previewBatchPlan,explicitlyRejectedActionIds} from './batch-plan.mjs';
+import {runValidatedPasses} from './batch-runner.mjs';
 
 async function sha256(bytes) {
   const digest=await crypto.subtle.digest('SHA-256',bytes);
@@ -124,7 +125,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     if(!panel)return;
     panel.setAttribute('data-result',kind);
     panel.textContent=message;
-    if(kind==='ready'&&state.fix?.receiptKey===actionId){
+    if(['ready','stopped','rejected'].includes(kind)&&state.fix?.sourceSha256===state.source?.sourceSha256){
       const button=document.createElement('button');
       button.type='button';button.setAttribute('data-download-fix','');
       button.textContent='Download validated corrected XML';
@@ -248,7 +249,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     const generation=state.epoch,source=state.source,batch=receiptKey==='batch';
     const skippedByPlan=batch?[...(state.batch?.skipped||[])]:[];
     const skippedByEngine=[];
-    state.busy=true;state.fix=null;refresh();
+    state.busy=true;state.lastFailure='';refresh();
     query(root,'[data-progress]').textContent='APPLYING · '+ids.length+' action(s). Waiting for validation and working-copy recheck…';
     setFixStatus('Applying '+ids.length+' selected PSI116 action(s) to an isolated copy. '+
       'Any rejected action will be excluded from the next full validation attempt.');
@@ -358,6 +359,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
       updateStatus('Repair applied and rechecked. Working revision '+state.revision+'.');
     }catch(error){
       if(generation===state.epoch){
+        state.lastFailure=error?.message||String(error);
         query(root,'[data-progress]').textContent='NOT APPLIED · '+(error?.message||String(error))+
           ' · working revision '+state.revision+' retained.';
         setFixStatus('Auto fix NOT applied: '+
@@ -390,33 +392,31 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
     state.batchRunning=true;root.setAttribute('aria-busy','true');
     const generation=state.epoch,initialSha=state.source.sourceSha256;
     const initialFindings=state.findings.length,initialApplied=state.applied;
-    const seen=new Set([initialSha]),passes=[];
-    let lastFix=null;
-    for(let pass=0;pass<8;pass++){
-      const beforeRevision=state.revision;
-      await runFix(state.batch.actionIds,'batch');
-      if(generation!==state.epoch)return;
-      if(state.revision===beforeRevision)break;
-      lastFix=state.fix;passes.push(lastFix.report);
-      if(seen.has(state.source.sourceSha256))break;
-      seen.add(state.source.sourceSha256);
-      const next=previewBatchPlan(state.findings,state.plan.actions,state.scene.byKey);
-      if(!next.actionIds.length)break;
-      state.batch={...next,sourceSha256:state.source.sourceSha256,epoch:state.epoch};
-    }
+    const outcome=await runValidatedPasses({initialPlan:b,
+      readState:()=>({sha:state.source.sourceSha256,revision:state.revision,fix:state.fix,failure:state.lastFailure}),
+      isCurrent:()=>generation===state.epoch,
+      runPass:async plan=>{state.batch={...plan,sourceSha256:state.source.sourceSha256,epoch:state.epoch};await runFix(plan.actionIds,'batch');},
+      nextPlan:()=>previewBatchPlan(state.findings,state.plan.actions,state.scene.byKey)});
+    if(generation!==state.epoch)return;
+    const {passes,lastFix,stopReason,stopMessage}=outcome;
     state.batch=null;
-    if(passes.length>1&&lastFix){
-      const remaining=eligibleActions(state.findings,state.plan.actions).length;
+    const remaining=eligibleActions(state.findings,state.plan.actions).length;
+    if(lastFix&&lastFix.sourceSha256===state.source.sourceSha256)state.fix=lastFix;
+    if(passes.length&&(passes.length>1||stopReason!=='COMPLETE')){
       state.fix={...lastFix,report:{schema:'xml229-preview-batch-topofix/v2',
         status:'VALIDATED_COPY_NOT_ENGINEERING_ACCEPTANCE',source:{name:state.source.name,sha256:initialSha},
-        fixedXmlSha256:state.source.sourceSha256,passes,
+        fixedXmlSha256:state.source.sourceSha256,passes,stopReason,stopMessage,
         appliedActionCount:state.applied-initialApplied,remainingEligibleActions:remaining},
         name:state.source.name+'.batch-'+(state.applied-initialApplied)+'.validated.topofix.xml'};
-      setFixStatus('APPLIED '+(state.applied-initialApplied)+' actions across '+passes.length+
-        ' validated passes. '+remaining+' eligible actions remain.','ready','batch');
-      query(root,'[data-progress]').textContent='APPLIED · '+passes.length+' validated passes · '+
-        (state.applied-initialApplied)+' action(s) · findings '+initialFindings+' → '+state.findings.length+
-        ' · '+remaining+' eligible actions remain.';
+    }
+    if(stopReason!=='COMPLETE'||passes.length>1){
+      const stopped=stopReason!=='COMPLETE';
+      const message=(stopped?'STOPPED: '+stopReason+' · '+stopMessage+' · ':'APPLIED · ')+
+        passes.length+' validated passes · '+(state.applied-initialApplied)+' action(s) · findings '+
+        initialFindings+' → '+state.findings.length+' · '+remaining+' eligible actions remain.'+
+        (stopped&&state.fix?' Last validated XML and receipt retained.':'');
+      setFixStatus(message,stopped?'stopped':'ready','batch');
+      query(root,'[data-progress]').textContent=message;
     }
     state.batchRunning=false;refresh();
   }
@@ -481,7 +481,7 @@ export function mountTopologyWorkspace(root, {runEngine=runXmlCii2019StandaloneE
   async function analyze() {
     if(!state.source||state.busy)return;
     const generation=state.epoch,source=state.source;state.busy=true;
-    state.plan=null;state.findings=[];state.fix=null;state.batch=null;
+    state.plan=null;state.findings=[];state.batch=null;
     query(root,'[data-batch-confirm]').textContent='';setFixStatus('');refresh();updateStatus('Running authoritative PSI116 topology analysis…');
     try {
       const result=await runEngine({sourceKind:'xml',sourceText:source.sourceText,
