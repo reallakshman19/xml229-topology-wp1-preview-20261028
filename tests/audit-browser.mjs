@@ -389,6 +389,48 @@ try{
   result.shortLengthQualification.push({kind,outcome:'MANUAL_LENGTH_UNQUALIFIED'});
  }
  await page.screenshot({path:path.join(sourceRoot,'preview-test-results','short-length-guard.png'),fullPage:true});
+ // Scale falsifier: 130 independent short-owner candidates must not render
+ // a giant list or silently process every selected owner at once.
+ const scalePage=await browser.newPage({viewport:{width:1200,height:850}});
+ await scalePage.goto('http://127.0.0.1:'+port+'/index.html');
+ await scalePage.evaluate(async()=>{
+   const {mountTopologyWorkspace}=await import('./tabs/topology-workspace/workspace-app.mjs');
+   const old=document.querySelector('main'),fresh=old.cloneNode(true);old.replaceWith(fresh);
+   window.scaleWorkspace=mountTopologyWorkspace(fresh,{runEngine:async job=>{
+     const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(job.sourceText));
+     const sha=Array.from(new Uint8Array(digest),n=>n.toString(16).padStart(2,'0')).join('');
+     const shortElements=Array.from({length:130},(_,i)=>({
+       id:'SHORT:'+i,sourceSha256:sha,eligible:true,componentType:'GASK',
+       componentRefNo:'GASK-TEST-'+i,lengthMm:3,measuredSpanMm:3,
+       lengthBasis:'SOURCE_STRAIGHT_TWO_PORT_SPAN',recordCount:2,weightRemoved:0,
+       nodeKeys:['B0:N'+i+':S1','B0:N'+i+':S2'],reason:''
+     }));
+     return {ok:true,outputKind:'topology-sidecars',ciiText:null,
+       acceptedFinalTransferred:false,nativeCiiReleaseAuthorized:false,
+       topoFixCommitted:false,topoFixXmlText:null,
+       topologyFixPlanText:JSON.stringify({source:{sha256:sha},actions:[]}),
+       topologyFindingsText:JSON.stringify({source:{sha256:sha},findings:[],shortElements})};
+   }});
+ });
+ await scalePage.locator('[data-file]').setInputFiles({name:'scale-short.xml',mimeType:'application/xml',buffer:Buffer.from(shortFixture)});
+ await scalePage.waitForFunction(()=>!document.querySelector('[data-analyze]').disabled);
+ await scalePage.locator('[data-analyze]').click();
+ await scalePage.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'));
+ await scalePage.locator('[data-preview-short]').click();
+ if(await scalePage.locator('[data-short-index]').count()!==24||
+    !(await scalePage.locator('[data-short-preview]').textContent()).includes('130 measured candidates'))
+   throw Error('Scale preview must render only one page of 24 out of 130');
+ await scalePage.locator('[data-select-gaskets]').click();
+ if(!(await scalePage.locator('[data-run-short-drop]').textContent()).includes('Apply next 8 of 130'))
+   throw Error('Selection must expose the bounded eight-owner batch size');
+ await scalePage.locator('[data-short-next]').click();
+ if(await scalePage.locator('[data-short-index]:checked').count()!==24||
+    !(await scalePage.locator('[data-short-selection-count]').textContent()).includes('130 selected'))
+   throw Error('Selection was lost across short-preview pages');
+ if((await scalePage.locator('[data-progress]').textContent()).includes('APPLIED'))
+   throw Error('A preview or selection mutated working XML');
+ result.shortPreviewScale='PASS: 130 rows, 24/page, selection across pages, explicit batch cap 8, no mutation';
+ await scalePage.close();
  // Manual Fix is a collapsed rule/case queue. >25 mm repairs require a separate preview and approval.
  const manualNode=(number,kind,ref,end,x,extra='')=>'<Node><NodeNumber>'+number+'</NodeNumber><ComponentType>'+kind+'</ComponentType><ComponentRefNo>'+ref+'</ComponentRefNo><Endpoint>'+end+'</Endpoint><Position>'+x+' 0 0</Position><OutsideDiameter>100</OutsideDiameter>'+extra+'</Node>';
  const manualDoc=(a,b)=>'<PipeStressExport><Branch><Branchname>SOURCE</Branchname>'+a+'</Branch><Branch><Branchname>PARTNER</Branchname>'+b+'</Branch></PipeStressExport>';
