@@ -76,8 +76,18 @@ export async function runShortBulk({
          !Array.isArray(plan?.actions)||!Array.isArray(findings?.findings)||
          !Array.isArray(findings?.shortElements))
         throw Error('SHORT_BULK_SOURCE_LINEAGE_OR_RECHECK_DRIFT');
+      // Full occurrence maps are verified by the authoritative Python
+      // pre-Final replay. Retain their exact sidecar digest and source-linked
+      // operations, not ~1,600 repeated mapping rows per selected owner.
+      const fullLineageSha256=await hash(result.topoFixLineageText);
+      if(!isCurrent()){stopReason='CANCELLED';break;}
+      const {sourceOccurrenceMap:fullMap,...lineageHeader}=lineage;
+      const compactLineage={...lineageHeader,
+        fullLineageSha256,
+        sourceOccurrenceMapCount:Array.isArray(fullMap)?fullMap.length:0};
       applied.push({id,sourceSha256:current.sourceSha256,fixedSha256:fixedSha,
-        request,selectedElement:row,transaction:txn,validation,lineage,preFinal});
+        request,selectedElement:row,transaction:txn,validation,
+        lineage:compactLineage,preFinal});
       current={...current,sourceText:result.topoFixXmlText,sourceSha256:fixedSha};
       rows=findings.shortElements;
       latest={source:current,findings,plan};
