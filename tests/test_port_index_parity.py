@@ -94,6 +94,12 @@ def public_cases():
       node(10,'PIPE','P',1,'0 0 0')+node(20,'PIPE','P',2,'100 0 0'),
       node(21,'FLAN','F',1,'125 0 0')+node(-1,'RIGID','F',2,'211 0 0'),
       node(22,'FLAN','G',1,'125 0 0')+node(-2,'RIGID','G',2,'211 0 0'))]
+    # Inclusive 25mm+1e-9 tolerance can span two cell indices at edges.
+    cases += [doc(
+      node(10,'PIPE','P',1,'-75.0000000001 0 0')+
+      node(20,'PIPE','P',2,'24.9999999999 0 0'),
+      node(30,'FLAN','F',1,'50.0000000004 0 0')+
+      node(-1,'RIGID','F',2,'136.0000000004 0 0'))]
     cases += [doc(*[
       node(100+i*10,'PIPE',f'P{i}',1,f'{i*1000} 0 0')+
       node(101+i*10,'PIPE',f'P{i}',2,f'{i*1000+100} 0 0')
