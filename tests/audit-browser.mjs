@@ -321,7 +321,7 @@ try{
  await page.locator('[data-run-short-drop]').click();
  await page.waitForFunction(()=>document.querySelector('main').getAttribute('aria-busy')==='false'&&['ready','stopped'].includes(document.querySelector('[data-fix-result]')?.getAttribute('data-result')),null,{timeout:120000});
  result.shortDrop=await page.locator('[data-progress]').textContent();
- if(!result.shortDrop.includes('BULK COMPLETE · 1 validated element(s) applied')||!(await page.locator('[data-occ-summary]').textContent()).includes('4 of 4'))throw Error('Drop did not update working geometry/counts: '+result.shortDrop);
+ if(!result.shortDrop.includes('BULK COMPLETE · selected 1 = 1 validated + 0 skipped + 0 failed + 0 unprocessed')||!(await page.locator('[data-occ-summary]').textContent()).includes('4 of 4'))throw Error('Drop did not update working geometry/counts: '+result.shortDrop);
  const shortXmlDownload=page.waitForEvent('download');await page.locator('[data-download-fix]').click();
  const shortXml=await readFile(await (await shortXmlDownload).path(),'utf8');
  const shortPorts=await page.evaluate(xml=>[...new DOMParser().parseFromString(xml,'application/xml').getElementsByTagNameNS('*','Node')].map(n=>({
