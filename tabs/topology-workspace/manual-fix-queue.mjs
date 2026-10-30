@@ -37,7 +37,7 @@ export function makeManualQueueItem(d,sourceSha256) {
   assert(d.confirmed===true&&String(d.evidence||'').trim().length>=10,
     'SECOND_PASS_QUEUE_APPROVAL_REQUIRED');
   const fingerprint=witness(d.preview),r=d.preview.repair;
-  return {id:'Q:'+d.findingId+':'+d.sourceKey+':'+d.peerKey,
+  return {id:'Q:'+sourceSha256.slice(0,12)+':'+d.findingId+':'+d.sourceKey+':'+d.peerKey,
     findingId:d.findingId,sourceKey:d.sourceKey,peerKey:d.peerKey,
     approvedSourceSha256:sourceSha256,preview:structuredClone(d.preview),
     fingerprint,designEvidence:d.evidence.trim(),status:'APPROVED',
@@ -47,7 +47,7 @@ export function enqueueManualFix(queue,d,sourceSha256) {
   const item=makeManualQueueItem(d,sourceSha256);
   assert(!queue.some(x=>x.id===item.id),'SECOND_PASS_QUEUE_DUPLICATE');
   for(const prior of queue) {
-    if(prior.status==='REMOVED')continue;
+    if(prior.status!=='APPROVED')continue;
     const conflict=queueConflict(prior,item);
     assert(!conflict,'SECOND_PASS_QUEUE_CONFLICT:'+conflict);
   }
@@ -89,7 +89,7 @@ export async function runManualFixQueue({
         previewResult.topoFixCommitted!==true&&
         previewResult.acceptedFinalTransferred===false&&
         previewResult.nativeCiiReleaseAuthorized===false&&
-        !previewResult.ciiText,'SECOND_PASS_QUEUE_PREVIEW_REJECTED');
+        !previewResult.ciiText&&!previewResult.enrichedText,'SECOND_PASS_QUEUE_PREVIEW_REJECTED');
       const data=JSON.parse(previewResult.topologyFindingsText||'null');
       const fresh=data?.manualConnectionPreview;
       assert(data?.source?.sha256===current.sourceSha256&&
@@ -110,7 +110,7 @@ export async function runManualFixQueue({
       assert(result?.ok===true&&result.outputKind==='topology-sidecars'&&
         result.topoFixCommitted===true&&result.topoFixXmlText&&
         result.acceptedFinalTransferred===false&&
-        result.nativeCiiReleaseAuthorized===false&&!result.ciiText,
+        result.nativeCiiReleaseAuthorized===false&&!result.ciiText&&!result.enrichedText,
         'SECOND_PASS_QUEUE_TRANSACTION_REJECTED:'+String(result?.error||'no verified XML'));
       const txn=JSON.parse(result.topoFixTransactionText||'null');
       const validation=JSON.parse(result.topoFixValidationText||'null');
