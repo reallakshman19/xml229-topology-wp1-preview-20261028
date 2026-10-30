@@ -19,7 +19,8 @@ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 const port=server.address().port;
 const browser=await chromium.launch({headless:true,args:['--no-sandbox']});
 const page=await browser.newPage({viewport:{width:1440,height:960}});
-const pageErrors=[];page.on('pageerror',e=>pageErrors.push(String(e)));page.on('console',msg=>{if(msg.type()==='error')pageErrors.push('console:'+msg.text());});
+const pageErrors=[];const observedWorkers=[];page.on('worker',w=>observedWorkers.push(w.url()));
+page.on('pageerror',e=>pageErrors.push(String(e)));page.on('console',msg=>{if(msg.type()==='error')pageErrors.push('console:'+msg.text());});
 const result={};
 try{
  await page.goto('http://127.0.0.1:'+port+'/index.html');
@@ -28,6 +29,9 @@ try{
  result.loaded=true;
  await page.locator('[data-analyze]').click();
  await page.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'),null,{timeout:120000});
+ if(!observedWorkers.some(url=>url.includes('/topology-worker.mjs')))
+  throw Error('Topology analysis must execute in a dedicated Web Worker, not on the main thread.');
+ result.topologyWorker='PASS: module Worker created for PSI116 analysis';
  result.summary=await page.locator('[data-plan-summary]').textContent();
  result.filterCounts=Object.fromEntries(await Promise.all(
   ['all','error','warning','auto','manual','evidence'].map(async key=>
@@ -306,6 +310,8 @@ try{
  await page.locator('[data-analyze]').click();
  await page.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'),null,{timeout:120000});
  await page.locator('[data-preview-short]').click();
+ if(await page.locator('[data-short-index]').count()>24)throw Error('Unbounded short-element preview rendered');
+ if(!(await page.locator('[data-short-preview]').textContent()).includes('PREVIEW ONLY'))throw Error('Short preview missing nonmutating status');
  const shortPreview=await page.locator('[data-short-preview]').textContent();
  if(!shortPreview.includes('GASK · 3.000 mm · SHORT · 2 records · weight 2.5')||!shortPreview.includes('B0:N30:S3'))throw Error('Short preview missing complete owner/length/weight/source census');
  await page.locator('[data-select-gaskets]').click();
