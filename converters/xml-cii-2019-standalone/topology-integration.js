@@ -26,6 +26,31 @@ from psi116_topology_resolver import ResolverConfig, resolve_psi116
 from psi116_topology_resolver.transaction import TransactionPolicy, apply_topofix_transaction
 from psi116_topology_resolver.lineage import build_topofix_source_lineage, verify_topofix_pre_final
 
+
+def compare_hub_values(path, left, right, differences):
+    """Small owned structural comparer; no private XCU/S1 helper imports."""
+    if type(left) is not type(right):
+        differences.append(path + ": TYPES " + type(left).__name__ +
+                           " != " + type(right).__name__)
+    elif isinstance(left, dict):
+        for key in sorted(set(left) | set(right)):
+            item_path = path + "/" + str(key)
+            if key not in left:
+                differences.append(item_path + ": DIRECT_MISSING")
+            elif key not in right:
+                differences.append(item_path + ": UXML_MISSING")
+            else:
+                compare_hub_values(item_path, left[key], right[key], differences)
+    elif isinstance(left, (list, tuple)):
+        if len(left) != len(right):
+            differences.append(path + ": LENGTH direct=" + str(len(left)) +
+                               " uxml=" + str(len(right)))
+        for index in range(min(len(left), len(right))):
+            compare_hub_values(path + "/" + str(index),
+                               left[index], right[index], differences)
+    elif left != right:
+        differences.append(path + ": direct=" + repr(left) + " uxml=" + repr(right))
+
 cfg = ResolverConfig()
 result = resolve_psi116(Path(job_topology_input_path))
 hub_doc = json.loads(job_topology_uxml_json)
@@ -33,12 +58,11 @@ hub_parity = {"status": "OFF", "differences": []}
 if hub_doc is not None:
     # The same Python resolver consumes either ORIGINAL PSI116 or XCU's UXML.
     from psi116_topology_resolver.uxml_adapter import resolve_from_uxml
-    from psi116_topology_resolver.uxml_compare import _diff
     try:
         adapted = resolve_from_uxml(hub_doc, cfg, source_name=str(job_topology_input_path))
         differences = []
-        _diff("/findings", result.findings_payload(cfg), adapted.findings_payload(cfg), differences)
-        _diff("/fixPlan", result.fix_plan_payload(cfg), adapted.fix_plan_payload(cfg), differences)
+        compare_hub_values("/findings", result.findings_payload(cfg), adapted.findings_payload(cfg), differences)
+        compare_hub_values("/fixPlan", result.fix_plan_payload(cfg), adapted.fix_plan_payload(cfg), differences)
         hub_parity = {"status": "DIFFERENT" if differences else "EQUAL",
                       "differences": differences}
     except Exception as exc:
@@ -84,8 +108,7 @@ if job_generate_topofix:
         # sourceRefs -> ORIGINAL PSI116 patched by native transaction.py.
         # Direct transaction is a private comparator, never the hub download.
         from psi116_topology_resolver.uxml_edit_ops import export_edit_ops, apply_edit_ops
-        from psi116_topology_resolver.uxml_compare import _diff
-        try:
+            try:
             if json.loads(job_joint_repairs_json) or json.loads(job_short_elements_json):
                 raise ValueError("UXML_PREVIEW_AUTO_ONLY: manual and short-element repair held")
             selection = TransactionPolicy(selected_action_ids=tuple(job_topology_action_ids))
@@ -96,9 +119,9 @@ if job_generate_topofix:
             if patched is None:
                 raise ValueError("UXML_PATCH_NO_OPERATIONS")
             differences = []
-            _diff("/transaction", direct_transaction.transaction_payload(),
+            compare_hub_values("/transaction", direct_transaction.transaction_payload(),
                   patched.transaction_payload(), differences)
-            _diff("/validation", direct_transaction.validation_payload(),
+            compare_hub_values("/validation", direct_transaction.validation_payload(),
                   patched.validation_payload(), differences)
             if patched.fixed_xml != direct_transaction.fixed_xml:
                 differences.append("/fixedXml: PATCH_BYTES_DIFFER_FROM_DIRECT")

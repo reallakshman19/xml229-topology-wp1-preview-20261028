@@ -47,7 +47,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   runEngine ||= ownedWorker.run;
   cancelEngine ||= ownedWorker?()=>ownedWorker.cancel():()=>{};
   const state={epoch:0,source:null,original:null,revision:0,applied:0,history:[],resolutions:[],shortElements:[],shortPreview:null,scene:null,plan:null,findings:[],result:null,
-    selected:new Set(),search:'',filter:'all',category:'all',hubEnabled:false,hubParity:null,hubRevision:null,manualPorts:[],secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false,shortBulk:null,manualQueue:[],manualQueueRunning:false,manualQueueCheckpoint:null,manualQueueStatus:''};
+    selected:new Set(),search:'',filter:'all',category:'all',hubEnabled:false,hubParity:null,hubRevision:null,analysisProof:null,manualPorts:[],secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false,shortBulk:null,manualQueue:[],manualQueueRunning:false,manualQueueCheckpoint:null,manualQueueStatus:''};
   // The queue lives alongside Second Pass, without changing the engineering audit.
   const queuePanel=document.createElement('section');
   queuePanel.dataset.manualQueue='';
@@ -130,7 +130,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       state.resolutions.map((r,i)=>'<li><button data-resolved-index="'+i+'">'+esc(r.code.replaceAll('_',' '))+
         ' · '+esc(r.node_keys.join(', '))+'</button><p>'+esc(r.message)+'</p></li>').join('')+'</ul></details>':'';
     const evidence=query(root,'[data-download-resolutions]');
-    if(evidence)evidence.disabled=!state.plan||state.busy;
+    if(evidence)evidence.disabled=!state.plan||state.busy||state.batchRunning||!analysisProofCurrent();
     if(!plan){
       summary.textContent='Analyze XML to see findings grouped by engineering rule.';
       panel.innerHTML='';
@@ -248,8 +248,16 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     a.href=url;a.download=state.source.name+'.revision-'+state.revision+(history?'.repairs.json':'.topofix.xml');
     document.body.appendChild(a);a.click();a.remove();window.setTimeout(()=>URL.revokeObjectURL(url),1000);
   }
+  function analysisProofCurrent(){
+    const p=state.analysisProof;
+    return !!(p&&state.source&&state.result&&
+      p.epoch===state.epoch&&p.revision===state.revision&&
+      p.sourceSha256===state.source.sourceSha256&&
+      p.result===state.result&&p.hubEnabled===state.hubEnabled&&
+      (!state.hubEnabled||state.hubParity?.status==='EQUAL'));
+  }
   function downloadResolutions(){
-    if(!state.source||!state.plan||(state.hubEnabled&&state.hubParity?.status!=='EQUAL'))return;
+    if(!state.source||!state.plan||!analysisProofCurrent()||state.busy||state.batchRunning)return;
     const receipt={schema:'topofix-connection-evidence/v1',sourceSha256:state.source.sourceSha256,
       toleranceMm:25,resolvedConnections:state.resolutions,remainingFindings:state.findings,
       workingRevision:state.revision,xmlChangedByResolution:false};
@@ -391,6 +399,8 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       state.findings=current.findings;state.result=recheck;state.selected.clear();state.gapReviews.clear();
       state.selected=new Set(changedIds);
       state.revision++;state.applied+=ids.length;
+      state.analysisProof={epoch:generation,revision:state.revision,
+        sourceSha256:fixedSha,result:recheck,hubEnabled:state.hubEnabled};
       state.hubRevision=state.hubEnabled?state.revision:null;
       state.history.push({sourceSha256:source.sourceSha256,fixedSha256:fixedSha,
         actionIds:ids,operations:txn.operations,validation:validation.checks,jointRepairs,reviews:priorReviews,
@@ -916,7 +926,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     cancelEngine();
     const generation=++state.epoch;
     state.shortBulk=null;
-    state.source=null;state.original=null;state.revision=0;state.hubParity=null;state.hubRevision=null;state.applied=0;state.history=[];state.resolutions=[];state.shortElements=[];state.shortPreview=null;
+    state.source=null;state.original=null;state.revision=0;state.hubParity=null;state.hubRevision=null;state.analysisProof=null;state.applied=0;state.history=[];state.resolutions=[];state.shortElements=[];state.shortPreview=null;
     const shortPanel=query(root,'[data-short-preview]');if(shortPanel)shortPanel.textContent='';
     state.manualPorts=[];state.secondPass=null;state.manualQueue=[];
     state.manualQueueCheckpoint=null;state.manualQueueRunning=false;
@@ -953,7 +963,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   async function analyze() {
     if(!state.source||state.busy)return;
     const generation=state.epoch,source=state.source;state.busy=true;
-    state.plan=null;state.findings=[];state.batch=null;state.manualPorts=[];state.secondPass=null;
+    state.plan=null;state.findings=[];state.batch=null;state.manualPorts=[];state.secondPass=null;state.analysisProof=null;
     query(root,'[data-batch-confirm]').textContent='';setFixStatus('');refresh();updateStatus('Running authoritative PSI116 topology analysis…');
     try {
       const result=await runEngine({sourceKind:'xml',sourceText:source.sourceText,
@@ -978,6 +988,8 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       state.plan=plan;state.findings=findings.findings;state.result=result;
       state.resolutions=findings.resolvedConnections||[];
       state.shortElements=findings.shortElements||[];state.manualPorts=findings.manualConnectionPorts||[];
+      state.analysisProof={epoch:generation,revision:state.revision,
+        sourceSha256:source.sourceSha256,result,hubEnabled:state.hubEnabled};
       updateStatus('Authoritative topology analysis complete. '+plan.actions.length+
         ' plan entries. No Weight/O1/Final/native session was supplied or created.');
     } catch(error) {
@@ -1117,7 +1129,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     }
     if(event.target.matches('[data-uxml-toggle]')){
       if(state.busy||state.batchRunning){event.target.checked=state.hubEnabled;return;}
-      state.hubEnabled=event.target.checked;state.hubParity=null;
+      state.hubEnabled=event.target.checked;state.hubParity=null;state.analysisProof=null;
       renderHubParity();renderActions();refresh();
       updateStatus(state.hubEnabled?
         'Universal XML preview ON. Select Analyze to verify the pinned reader.':

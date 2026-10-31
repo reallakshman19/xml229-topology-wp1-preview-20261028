@@ -3,7 +3,6 @@
  */
 import {runXmlCii2019StandaloneEngine} from '../../converters/xml-cii-2019-standalone/engine.js';
 import {loadPinnedPsi116Reader} from './uxml-browser-reader.mjs';
-let readerPromise=null;
 async function sourceHash(sourceText){
  const encoded=new TextEncoder().encode(sourceText);
  const hash=await crypto.subtle.digest('SHA-256',encoded);
@@ -25,10 +24,16 @@ self.onmessage=async ({data})=>{
     try{
       const sha=await sourceHash(job.sourceText);
       if(sha!==job.sourceRawSha256)throw Error('UXML_SOURCE_BYTE_SHA_MISMATCH');
-      const reader=await (readerPromise ||= loadPinnedPsi116Reader());
+      // Revalidate every load, and allow retries after any failed fetch/import.
+      const reader=await loadPinnedPsi116Reader();
       const uxmlDocument=reader.read(job.sourceText,sha);
       payload={...job,uxmlDocument};
     }catch(error){
+      // A failed hub reader cannot authorize a mutating job, even when called
+      // directly outside the UI's disabled-button guard.
+      if(job.options?.generateTopoFix===true)
+        throw Error('UXML_READER_UNAVAILABLE_AUTOFIX_REFUSED:'+
+          (error?.message||String(error)));
       // Never silently use a broken reader: publish explicit UNAVAILABLE.
       // Direct path remains functional on this job and when toggle is OFF.
       const direct=await runXmlCii2019StandaloneEngine({
