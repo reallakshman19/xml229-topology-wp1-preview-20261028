@@ -97,7 +97,7 @@ export function createTopologyCanvas(canvas,onHits=()=>{}){
    ctx.beginPath();ctx.arc(p.x,p.y,active?7:r.route?3.5:2.7,0,Math.PI*2);
    ctx.fillStyle=active?'#fff':r.route?palette[r.branchIndex%palette.length]:'#94a3b8';ctx.fill();
    if(active){ctx.strokeStyle='#fbbf24';ctx.lineWidth=2;ctx.stroke();}
-   if(showLabels&&(active||hovered||(r.route&&selected.size===0)))
+   if(active||hovered||(showLabels&&r.route&&selected.size===0))
      labelCandidates.push({id:r.id,text:r.nodeNumberRaw+' '+r.type,x:p.x+6,
        y:p.y-6,priority:hovered?3:active?2:0});
   }

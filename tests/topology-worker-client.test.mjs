@@ -91,3 +91,10 @@ test('silent worker startup failure fails fast and does not strand the next Anal
  fresh.emit('message',{type:'RESULT',id:fresh.sent[0].id,result:{ok:true}});
  await next;c.dispose();
 });
+
+test('worker constructor failure identifies pinned asset recovery route',async()=>{
+ class CannotStartWorker{constructor(){throw Error('Worker module import blocked');}}
+ const c=createTopologyWorkerClient({WorkerCtor:CannotStartWorker,jobTimeoutMs:100});
+ await assert.rejects(c.run(validJob),/TOPOLOGY_WORKER_START_FAILED.*pyodide\.asm\.wasm.*python_stdlib\.zip.*repair-validation\.yml/);
+ c.dispose();
+});

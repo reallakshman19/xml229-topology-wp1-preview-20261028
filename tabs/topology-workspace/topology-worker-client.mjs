@@ -30,7 +30,10 @@ export function createTopologyWorkerClient({
   function ensureWorker() {
     if(worker) return worker;
     if(typeof WorkerCtor !== 'function') throw Error('TOPOLOGY_WORKER_UNAVAILABLE: use a browser with module Worker support.');
-    const created=new WorkerCtor(workerUrl,{type:'module'});
+    let created;
+    try{created=new WorkerCtor(workerUrl,{type:'module'});}
+    catch(error){throw Error('TOPOLOGY_WORKER_START_FAILED: '+
+      (error?.message||String(error))+'. '+assetHelp);}
     created.addEventListener('message',({data})=>{
       if(worker!==created||!data)return;
       if(data.type==='READY'){
