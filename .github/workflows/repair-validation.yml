@@ -30,6 +30,8 @@ jobs:
           test "$(git hash-object dist/vendor/pyodide/python_stdlib.zip)" = e4c642f5824d41f36bf99aa9c761a2576620fa7c
           curl --fail --location --retry 3 "$root/Benchmarks/1885Sjson/FirstpassXML" -o tests/FirstpassXML
           echo 'feee5a5a6399207337e63bc56c8afb001fe37ab30c6a7a9283333ec60f6eea38  tests/FirstpassXML' | sha256sum -c -
+      - name: Fetch immutable XCU reader for UXML preview (seven Git blob checks)
+        run: bash tools/fetch-uxml-reader.sh dist
       - name: Full Chromium and Pyodide repair journey
         run: |
           npm install --no-save --ignore-scripts --package-lock=false playwright@1.52.0

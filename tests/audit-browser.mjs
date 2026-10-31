@@ -566,6 +566,97 @@ try{
  if(!evidence.resolvedConnections.some(x=>x.code==='DECLARED_CLOSED_END')||evidence.xmlChangedByResolution!==false)throw Error('Source closure receipt missing');
  await mkdir(path.join(sourceRoot,'preview-test-results'),{recursive:true});
  await page.screenshot({path:path.join(sourceRoot,'preview-test-results','rule-audit.png'),fullPage:true});
+ // UXML-UI: exact pinned XCU ES modules -> UXML -> same Python resolver and
+ // sourceRef patch route. All fixtures here are synthetic; no Owner file.
+ const portAuto=manualDoc(
+   manualNode(10,'PIPE','P',1,0)+manualNode(20,'PIPE','P',2,100),
+   manualNode(30,'FLAN','F',1,125)+manualNode(-1,'RIGID','F',2,211))
+   .replace('<PipeStressExport>','<PipeStressExport xmlns="http://aveva.com/pipeStress116.xsd">');
+ const hubFixture={name:'uxml-ui-synthetic.xml',mimeType:'application/xml',
+   buffer:Buffer.from(portAuto,'utf8')};
+ if(await page.locator('[data-uxml-toggle]').isChecked())
+   throw Error('Universal XML preview must default OFF');
+ await page.locator('[data-file]').setInputFiles(hubFixture);
+ await page.waitForFunction(()=>document.querySelector('[data-occ-summary]')?.textContent?.includes('4 of 4'));
+ await page.locator('[data-uxml-toggle]').check();
+ if((await page.locator('[data-uxml-parity]').getAttribute('data-parity'))!=='NOT_CHECKED')
+   throw Error('UXML toggle silently asserted parity without a worker run');
+ await page.locator('[data-analyze]').click();
+ await page.waitForFunction(()=>['EQUAL','DIFFERENT','UNAVAILABLE'].includes(
+   document.querySelector('[data-uxml-parity]')?.dataset?.parity),null,{timeout:120000});
+ const parity=await page.locator('[data-uxml-parity]').getAttribute('data-parity');
+ if(parity!=='EQUAL')
+   throw Error('Pinned reader must give EQUAL for synthetic auto fixture; got '+
+     parity+' '+await page.locator('[data-uxml-differences]').textContent());
+ await page.locator('[data-auto-fix-all]').click();
+ const go=page.locator('[data-run-auto-fix-all]');
+ if(!await go.count())throw Error('No authorized Auto-fix batch for synthetic hub fixture');
+ await go.click();
+ await page.waitForFunction(()=>document.querySelector('[data-download-working]')?.disabled===false||
+   /NOT APPLIED|ERROR/.test(document.querySelector('[data-progress]')?.textContent||''),null,{timeout:120000});
+ if(await page.locator('[data-download-working]').isDisabled())
+   throw Error('UXML hub patch was not verified for download: '+
+     await page.locator('[data-progress]').textContent()+' / '+await page.locator('[data-uxml-differences]').textContent());
+ if((await page.locator('[data-uxml-parity]').getAttribute('data-parity'))!=='EQUAL')
+   throw Error('UXML parity was not retained through validated patch and recheck');
+ await page.locator('[data-uxml-parity]').scrollIntoViewIfNeeded();
+ await page.screenshot({path:path.join(sourceRoot,'preview-test-results','uxml-ui-parity-equal.png'),fullPage:false});
+ const hubDownload=page.waitForEvent('download');
+ await page.locator('[data-download-working]').click();
+ const hubBytes=await readFile(await (await hubDownload).path());
+ const directPage=await browser.newPage({viewport:{width:1440,height:960}});
+ try {
+   await directPage.goto('http://127.0.0.1:'+port+'/index.html');
+   await directPage.locator('[data-file]').setInputFiles(hubFixture);
+   await directPage.waitForFunction(()=>document.querySelector('[data-occ-summary]')?.textContent?.includes('4 of 4'));
+   if(await directPage.locator('[data-uxml-toggle]').isChecked())throw Error('Direct route default was not OFF');
+   await directPage.locator('[data-analyze]').click();
+   await directPage.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'),null,{timeout:120000});
+   await directPage.locator('[data-auto-fix-all]').click();
+   await directPage.locator('[data-run-auto-fix-all]').click();
+   await directPage.waitForFunction(()=>document.querySelector('[data-download-working]')?.disabled===false||
+     /NOT APPLIED|ERROR/.test(document.querySelector('[data-progress]')?.textContent||''),null,{timeout:120000});
+   if(await directPage.locator('[data-download-working]').isDisabled())
+     throw Error('Direct comparator did not commit synthetic batch');
+   const dl=directPage.waitForEvent('download');
+   await directPage.locator('[data-download-working]').click();
+   const directBytes=await readFile(await (await dl).path());
+   if(!hubBytes.equals(directBytes))
+     throw Error('UXML hub downloaded XML bytes differ from direct route');
+   result.uxmlUiParity='EQUAL';
+   result.uxmlUiBytesEqual=true;
+   result.uxmlUiFixedSha256=createHash('sha256').update(hubBytes).digest('hex');
+ } finally { await directPage.close(); }
+ // Independent tamper: the Worker must NEVER import a reader blob whose
+ // source differs by even one harmless comment, even on a valid fixture.
+ const badContext=await browser.newContext({viewport:{width:1440,height:960}});
+ await badContext.route('**/vendor/uxml/uxml/UxmlPsi116SchemaMapper.js',async route=>{
+   const response=await route.fetch();
+   const bytes=await response.body();
+   await route.fulfill({response,body:Buffer.concat([bytes,Buffer.from('\n/* UXML-UI TAMPER MUTANT */\n')])});
+ });
+ const badPage=await badContext.newPage();
+ try{
+   await badPage.goto('http://127.0.0.1:'+port+'/index.html');
+   await badPage.locator('[data-file]').setInputFiles(hubFixture);
+   await badPage.waitForFunction(()=>document.querySelector('[data-occ-summary]')?.textContent?.includes('4 of 4'));
+   await badPage.locator('[data-uxml-toggle]').check();
+   await badPage.locator('[data-analyze]').click();
+   await badPage.waitForFunction(()=>document.querySelector('[data-uxml-parity]')?.dataset?.parity==='UNAVAILABLE',null,{timeout:120000});
+   const detail=await badPage.locator('[data-uxml-differences]').textContent();
+   if(!detail.includes('UXML_READER_BLOB_HASH_MISMATCH')||
+     !detail.includes('UxmlPsi116SchemaMapper.js')||
+     !await badPage.locator('[data-download-working]').isDisabled()||
+     await badPage.locator('[data-download-fix]').count()||
+     !await badPage.locator('[data-auto-fix-all]').isDisabled())
+     throw Error('Tampered XCU reader did not fail closed: '+detail);
+   result.uxmlUiTamper='PASS: visible hash refusal, zero hub Auto-fix/export';
+   // The same Worker must remain usable for the legacy direct route.
+   await badPage.locator('[data-uxml-toggle]').uncheck();
+   await badPage.locator('[data-analyze]').click();
+   await badPage.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'),null,{timeout:120000});
+   result.uxmlUiDirectFallback='PASS: direct PSI116 still available';
+ } finally { await badContext.close(); }
  if(pageErrors.length)throw Error('Browser errors: '+pageErrors.join(' | '));
  result.status='PASS';
 }catch(e){result.status='FAIL';result.error=String(e);throw e;}

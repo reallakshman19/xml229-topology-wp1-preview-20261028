@@ -375,7 +375,8 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       const recheck=await runEngine({sourceKind:'xml',sourceText:nextSource.sourceText,
         sourceName:source.name,topologyPreFinalOnly:true,
         options:{outputMode:'enriched-only',analyzeTopology:true,generateTopoFix:false,
-          useTopoFixForCii:false,topologyActionIds:[]}});
+          useTopoFixForCii:false,topologyActionIds:[],
+          topologyUxmlPreview:state.hubEnabled},sourceRawSha256:fixedSha});
       if(generation!==state.epoch)return;
       recordHubResult(recheck);
       if(state.hubEnabled&&state.hubParity?.status!=='EQUAL')
@@ -956,8 +957,10 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       const result=await runEngine({sourceKind:'xml',sourceText:source.sourceText,
         sourceName:source.name,topologyPreFinalOnly:true,
         options:{outputMode:'enriched-only',analyzeTopology:true,generateTopoFix:false,
-          useTopoFixForCii:false,topologyActionIds:[]}});
+          useTopoFixForCii:false,topologyActionIds:[],
+          topologyUxmlPreview:state.hubEnabled},sourceRawSha256:source.rawSha256});
       if(generation!==state.epoch)return;
+      recordHubResult(result);
       if(result?.ok!==true||result.outputKind!=='topology-sidecars'||
           result.ciiText||result.acceptedFinalTransferred!==false||
           result.nativeCiiReleaseAuthorized!==false||result.topoFixCommitted===true||
