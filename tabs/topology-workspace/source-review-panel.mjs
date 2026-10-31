@@ -113,7 +113,12 @@ export function mountSourceReviewPanel(reviewPanel,{getReview,getCurrentSha}){
     }catch(error){message='Import rejected: '+String(error?.message||error);}
     input.value='';render();
   }
-  function onReviewChanged(){add.disabled=!eligible();}
+  function onReviewChanged(event){
+    // A <select> dispatches input BEFORE change. Re-rendering its option list on
+    // input would detach the select before the P1 exact-source change handler runs.
+    if(event.type==='input'&&event.target.matches('[data-review-choice]'))return;
+    add.disabled=!eligible();
+  }
   reviewPanel.addEventListener('click',onReviewClick);
   reviewPanel.addEventListener('input',onReviewChanged);
   reviewPanel.addEventListener('change',onReviewChanged);
