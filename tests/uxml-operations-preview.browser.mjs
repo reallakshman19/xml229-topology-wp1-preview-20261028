@@ -189,7 +189,7 @@ test('injected hub EQUAL previews each S2 row, filters, finds, exports; DIFFEREN
    await page.locator('[data-analyze]').click();
    await page.waitForFunction(()=>document.querySelector('[data-uxml-parity]')
      ?.dataset?.parity==='EQUAL'&&document.querySelector('[data-ops-status]')
-     ?.textContent?.includes('SYNTHETIC_PREVIEW_FAILURE'));
+     ?.textContent?.includes('UXML_OPS_PREVIEW_BUILDER_FAILURE:RuntimeError'));
    assert.equal(await panel.locator('[data-op-id]').count(),0);
    assert.match(await panel.locator('[data-ops-status]').textContent(),
      /Preview unavailable: UXML_OPS_PREVIEW_BUILDER_FAILURE:RuntimeError/);
