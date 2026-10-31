@@ -113,4 +113,33 @@ class SourceBackedReconciliation(unittest.TestCase):
                             ("50" in row or "1150" in row)
                             for row in differences),differences)
         self.assertTrue(differences,"source-backed fifty-mm mutation must never compare EQUAL")
+    def _verify_public_caesar14_sample(self, name: str, count: int):
+        # These two XCU docs are public InputXML-only samples. No matching
+        # PSI116 source is available; reporting PSI116 findings would invent data.
+        sample=self.xcu/"docs"/name
+        p=subprocess.run(["node",str(self.xcu/"tools/inputxml-to-uxml.mjs"),str(sample)],
+                         cwd=self.xcu,capture_output=True,text=True,timeout=60)
+        self.assertEqual(p.returncode,0,p.stderr)
+        inp=json.loads(p.stdout)
+        self.assertEqual(inp["inputXml"]["elementCount"],count)
+        self.assertEqual(len(inp["components"]),count)
+        self.assertEqual(len(inp["inputXml"]["runs"]),1)
+        self.assertFalse(inp["inputXml"]["runs"][0]["anchored"])
+        doc=document_from_uxml(inp)
+        self.assertTrue(doc.branches)
+        from psi116_topology_resolver.uxml_adapter import resolve_from_uxml
+        from psi116_topology_resolver.models import ResolverConfig
+        result=resolve_from_uxml(inp)
+        counts=result.findings_payload(ResolverConfig())["summary"]["findingCountsByCode"]
+        print(f"PUBLIC_CAESAR14 {name}: InputXML_PIPINGELEMENTS={count} "
+              f"inputxml_findings_by_code={dict(sorted(counts.items()))} "
+              "PSI116_COUNTS=NOT_AVAILABLE no paired PSI source",flush=True)
+        return counts
+
+    def test_public_GRE_delta_only_inputxml_engine(self):
+        self._verify_public_caesar14_sample("GREInputxml.xml",100)
+
+    def test_public_PLB314_delta_only_inputxml_engine(self):
+        self._verify_public_caesar14_sample("PLB314Inputxml.xml",53)
+
 if __name__=="__main__":unittest.main()
