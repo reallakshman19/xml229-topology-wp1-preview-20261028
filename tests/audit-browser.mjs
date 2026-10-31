@@ -570,8 +570,20 @@ try{
  await page.waitForFunction(()=>document.querySelector('[data-occ-summary]')?.textContent?.includes('4 of 4'));
  await page.locator('[data-analyze]').click();
  await page.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'),null,{timeout:120000});
+ // A review overlay must not replace the user's previously selected source record.
+ await page.locator('[data-occ-id]').first().click();
+ const priorInspector=await page.locator('[data-inspector]').textContent();
+ const selectionPreserved=async()=>
+   (await page.locator('[data-inspector]').textContent())===priorInspector&&
+   (await page.locator('[data-occ-id][aria-selected="true"]').count())===1;
  await page.locator('[data-review-query="a"]').fill('6880');
  await page.locator('[data-review-query="b"]').fill('6450');
+ if(!await selectionPreserved())throw Error('Review pair replaced shared selection');
+ await page.locator('[data-review-query="a"]').fill('');
+ if(!await selectionPreserved())throw Error('Clearing review lost previous selection');
+ await page.locator('[data-review-query="a"]').fill('6880');
+ if(!await selectionPreserved())throw Error('Reopening review lost previous selection');
+ result.topoASelection='PASS: shared selection and inspector unchanged by review and clear';
  const rPanel=page.locator('[data-connection-review]');
  const rText=await rPanel.textContent();
  if(!rText.includes('CONFLICTS_WITH_CLOS')||!rText.includes('240.600')||

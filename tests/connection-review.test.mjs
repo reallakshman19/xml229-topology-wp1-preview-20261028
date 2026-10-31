@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {resolveConnectionReview,reviewConnectionHTML} from '../tabs/topology-workspace/connection-review.mjs';
+import {createTopologyCanvas} from '../tabs/topology-workspace/projected-canvas.mjs';
 
 const sha='a'.repeat(64);
 const occurrence=(branch,index,nodeNumber,x,type='PIPE',ref='P',connectionType='')=>({
@@ -31,6 +32,78 @@ test('6880 / 6450 stays REVIEW ONLY with verified CLOS provenance and exact 240.
     '114.300','6.020','upstream CAD','reimport','PROPOSAL'])
     assert.ok(html.includes(token),token);
   assert.doesNotMatch(html,/data-(?:apply|queue)|<button|CLOSE_PORT_CONNECTION/i);
+});
+
+
+test('off-port CLOS declaration binds the selected port solely through source witness',()=>{
+  const openLooking=occurrence(0,1,6880,1100,'RIGID','V');
+  const offPortCLOS=occurrence(0,2,-1,1100.49,'ATTA','SUP','CLOS');
+  const boundOnly=[{sourceKey:openLooking.key,rowKind:'PORT',bindingStatus:'BOUND',
+    sourceSha256:sha,closureDeclarations:[{
+      sourceKey:offPortCLOS.key,bindingKinds:['BRANCH_BOUNDARY_END']}]}];
+  const explicitOpenPorts=[{key:openLooking.key,closed:false},{key:b.key,closed:false}];
+  const r=resolveConnectionReview(scene([openLooking,offPortCLOS,b]),
+    explicitOpenPorts,boundOnly,true,'6880','6450');
+  assert.equal(openLooking.connectionType,'');
+  assert.equal(r.first.rawClos,false);
+  assert.equal(explicitOpenPorts[0].closed,false);
+  assert.equal(r.first.bindingStatus,'BOUND');
+  assert.deepEqual(r.first.declarationKeys,[offPortCLOS.key]);
+  assert.equal(r.first.blocked,true);
+  assert.equal(r.disposition,'CONFLICTS_WITH_CLOS');
+  assert.match(reviewConnectionHTML(r),/B0:N-1:S2/);
+});
+
+test('selected source wall thickness comes from this occurrence, not a constant',()=>{
+  const differentWall={...b,wallThickness:8.75};
+  const r=resolveConnectionReview(scene([a,differentWall]),ports,witness,true,6880,6450);
+  assert.equal(r.second.wallThickness,8.75);
+  const html=reviewConnectionHTML(r);
+  assert.match(html,/wall 8\.750 mm/);
+  assert.match(html,/wall 6\.020 mm/);
+});
+
+test('setReviewPair draws a dashed, labeled review-only line and clearing removes it',()=>{
+  const calls=[];
+  const ctx={
+    setTransform(){},fillRect(){},save(){},restore(){},beginPath(){},fill(){},arc(){},
+    setLineDash(value){calls.push(['dash',...value]);},
+    moveTo(...args){calls.push(['move',...args]);},
+    lineTo(...args){calls.push(['line',...args]);},
+    stroke(){calls.push(['stroke']);},
+    fillText(value){calls.push(['text',value]);}
+  };
+  const canvas={width:0,height:0,style:{},
+    getContext:()=>ctx,
+    getBoundingClientRect:()=>({width:640,height:480}),
+    addEventListener(){},removeEventListener(){}
+  };
+  const pair=[{...a,route:true,nodeNumberRaw:'6880'},
+    {...b,route:true,nodeNumberRaw:'6450'}];
+  const picture={sourceSha256:sha,records:pair,segments:[],
+    byId:new Map(pair.map(r=>[r.id,r])),
+    bounds:{center:{x:1220,y:0,z:0},span:240.6}};
+  const model=createTopologyCanvas(canvas);
+  try{
+    model.setScene(picture);
+    calls.length=0;
+    model.setReviewPair(pair.map(r=>r.id));
+    const dash=calls.findIndex(c=>c[0]==='dash'&&c[1]===9&&c[2]===7);
+    assert.ok(dash>=0,'missing dashed proposal stroke');
+    const dashEnd=calls.findIndex((c,i)=>i>dash&&c[0]==='dash'&&c.length===1);
+    assert.ok(dashEnd>dash,'proposal dash not reset');
+    const overlay=calls.slice(dash,dashEnd);
+    assert.ok(overlay.some(c=>c[0]==='move'),'missing overlay start');
+    assert.ok(overlay.some(c=>c[0]==='line'),'missing overlay segment');
+    assert.ok(overlay.some(c=>c[0]==='stroke'),'missing overlay stroke');
+    assert.ok(calls.some(c=>c[0]==='text'&&c[1]==='PROPOSAL · REVIEW ONLY'),
+      'missing explicit non-executable label');
+    assert.equal(picture.segments.length,0,'overlay must never become a solver edge');
+    calls.length=0;
+    model.setReviewPair([]);
+    assert.ok(!calls.some(c=>c[0]==='dash'&&c[1]===9&&c[2]===7));
+    assert.ok(!calls.some(c=>c[0]==='text'&&c[1]==='PROPOSAL · REVIEW ONLY'));
+  }finally{model.dispose();}
 });
 
 test('duplicates require exact source-key selection, never nearest point',()=>{

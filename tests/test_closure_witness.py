@@ -162,7 +162,7 @@ class ClosureWitness(unittest.TestCase):
         # same-positive-NodeNumber alias; shrinking the 0.5 mm binding radius loses S1.
         source = doc(
             node(700, 'ATTA', 'SUP_A', 0, '0 0 0', CLOS) +
-            node(700, 'ATTA', 'SUP_B', 0, '0.4 0 0')
+            node(700, 'ATTA', 'SUP_B', 0, '0.49 0 0')
         )
         rows = witnesses(source)
         row = next(r for r in rows if r['sourceKey'] == 'B0:N700:S0')

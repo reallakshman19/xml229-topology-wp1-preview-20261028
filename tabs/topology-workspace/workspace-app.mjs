@@ -62,8 +62,10 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       witnesses:state.closureWitnesses,
       evidenceAvailable:!!state.plan&&Array.isArray(state.closureWitnesses)}),
     highlight:ids=>{
+      // Review is a transient overlay, NOT an edit to the user's shared selection.
+      // Clearing the review therefore preserves the prior inspector/selection intact.
       canvas.setReviewPair(ids);
-      if(ids.length===2){select(ids);canvas.focus(ids);}
+      if(ids.length===2)canvas.focus(ids);
     }
   });
   const updateStatus=message=>{query(root,'[data-status]').textContent=message;};

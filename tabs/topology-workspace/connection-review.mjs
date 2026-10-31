@@ -34,7 +34,10 @@ export function resolveConnectionReview(scene, manualPorts, witnesses, evidenceA
     const declarations=bound.flatMap(w=>w.closureDeclarations||[]);
     const declarationKeys=[...new Set(declarations.map(d=>d.sourceKey).filter(Boolean))];
     const rawClos=String(r.connectionType||'').toUpperCase()==='CLOS';
-    const blocked=rawClos || port?.closed===true || bound.length>0 ||
+    // Source-SHA-bound closureBindingWitnesses are the primary authority: an off-record
+    // CLOS declaration can bind this port without raw CLOS or port.closed on its record.
+    // Keep raw declarations, closed manual ports and unavailable evidence as fail-closed fallbacks.
+    const blocked=bound.length>0 || rawClos || port?.closed===true ||
       witness.some(w=>w.bindingStatus==='EVIDENCE_UNAVAILABLE');
     return {record:r,sourceKey:r.key,portQualified:!!port || bound.length>0,
       bindingStatus:!evidence?'EVIDENCE_UNAVAILABLE':
