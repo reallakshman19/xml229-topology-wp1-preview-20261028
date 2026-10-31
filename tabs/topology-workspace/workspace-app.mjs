@@ -2,6 +2,7 @@
 import {createTopologyWorkerClient} from './topology-worker-client.mjs';
 import {parseOccurrenceScene, affectedOccurrenceIds, escapeValue as esc} from './occurrence-scene.mjs';
 import {createTopologyCanvas} from './projected-canvas.mjs';
+import {mountConnectionReview} from './connection-review.mjs';
 import {buildAudit,renderAuditHTML,renderAuditSummary,filterCounts} from './audit-view.mjs';
 import {eligibleActions,previewBatchPlan,explicitlyRejectedActionIds} from './batch-plan.mjs';
 import {runValidatedPasses} from './batch-runner.mjs';
@@ -47,7 +48,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   runEngine ||= ownedWorker.run;
   cancelEngine ||= ownedWorker?()=>ownedWorker.cancel():()=>{};
   const state={epoch:0,source:null,original:null,revision:0,applied:0,history:[],resolutions:[],shortElements:[],shortPreview:null,scene:null,plan:null,findings:[],result:null,
-    selected:new Set(),search:'',filter:'all',category:'all',manualPorts:[],secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false,shortBulk:null,manualQueue:[],manualQueueRunning:false,manualQueueCheckpoint:null,manualQueueStatus:''};
+    selected:new Set(),search:'',filter:'all',category:'all',manualPorts:[],closureWitnesses:null,secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false,shortBulk:null,manualQueue:[],manualQueueRunning:false,manualQueueCheckpoint:null,manualQueueStatus:''};
   // The queue lives alongside Second Pass, without changing the engineering audit.
   const queuePanel=document.createElement('section');
   queuePanel.dataset.manualQueue='';
@@ -56,6 +57,17 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   const secondPanel=query(root,'[data-second-pass]');
   if(secondPanel)secondPanel.insertAdjacentElement('beforebegin',queuePanel);
   const canvas=createTopologyCanvas(query(root,'[data-canvas]'),onHits);
+  const review=mountConnectionReview(query(root,'[data-connection-review]'),{
+    getContext:()=>({scene:state.scene,manualPorts:state.manualPorts,
+      witnesses:state.closureWitnesses,
+      evidenceAvailable:!!state.plan&&Array.isArray(state.closureWitnesses)}),
+    highlight:ids=>{
+      // Review is a transient overlay, NOT an edit to the user's shared selection.
+      // Clearing the review therefore preserves the prior inspector/selection intact.
+      canvas.setReviewPair(ids);
+      if(ids.length===2)canvas.focus(ids);
+    }
+  });
   const updateStatus=message=>{query(root,'[data-status]').textContent=message;};
   const displayMessage=message=>{query(root,'[data-hits]').textContent=message;};
   function sourceMeta(){
@@ -70,7 +82,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     const findings=JSON.parse(result.topologyFindingsText||'null');
     if(plan?.source?.sha256!==sourceSha||findings?.source?.sha256!==sourceSha||
        !Array.isArray(plan.actions)||!Array.isArray(findings.findings))throw Error('TOPOFIX_PLAN_SOURCE_DRIFT');
-    return {plan,findings:findings.findings,resolutions:findings.resolvedConnections||[],shortElements:findings.shortElements||[],manualPorts:findings.manualConnectionPorts||[]};
+    return {plan,findings:findings.findings,resolutions:findings.resolvedConnections||[],shortElements:findings.shortElements||[],manualPorts:findings.manualConnectionPorts||[],closureWitnesses:Array.isArray(findings.closureBindingWitnesses)?findings.closureBindingWitnesses:null};
   }
   function renderSelection() {
     const ids=[...state.selected],records=ids.map(id=>state.scene?.byId.get(id)).filter(Boolean);
@@ -348,7 +360,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       state.source=nextSource;state.scene=nextScene;state.plan=current.plan;
       invalidateManualQueue();
       state.resolutions=current.resolutions;
-      state.shortElements=current.shortElements;state.shortPreview=null;state.manualPorts=current.manualPorts;state.secondPass=null;state.openCases.clear();
+      state.shortElements=current.shortElements;state.shortPreview=null;state.manualPorts=current.manualPorts;state.closureWitnesses=current.closureWitnesses;review.reset();state.secondPass=null;state.openCases.clear();
       const shortPanel=query(root,'[data-short-preview]');if(shortPanel)shortPanel.textContent='';
       state.findings=current.findings;state.result=recheck;state.selected.clear();state.gapReviews.clear();
       state.selected=new Set(changedIds);
@@ -460,6 +472,8 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       state.resolutions=next.findings.resolvedConnections||[];
       state.shortElements=next.findings.shortElements||[];
       state.manualPorts=next.findings.manualConnectionPorts||[];
+      state.closureWitnesses=Array.isArray(next.findings.closureBindingWitnesses)?next.findings.closureBindingWitnesses:null;
+      review.reset();
       state.secondPass=null;state.shortPreview=null;state.selected.clear();
       state.gapReviews.clear();state.openCases.clear();
       query(root,'[data-short-preview]').textContent='';
@@ -611,6 +625,8 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       state.resolutions=next.findings.resolvedConnections||[];
       state.shortElements=next.findings.shortElements||[];
       state.manualPorts=next.findings.manualConnectionPorts||[];
+      state.closureWitnesses=Array.isArray(next.findings.closureBindingWitnesses)?next.findings.closureBindingWitnesses:null;
+      review.reset();
       state.selected.clear();state.openCases.clear();state.gapReviews.clear();
       state.secondPass=null;state.shortPreview=null;
       const shortPanel=query(root,'[data-short-preview]');
@@ -840,7 +856,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   }
   function refresh() {
     root.setAttribute('aria-busy',String(state.busy||state.batchRunning));
-    renderRecords();renderActions();renderSelection();renderSecondPass();renderManualQueue();
+    renderRecords();renderActions();renderSelection();renderSecondPass();renderManualQueue();review.refresh();
     query(root,'[data-analyze]').disabled=!state.source||state.busy||state.batchRunning;
     query(root,'[data-cancel]').disabled=!(state.busy||state.batchRunning);
     getNodes(root,'[data-auto-fix],[data-close-joint],[data-add-second-pass]').forEach(button=>button.disabled=state.busy||state.batchRunning);
@@ -870,7 +886,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     state.shortBulk=null;
     state.source=null;state.original=null;state.revision=0;state.applied=0;state.history=[];state.resolutions=[];state.shortElements=[];state.shortPreview=null;
     const shortPanel=query(root,'[data-short-preview]');if(shortPanel)shortPanel.textContent='';
-    state.manualPorts=[];state.secondPass=null;state.manualQueue=[];
+    state.manualPorts=[];state.closureWitnesses=null;review.reset();state.secondPass=null;state.manualQueue=[];
     state.manualQueueCheckpoint=null;state.manualQueueRunning=false;
     state.manualQueueStatus='';state.openRules.clear();state.openCases.clear();
     state.scene=null;state.plan=null;state.findings=[];state.result=null;state.fix=null;state.batch=null;state.gapReviews.clear();
@@ -905,7 +921,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   async function analyze() {
     if(!state.source||state.busy)return;
     const generation=state.epoch,source=state.source;state.busy=true;
-    state.plan=null;state.findings=[];state.batch=null;state.manualPorts=[];state.secondPass=null;
+    state.plan=null;state.findings=[];state.batch=null;state.manualPorts=[];state.closureWitnesses=null;state.secondPass=null;
     query(root,'[data-batch-confirm]').textContent='';setFixStatus('');refresh();updateStatus('Running authoritative PSI116 topology analysis…');
     try {
       const result=await runEngine({sourceKind:'xml',sourceText:source.sourceText,
@@ -928,6 +944,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       state.plan=plan;state.findings=findings.findings;state.result=result;
       state.resolutions=findings.resolvedConnections||[];
       state.shortElements=findings.shortElements||[];state.manualPorts=findings.manualConnectionPorts||[];
+      state.closureWitnesses=Array.isArray(findings.closureBindingWitnesses)?findings.closureBindingWitnesses:null;
       updateStatus('Authoritative topology analysis complete. '+plan.actions.length+
         ' plan entries. No Weight/O1/Final/native session was supplied or created.');
     } catch(error) {
@@ -1096,7 +1113,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     occurrences:state.scene?.records.length||0,actions:state.plan?.actions.length||0,
     selected:[...state.selected],busy:state.busy,
     queued:state.manualQueue.map(x=>({id:x.id,status:x.status})),queueBusy:state.manualQueueRunning}),load,analyze,
-    dispose(){cancelEngine();ownedWorker?.dispose();state.epoch++;canvas.dispose();root.removeEventListener('toggle',toggled,true);root.removeEventListener('click',click);
+    dispose(){cancelEngine();ownedWorker?.dispose();state.epoch++;review.dispose();canvas.dispose();root.removeEventListener('toggle',toggled,true);root.removeEventListener('click',click);
       root.removeEventListener('change',changed);root.removeEventListener('input',input);}};
 }
 const root=document.querySelector('#xml229-topology-workspace');

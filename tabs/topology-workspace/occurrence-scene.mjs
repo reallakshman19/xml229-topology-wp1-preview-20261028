@@ -32,6 +32,8 @@ export function parseOccurrenceScene(xmlText, sourceSha256, Parser = globalThis.
       const nodeName = child(node, 'NodeName'), refNo = child(node, 'ComponentRefNo');
       const support = type === 'ATTA' && /\/SREF/i.test(nodeName);
       const position = coordinate(child(node, 'Position'));
+      const dimension = name => { const raw=child(node,name);
+        return raw!=='' && Number.isFinite(Number(raw)) ? Number(raw) : null; };
       const key = 'B' + branchIndex + ':N' + (number === null ? 'none' : number) + ':S' + sourceIndex;
       const route = !!position && number !== null && number > 0 && !support;
       const record = {
@@ -39,7 +41,8 @@ export function parseOccurrenceScene(xmlText, sourceSha256, Parser = globalThis.
         branchOrdinal: branchIndex + 1, nodeOrdinal: sourceIndex + 1, branchName: name,
         nodeNumber: number, nodeNumberRaw: label, nodeName, type, refNo,
         endpoint: child(node, 'Endpoint'), connectionType: child(node, 'ConnectionType'),
-        position, route, support, restraint: children(node, 'Restraint').length > 0,
+        position, route, support, outsideDiameter: dimension('OutsideDiameter'),
+        wallThickness: dimension('WallThickness'), restraint: children(node, 'Restraint').length > 0,
         weight: child(node, 'Weight'), xmlFragment: new XMLSerializer().serializeToString(node),
       };
       records.push(record);

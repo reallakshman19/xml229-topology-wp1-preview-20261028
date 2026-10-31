@@ -553,6 +553,63 @@ try{
     !(await page.locator('[data-download-working]').isEnabled()))
    throw Error('Qualified queue did not publish one validated working revision: '+queueSummary);
  result.manualQueueRealBrowser='PASS: 1 explicitly approved pair, source-bound re-preview, atomic transaction, full replay and final UI publication';
+ // TOPO-A P1: synthetic hidden CLOS pair must be findable independently of findings.
+ const reviewNode=(n,kind,ref,end,x,clos='')=>
+  '<Node><NodeNumber>'+n+'</NodeNumber><ComponentType>'+kind+'</ComponentType>'+
+  '<ComponentRefNo>'+ref+'</ComponentRefNo><Endpoint>'+end+'</Endpoint>'+
+  '<Position>'+x+' 0 0</Position><OutsideDiameter>114.3</OutsideDiameter>'+
+  '<WallThickness>6.02</WallThickness>'+clos+'</Node>';
+ const clos='<ConnectionType>CLOS</ConnectionType>';
+ const reviewFixture='<PipeStressExport><Branch><Branchname>REVIEW-CLOSED</Branchname>'+
+  reviewNode(120,'FLAN','V',1,1000)+reviewNode(6880,'RIGID','V',2,1100,clos)+
+  '</Branch><Branch><Branchname>REVIEW-OPEN</Branchname>'+
+  reviewNode(6450,'FBLI','BL',1,1340.6)+reviewNode(-1,'FBLI','BL',2,1372.8)+
+  '</Branch></PipeStressExport>';
+ await page.locator('[data-file]').setInputFiles({name:'review-6880-6450.xml',mimeType:'application/xml',
+   buffer:Buffer.from(reviewFixture)});
+ await page.waitForFunction(()=>document.querySelector('[data-occ-summary]')?.textContent?.includes('4 of 4'));
+ await page.locator('[data-analyze]').click();
+ await page.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'),null,{timeout:120000});
+ // A review overlay must not replace the user's previously selected source record.
+ await page.locator('[data-occ-id]').first().click();
+ const priorInspector=await page.locator('[data-inspector]').textContent();
+ const selectionPreserved=async()=>
+   (await page.locator('[data-inspector]').textContent())===priorInspector&&
+   (await page.locator('[data-occ-id][aria-selected="true"]').count())===1;
+ await page.locator('[data-review-query="a"]').fill('6880');
+ await page.locator('[data-review-query="b"]').fill('6450');
+ if(!await selectionPreserved())throw Error('Review pair replaced shared selection');
+ await page.locator('[data-review-query="a"]').fill('');
+ if(!await selectionPreserved())throw Error('Clearing review lost previous selection');
+ await page.locator('[data-review-query="a"]').fill('6880');
+ if(!await selectionPreserved())throw Error('Reopening review lost previous selection');
+ result.topoASelection='PASS: shared selection and inspector unchanged by review and clear';
+ const rPanel=page.locator('[data-connection-review]');
+ const rText=await rPanel.textContent();
+ if(!rText.includes('CONFLICTS_WITH_CLOS')||!rText.includes('240.600')||
+   !rText.includes('B0:N6880:S1')||!rText.includes('114.300')||
+   !rText.includes('upstream CAD')||!rText.includes('reimport')||
+   await rPanel.locator('button').count()||await page.locator('[data-download-working]').isEnabled())
+   throw Error('TOPO-A P1 violated hidden CLOS review-only acceptance: '+rText);
+ await mkdir(path.join(sourceRoot,'preview-test-results'),{recursive:true});
+ await page.screenshot({path:path.join(sourceRoot,'preview-test-results','topo-a-p1-review-synthetic.png'),fullPage:true});
+ result.topoAReview='SYNTHETIC: 6880/6450 240.600 mm, CLOS source witness, no Apply/Queue/XML mutation';
+ // A nearby duplicate must not be chosen silently even when it looks closer.
+ const duplicateBranch='<Branch><Branchname>REVIEW-DUPLICATE</Branchname>'+
+  reviewNode(6880,'PIPE','ALT',1,1340.59)+reviewNode(9000,'PIPE','ALT',2,1440.59)+'</Branch>';
+ const duplicateFixture=reviewFixture.replace('</PipeStressExport>',duplicateBranch+'</PipeStressExport>');
+ await page.locator('[data-file]').setInputFiles({name:'review-duplicate.xml',mimeType:'application/xml',
+   buffer:Buffer.from(duplicateFixture)});
+ await page.waitForFunction(()=>document.querySelector('[data-occ-summary]')?.textContent?.includes('6 of 6'));
+ await page.locator('[data-review-query="a"]').fill('6880');
+ await page.locator('[data-review-query="b"]').fill('6450');
+ if(!(await rPanel.textContent()).includes('AMBIGUOUS_PORT')||
+   await rPanel.locator('[data-review-choice="a"]').count()!==1)
+   throw Error('Duplicate NodeNumber auto-chosen instead of exact source disambiguation');
+ await rPanel.locator('[data-review-choice="a"]').selectOption('B0:N6880:S1');
+ if(!(await rPanel.textContent()).includes('240.600'))throw Error('Exact branch choice not respected');
+ result.topoADuplicate='SYNTHETIC: duplicate 6880 required explicit B0 source-key selection';
+
  // Source-evidenced closure resolves without a geometry edit and is exportable.
  const closed='<PipeStressExport><Branch><Branchname>CLOSED</Branchname><Node><NodeNumber>-1</NodeNumber><ComponentType>BRAN</ComponentType><ComponentRefNo>B</ComponentRefNo><Endpoint>1</Endpoint><ConnectionType>CLOS</ConnectionType><Position>0 0 0</Position></Node><Node><NodeNumber>10</NodeNumber><ComponentType>FBLI</ComponentType><ComponentRefNo>F</ComponentRefNo><Endpoint>1</Endpoint><Position>0 0 0</Position></Node><Node><NodeNumber>-1</NodeNumber><ComponentType>FBLI</ComponentType><ComponentRefNo>F</ComponentRefNo><Endpoint>2</Endpoint><Position>32.2 0 0</Position></Node></Branch></PipeStressExport>';
  await page.locator('[data-file]').setInputFiles({name:'closed.xml',mimeType:'application/xml',buffer:Buffer.from(closed)});

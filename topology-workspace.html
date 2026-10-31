@@ -50,6 +50,16 @@
       <label>Find node, branch, component or reference
         <input data-search type="search" placeholder="e.g. 2050, BR-1, RIGID">
       </label>
+      <section class="topo-group topo-review" data-connection-review aria-label="Find / Review Connection">
+        <h2>Find / Review Connection</h2>
+        <p>Question any Node Number pair, including hidden CLOS ends. This is read-only and is separate from Manual Fix / Apply.</p>
+        <div class="topo-review-inputs">
+          <label>Node Number A<input data-review-query="a" type="text" inputmode="numeric" placeholder="e.g. 6880" aria-label="Node Number A"></label>
+          <label>Node Number B<input data-review-query="b" type="text" inputmode="numeric" placeholder="e.g. 6450" aria-label="Node Number B"></label>
+        </div>
+        <div data-review-choices class="topo-review-choices"></div>
+        <div data-review-result class="topo-review-result" role="status" aria-live="polite"></div>
+      </section>
       <section class="topo-group" aria-label="Rule-based engineering audit"><h2>Engineering audit · grouped by rule</h2>
         <p class="audit-intro">Auto fix closes compatible connection ports at ≤25 mm, applies the working copy and reruns the audit. Existing connections and declared closed ends resolve automatically with source evidence.</p>
         <div data-resolved class="audit-resolved"></div>
