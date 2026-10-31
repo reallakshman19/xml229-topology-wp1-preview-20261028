@@ -597,7 +597,7 @@ try{
  result.uxmlUiStage='BULK_APPLY_WAIT_OUTPUT';
  await go.click();
  await page.waitForFunction(()=>document.querySelector('[data-download-working]')?.disabled===false||
-   /NOT APPLIED|ERROR/.test(document.querySelector('[data-progress]')?.textContent||''),null,{timeout:120000});
+   /NOT APPLIED|ERROR|STOPPED|REJECTED/.test(document.querySelector('[data-progress]')?.textContent||''),null,{timeout:120000});
  if(await page.locator('[data-download-working]').isDisabled())
    throw Error('UXML hub patch was not verified for download: '+
      await page.locator('[data-progress]').textContent()+' / '+await page.locator('[data-uxml-differences]').textContent());
@@ -621,7 +621,7 @@ try{
    await directPage.locator('[data-auto-fix-all]').click();
    await directPage.locator('[data-run-auto-fix-all]').click();
    await directPage.waitForFunction(()=>document.querySelector('[data-download-working]')?.disabled===false||
-     /NOT APPLIED|ERROR/.test(document.querySelector('[data-progress]')?.textContent||''),null,{timeout:120000});
+     /NOT APPLIED|ERROR|STOPPED|REJECTED/.test(document.querySelector('[data-progress]')?.textContent||''),null,{timeout:120000});
    if(await directPage.locator('[data-download-working]').isDisabled())
      throw Error('Direct comparator did not commit synthetic batch');
    const dl=directPage.waitForEvent('download');

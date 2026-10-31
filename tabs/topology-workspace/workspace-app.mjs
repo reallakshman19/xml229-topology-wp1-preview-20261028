@@ -80,7 +80,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       differences.length?differences.join('\n'):
       'Analyze to compare direct PSI116 and pinned UXML. Download blocked until EQUAL.';
   }
-  function recordHubResult(result){
+  function recordHubResult(result,expectedRawSha=state.source?.rawSha256){
     if(!state.hubEnabled)return;
     const parity=result?.topologyUxmlParity;
     state.hubParity=parity&&['EQUAL','DIFFERENT','UNAVAILABLE'].includes(parity.status)?
@@ -89,7 +89,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     if(state.hubParity.status==='EQUAL'&&result?.topologyOperationsPreview){
       try{
         state.opsPreview=assertOperationsPreview(result.topologyOperationsPreview,
-          state.source?.rawSha256);
+          expectedRawSha);
       }catch(error){
         state.opsPreview=null;
         state.hubParity={status:'DIFFERENT',
@@ -426,7 +426,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
           useTopoFixForCii:false,topologyActionIds:[],
           topologyUxmlPreview:state.hubEnabled},sourceRawSha256:fixedSha});
       if(generation!==state.epoch)return;
-      recordHubResult(recheck);
+      recordHubResult(recheck,fixedSha);
       if(state.hubEnabled&&state.hubParity?.status!=='EQUAL')
         throw Error('UXML_RECHECK_PARITY_BLOCKED: '+state.hubParity?.differences.join(' | '));
       const current=acceptAnalysis(recheck,fixedSha);
