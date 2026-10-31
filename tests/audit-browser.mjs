@@ -734,12 +734,6 @@ try{
  await assertNoExecutableMutation(auditBefore,'reload identical SHA');
  await sourceQueue.screenshot({path:path.join(sourceRoot,'preview-test-results','topo-a-p2-ux-restored-after-reload.png')});
  result.topoAP2UXReload='PASS: browser reload + same XML restores saved decision/note, no execution';
- page.once('dialog',dialog=>dialog.accept());
- await sourceQueue.locator('[data-source-review-clear]').click();
- if(await sourceQueue.locator('[data-source-review-row]').count()!==0)
-   throw Error('P2 UX confirmed per-file clear did not empty review queue');
- await assertNoExecutableMutation(auditBefore,'confirmed clear');
- result.topoAP2UXClear='PASS: confirmation clears only this source review';
 
  // A nearby duplicate must not be chosen silently even when it looks closer.
  const duplicateBranch='<Branch><Branchname>REVIEW-DUPLICATE</Branchname>'+
@@ -750,6 +744,13 @@ try{
  await page.waitForFunction(()=>document.querySelector('[data-occ-summary]')?.textContent?.includes('6 of 6'));
  if(await sourceQueue.locator('[data-source-review-row]').count()!==0)
    throw Error('P2 UX different SHA displayed another source queue');
+ const originalStored=await page.evaluate(sha=>{
+   const raw=localStorage.getItem('topofix-source-review-queue/v1/'+sha);
+   return raw?JSON.parse(raw).rows[0]:null;
+ },auditBefore.sourceSha256);
+ if(originalStored?.note!==savedDesignNote||
+    originalStored?.decision!=='UPSTREAM_SOURCE_CORRECTION_REQUIRED')
+   throw Error('P2 UX switch to different SHA destroyed previous file storage');
  const importFixture=JSON.stringify(reviewExport);
  await sourceQueue.locator('[data-source-review-import]').setInputFiles({name:'review-evidence.json',mimeType:'application/json',buffer:Buffer.from(importFixture)});
  await page.waitForFunction(()=>document.querySelector('[data-source-review-status]')?.textContent?.includes('Import:'));
@@ -770,6 +771,24 @@ try{
  await rPanel.locator('[data-review-choice="a"]').selectOption('B0:N6880:S1');
  if(!(await rPanel.textContent()).includes('240.600'))throw Error('Exact branch choice not respected');
  result.topoADuplicate='SYNTHETIC: duplicate 6880 required explicit B0 source-key selection';
+
+ // Return to original SHA: the prior decision/note must still be retrievable,
+ // then clear only that file's queue with explicit confirmation.
+ await page.locator('[data-file]').setInputFiles({name:'review-6880-6450.xml',
+   mimeType:'application/xml',buffer:Buffer.from(reviewFixture)});
+ await page.waitForFunction(()=>document.querySelector('[data-occ-summary]')?.textContent?.includes('4 of 4'));
+ if(await sourceQueue.locator('[data-source-review-row]').count()!==1||
+    await sourceQueue.locator('[data-source-review-note]').inputValue()!==savedDesignNote)
+   throw Error('P2 UX original source queue not restored after switching back');
+ page.once('dialog',dialog=>dialog.accept());
+ await sourceQueue.locator('[data-source-review-clear]').click();
+ if(await sourceQueue.locator('[data-source-review-row]').count()!==0)
+   throw Error('P2 UX confirmed per-file clear did not empty review queue');
+ const afterClear=await page.evaluate(sha=>localStorage.getItem('topofix-source-review-queue/v1/'+sha),
+   auditBefore.sourceSha256);
+ if(afterClear!==null)throw Error('P2 UX clear failed to delete source-scoped localStorage');
+ await assertNoExecutableMutation(auditBefore,'confirmed clear');
+ result.topoAP2UXClear='PASS: clear requires confirm; original SHA only; other SHA remains distinct';
 
  // Source-evidenced closure resolves without a geometry edit and is exportable.
  const closed='<PipeStressExport><Branch><Branchname>CLOSED</Branchname><Node><NodeNumber>-1</NodeNumber><ComponentType>BRAN</ComponentType><ComponentRefNo>B</ComponentRefNo><Endpoint>1</Endpoint><ConnectionType>CLOS</ConnectionType><Position>0 0 0</Position></Node><Node><NodeNumber>10</NodeNumber><ComponentType>FBLI</ComponentType><ComponentRefNo>F</ComponentRefNo><Endpoint>1</Endpoint><Position>0 0 0</Position></Node><Node><NodeNumber>-1</NodeNumber><ComponentType>FBLI</ComponentType><ComponentRefNo>F</ComponentRefNo><Endpoint>2</Endpoint><Position>32.2 0 0</Position></Node></Branch></PipeStressExport>';
