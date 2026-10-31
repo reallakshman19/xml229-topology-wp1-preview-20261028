@@ -38,9 +38,32 @@ export function hitOccurrences(scene,view,width,height,x,y,showHelpers=true){
   .map(h=>({...h,d:Math.hypot(h.p.x-x,h.p.y-y)})).filter(h=>h.d<=10)
   .sort((a,b)=>a.d-b.d||a.record.branchIndex-b.record.branchIndex||a.record.sourceIndex-b.record.sourceIndex).map(h=>h.record);
 }
+/** Minimal screen-space label deconfliction. Hovered/selected labels take precedence. */
+export function placeCanvasLabels(candidates,measure=text=>text.length*6.5){
+ const occupied=[],placed=[];
+ for(const candidate of [...candidates].sort((a,b)=>(b.priority||0)-(a.priority||0))){
+  const width=Math.max(12,measure(candidate.text)),height=13;
+  const choices=[{x:candidate.x,y:candidate.y},
+    {x:candidate.x,y:candidate.y-16},
+    {x:candidate.x,y:candidate.y+16},
+    {x:candidate.x+12,y:candidate.y-24}];
+  let point=null,rect=null;
+  for(const p of choices){
+   const box={left:p.x,right:p.x+width,top:p.y-height,bottom:p.y+3};
+   if(occupied.every(o=>box.right+3<o.left||box.left>o.right+3||
+      box.bottom+2<o.top||box.top>o.bottom+2)){point=p;rect=box;break;}
+  }
+  if(!point){
+   if(!candidate.priority)continue;
+   point=choices[0];rect={left:point.x,right:point.x+width,top:point.y-height,bottom:point.y+3};
+  }
+  placed.push({...candidate,x:point.x,y:point.y});occupied.push(rect);
+ }
+ return placed;
+}
 export function createTopologyCanvas(canvas,onHits=()=>{}){
  const ctx=canvas.getContext('2d');if(!ctx)throw Error('2D Canvas unavailable');
- let scene=null,selected=new Set(),reviewPair=[],mode='select',view=initialView(),pointer=null;
+ let scene=null,selected=new Set(),reviewPair=[],hoveredId=null,mode='select',view=initialView(),pointer=null;
  let showHelpers=true,showLabels=true,disposed=false,framedIds=null;
  const size=()=>dimensions(canvas);
  const points=ids=>(ids?[...ids].map(id=>scene?.byId.get(id)):scene?.records||[]).filter(r=>r?.position&&(r.route||showHelpers)).map(r=>r.position);
@@ -68,11 +91,21 @@ export function createTopologyCanvas(canvas,onHits=()=>{}){
       ctx.restore();
     }
   }
+  const labelCandidates=[];
   for(const r of scene.records){if(!r.position||(!r.route&&!showHelpers))continue;
-   const p=project(r.position),active=selected.has(r.id);ctx.beginPath();ctx.arc(p.x,p.y,active?7:r.route?3.5:2.7,0,Math.PI*2);
+   const p=project(r.position),active=selected.has(r.id),hovered=hoveredId===r.id;
+   ctx.beginPath();ctx.arc(p.x,p.y,active?7:r.route?3.5:2.7,0,Math.PI*2);
    ctx.fillStyle=active?'#fff':r.route?palette[r.branchIndex%palette.length]:'#94a3b8';ctx.fill();
    if(active){ctx.strokeStyle='#fbbf24';ctx.lineWidth=2;ctx.stroke();}
-   if(showLabels&&(active||(r.route&&selected.size===0))){ctx.fillStyle='#cbd5e1';ctx.font='11px system-ui';ctx.fillText(r.nodeNumberRaw+' '+r.type,p.x+6,p.y-6);}}
+   if(showLabels&&(active||hovered||(r.route&&selected.size===0)))
+     labelCandidates.push({id:r.id,text:r.nodeNumberRaw+' '+r.type,x:p.x+6,
+       y:p.y-6,priority:hovered?3:active?2:0});
+  }
+  ctx.font='11px system-ui';ctx.fillStyle='#cbd5e1';
+  for(const label of placeCanvasLabels(labelCandidates,text=>
+      typeof ctx.measureText==='function'?ctx.measureText(text).width:text.length*6.5)){
+    ctx.fillText(label.text,label.x,label.y);
+  }
   // Axes use the same basis as the geometry, including the selected preset.
   const origin={x:0,y:0,z:0};
   for(const [axis,color] of [['x','#fb7185'],['y','#34d399'],['z','#60a5fa']]){
@@ -81,7 +114,15 @@ export function createTopologyCanvas(canvas,onHits=()=>{}){
  }
  const down=e=>{if(![0,1,2].includes(e.button))return;e.preventDefault();canvas.focus();
   pointer={x:e.clientX,y:e.clientY,lastX:e.clientX,lastY:e.clientY,button:e.button,dragged:false,shift:e.shiftKey,add:e.ctrlKey||e.metaKey||e.shiftKey};canvas.setPointerCapture?.(e.pointerId);};
- const move=e=>{if(!pointer)return;const dx=e.clientX-pointer.lastX,dy=e.clientY-pointer.lastY;pointer.lastX=e.clientX;pointer.lastY=e.clientY;
+ const move=e=>{
+  if(!pointer){
+   const rect=canvas.getBoundingClientRect(),{width,height}=size();
+   const next=scene&&mode==='select'?
+     hitOccurrences(scene,view,width,height,e.clientX-rect.left,e.clientY-rect.top,showHelpers)[0]?.id||null:null;
+   if(next!==hoveredId){hoveredId=next;draw();}
+   return;
+  }
+  const dx=e.clientX-pointer.lastX,dy=e.clientY-pointer.lastY;pointer.lastX=e.clientX;pointer.lastY=e.clientY;
   if(Math.hypot(e.clientX-pointer.x,e.clientY-pointer.y)>4)pointer.dragged=true;if(!pointer.dragged)return;
   const orbit=pointer.button===2||(pointer.button===0&&(pointer.shift||mode==='orbit'));
   if(orbit){view.yaw+=dx*.008;view.pitch=Math.max(-Math.PI/2,Math.min(Math.PI/2,view.pitch+dy*.006));}
@@ -91,13 +132,14 @@ export function createTopologyCanvas(canvas,onHits=()=>{}){
   onHits(hitOccurrences(scene,view,width,height,e.clientX-r.left,e.clientY-r.top,showHelpers),p.add);};
  const wheel=e=>{e.preventDefault();const r=canvas.getBoundingClientRect(),{width,height}=size();
   view=zoomAt(view,Math.exp(-Math.max(-500,Math.min(500,e.deltaY*(e.deltaMode===1?16:1)))*.0015),e.clientX-r.left,e.clientY-r.top,width,height);draw();};
- const abort=()=>{pointer=null;},context=e=>e.preventDefault(),dbl=()=>frame(),key=e=>{
+ const abort=()=>{pointer=null;},leave=()=>{hoveredId=null;draw();},
+ context=e=>e.preventDefault(),dbl=()=>frame(),key=e=>{
   if(e.key.toLowerCase()==='f'){e.preventDefault();frame(selected.size?selected:null);}
   if(e.key==='Home'){e.preventDefault();frame();}};
- const listeners={pointerdown:down,pointermove:move,pointerup:up,pointercancel:abort,lostpointercapture:abort,contextmenu:context,dblclick:dbl,keydown:key};
+ const listeners={pointerdown:down,pointermove:move,pointerup:up,pointercancel:abort,pointerleave:leave,lostpointercapture:abort,contextmenu:context,dblclick:dbl,keydown:key};
  for(const [type,fn] of Object.entries(listeners))canvas.addEventListener(type,fn);canvas.addEventListener('wheel',wheel,{passive:false});
  const observer=typeof ResizeObserver!=='undefined'?new ResizeObserver(()=>frame(framedIds)):null;observer?.observe(canvas);draw();
- return {setScene(next){const changed=next?.sourceSha256!==scene?.sourceSha256;scene=next;if(changed){view=initialView();reviewPair=[];frame();}else draw();},
+ return {setScene(next){const changed=next?.sourceSha256!==scene?.sourceSha256;scene=next;if(changed){view=initialView();reviewPair=[];hoveredId=null;frame();}else draw();},
   setSelection(ids){selected=new Set(ids);draw();},setReviewPair(ids){reviewPair=[...ids].slice(0,2);draw();},setMode(value){if(['select','pan','orbit'].includes(value))mode=value;canvas.style.cursor=mode==='orbit'?'grab':mode==='pan'?'move':'crosshair';},
   setShowHelpers(value){showHelpers=!!value;draw();},setShowLabels(value){showLabels=!!value;draw();},
   zoom(factor){const {width,height}=size();view=zoomAt(view,factor,width/2,height/2,width,height);draw();},

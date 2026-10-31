@@ -4,7 +4,8 @@ import {readFileSync} from 'node:fs';
 import {SOURCE_REVIEW_SCHEMA,SOURCE_REVIEW_KIND,SOURCE_REVIEW_DECISIONS,
   canAddSourceReview,sourceReviewPairId,sourceReviewStatus,upsertSourceReview,
   editSourceReview,exportSourceReviewJSON,importSourceReviewJSON,
-  exportSourceReviewCSV} from '../tabs/topology-workspace/source-review-queue.mjs';
+  exportSourceReviewCSV,sourceReviewStorageKey,loadSourceReviewStorage,
+  saveSourceReviewStorage,clearSourceReviewStorage} from '../tabs/topology-workspace/source-review-queue.mjs';
 import {resolveConnectionReview} from '../tabs/topology-workspace/connection-review.mjs';
 
 const sha='a'.repeat(64),otherSha='b'.repeat(64);
@@ -166,4 +167,54 @@ test('P2 guard: evidence UI cannot import or advertise executable paths',()=>{
   assert.doesNotMatch(ui,forbidden,'review panel links into executable queue or Apply');
   assert.match(ui,/data-source-review-add/);
   assert.match(ui,/stopPropagation/);
+});
+
+test('UX immediate decision/note audit mutation is exported without a Save click',()=>{
+  const {rows,row}=make();
+  const afterDecision=editSourceReview(rows,row.id,'UPSTREAM_SOURCE_CORRECTION_REQUIRED','',t1);
+  const afterTyping=editSourceReview(afterDecision,row.id,'UPSTREAM_SOURCE_CORRECTION_REQUIRED',
+    'P&ID says original CAD source correction',t2);
+  const json=JSON.parse(exportSourceReviewJSON(afterTyping,sha,t2)).rows[0];
+  const csv=exportSourceReviewCSV(afterTyping,sha);
+  assert.equal(json.decision,'UPSTREAM_SOURCE_CORRECTION_REQUIRED');
+  assert.equal(json.note,'P&ID says original CAD source correction');
+  assert.equal(json.updatedAt,t2);
+  assert.match(csv,/P&ID says original CAD source correction/);
+  assert.equal(upsertSourceReview(afterTyping,reversed(),{at:'2026-10-31T10:03:00.000Z'}).row.note,json.note);
+});
+
+test('UX versioned per-SHA storage restores only its own rows and supports clear',()=>{
+  const entries=new Map();
+  const storage={getItem:k=>entries.get(k)??null,setItem:(k,v)=>entries.set(k,v),
+    removeItem:k=>entries.delete(k)};
+  const {rows,row}=make();
+  const saved=editSourceReview(rows,row.id,'UPSTREAM_SOURCE_CORRECTION_REQUIRED','Source P&ID reviewed',t1);
+  assert.equal(saveSourceReviewStorage(storage,sha,saved),1);
+  assert.match(sourceReviewStorageKey(sha),/v1/);
+  assert.equal(loadSourceReviewStorage(storage,sha)[0].note,'Source P&ID reviewed');
+  assert.deepEqual(loadSourceReviewStorage(storage,otherSha),[]);
+  // Even a malicious envelope stored under another SHA cannot re-bind source rows.
+  storage.setItem(sourceReviewStorageKey(otherSha),storage.getItem(sourceReviewStorageKey(sha)));
+  assert.throws(()=>loadSourceReviewStorage(storage,otherSha),/SHA_DRIFT/);
+  clearSourceReviewStorage(storage,sha);
+  assert.deepEqual(loadSourceReviewStorage(storage,sha),[]);
+  assert.equal(saved[0].sourceSha256,sha);
+});
+
+test('UX JSON exports round distance to 0.001 mm but retains internal precision',()=>{
+  const {rows}=make();
+  const precise=rows.map(r=>({...r,distanceMm:240.5999999998603}));
+  const exported=JSON.parse(exportSourceReviewJSON(precise,sha,t1));
+  assert.equal(exported.rows[0].distanceMm,240.6);
+  assert.equal(precise[0].distanceMm,240.5999999998603);
+  assert.match(exportSourceReviewCSV(precise,sha),/240\.600/);
+});
+
+test('UX blocked browser storage throws for caller to display export warning',()=>{
+  const blocked={getItem(){throw Error('SecurityError');},
+    setItem(){throw Error('QuotaExceededError');},removeItem(){throw Error('SecurityError');}};
+  const {rows}=make();
+  assert.throws(()=>loadSourceReviewStorage(blocked,sha),/SecurityError/);
+  assert.throws(()=>saveSourceReviewStorage(blocked,sha,rows),/QuotaExceededError/);
+  assert.throws(()=>clearSourceReviewStorage(blocked,sha),/SecurityError/);
 });

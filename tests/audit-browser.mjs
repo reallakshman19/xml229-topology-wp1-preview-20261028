@@ -604,7 +604,7 @@ try{
    const controls=await page.evaluate(()=>{
      const review=document.querySelector('[data-connection-review]');
      const queue=document.querySelector('[data-source-review-queue]');
-     const allowed=new Set(['sourceReviewAdd','sourceReviewSave',
+     const allowed=new Set(['sourceReviewAdd','sourceReviewSave','sourceReviewClear',
        'sourceReviewExportJson','sourceReviewExportCsv']);
      const buttons=[...review.querySelectorAll('button'),...queue.querySelectorAll('button')];
      const bad=buttons.filter(button=>{
@@ -647,18 +647,26 @@ try{
  await sourceQueue.locator('[data-source-review-decision]').selectOption('UPSTREAM_SOURCE_CORRECTION_REQUIRED');
  const savedDesignNote='Drawing P2-SYNTH: correct in upstream CAD/design source; never join closed connections';
  await sourceQueue.locator('[data-source-review-note]').fill(savedDesignNote);
- await sourceQueue.locator('[data-source-review-save]').click();
- await assertNoExecutableMutation(auditBefore,'save decision');
+ // No Save click: decision change and every note input must commit immediately.
+ await assertNoExecutableMutation(auditBefore,'automatic decision/note commit');
+ const storageRecord=await page.evaluate(()=>{
+   const sha=document.querySelector('#xml229-topology-workspace').topofixReviewAuditState().sourceSha256;
+   const json=localStorage.getItem('topofix-source-review-queue/v1/'+sha);
+   return json?JSON.parse(json).rows[0]:null;
+ });
+ if(storageRecord?.decision!=='UPSTREAM_SOURCE_CORRECTION_REQUIRED'||
+    storageRecord?.note!==savedDesignNote)
+   throw Error('P2 UX decision/note were not automatically committed');
  if(!(await sourceQueue.textContent()).includes('upstream source correction required')||
     !(await sourceQueue.textContent()).includes('Correct in the upstream CAD/design source, then reimport.'))
    throw Error('P2 engineer decision or upstream instructions not preserved');
  // Exercise real workspace refresh with UNSAVED decision and note.
  await sourceQueue.locator('[data-source-review-decision]').selectOption('INTENTIONAL_TERMINATION');
- await sourceQueue.locator('[data-source-review-note]').fill('UNSAVED draft survives workspace refresh');
+ await sourceQueue.locator('[data-source-review-note]').fill('In-progress edit survives workspace refresh');
  await page.locator('[data-analyze]').click();
  await page.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'),null,{timeout:120000});
  if(await sourceQueue.locator('[data-source-review-decision]').inputValue()!=='INTENTIONAL_TERMINATION'||
-    await sourceQueue.locator('[data-source-review-note]').inputValue()!=='UNSAVED draft survives workspace refresh')
+    await sourceQueue.locator('[data-source-review-note]').inputValue()!=='In-progress edit survives workspace refresh')
    throw Error('P2 workspace refresh erased unsaved engineer inputs');
  await assertNoExecutableMutation(auditBefore,'workspace refresh');
  // Re-add in original order, then reversed: saved decision/note must survive both.
@@ -695,6 +703,7 @@ try{
  const reviewCSV=await readFile(await (await downloadedCSV).path(),'utf8');
  await assertNoExecutableMutation(auditBefore,'CSV export');
  if(!reviewCSV.includes('UPSTREAM_SOURCE_CORRECTION_REQUIRED')||
+    !reviewCSV.includes(savedDesignNote)||
     !reviewCSV.includes('B0:N6880:S1')||!reviewCSV.includes('240.600'))
    throw Error('P2 CSV evidence not source qualified');
  if((await page.locator('[data-source-meta]').textContent())!==beforeSourceMeta||
@@ -705,11 +714,32 @@ try{
     await sourceQueue.locator('[data-queue-apply],[data-queue-second],[data-apply-second],[data-close-joint],[data-run-auto-fix-all]').count()||
     await rPanel.locator('[data-queue-apply],[data-queue-second],[data-apply-second],[data-close-joint]').count())
    throw Error('P2 source review leaked into executable repair or modified XML/findings');
- result.topoAP2Isolation='PASS: re-add both orders preserves decision/note, unsaved drafts survive refresh, strict DOM button allowlist, JSON/CSV, actual manualQueue/source SHA unchanged';
+ result.topoAP2Isolation='PASS: auto-commit without Save, both re-add orders preserve decision/note; strict DOM buttons and executable state unchanged';
  await mkdir(path.join(sourceRoot,'preview-test-results'),{recursive:true});
  // Capture the actual review queue (inside the independently scrollable findings aside),
  // not a full-page image that can omit the queue below the aside's scroll fold.
  await sourceQueue.screenshot({path:path.join(sourceRoot,'preview-test-results','topo-a-p2-source-review-synthetic.png')});
+
+ // UX: real browser reload; re-upload identical source SHA and verify saved values.
+ await page.reload({waitUntil:'load'});
+ await page.locator('[data-file]').setInputFiles({name:'review-6880-6450.xml',
+   mimeType:'application/xml',buffer:Buffer.from(reviewFixture)});
+ await page.waitForFunction(()=>document.querySelector('[data-occ-summary]')?.textContent?.includes('4 of 4'));
+ await page.locator('[data-analyze]').click();
+ await page.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'),null,{timeout:120000});
+ if(await sourceQueue.locator('[data-source-review-row]').count()!==1||
+    await sourceQueue.locator('[data-source-review-decision]').inputValue()!=='UPSTREAM_SOURCE_CORRECTION_REQUIRED'||
+    await sourceQueue.locator('[data-source-review-note]').inputValue()!==savedDesignNote)
+   throw Error('P2 UX stored queue did not restore after full document reload');
+ await assertNoExecutableMutation(auditBefore,'reload identical SHA');
+ await sourceQueue.screenshot({path:path.join(sourceRoot,'preview-test-results','topo-a-p2-ux-restored-after-reload.png')});
+ result.topoAP2UXReload='PASS: browser reload + same XML restores saved decision/note, no execution';
+ page.once('dialog',dialog=>dialog.accept());
+ await sourceQueue.locator('[data-source-review-clear]').click();
+ if(await sourceQueue.locator('[data-source-review-row]').count()!==0)
+   throw Error('P2 UX confirmed per-file clear did not empty review queue');
+ await assertNoExecutableMutation(auditBefore,'confirmed clear');
+ result.topoAP2UXClear='PASS: confirmation clears only this source review';
 
  // A nearby duplicate must not be chosen silently even when it looks closer.
  const duplicateBranch='<Branch><Branchname>REVIEW-DUPLICATE</Branchname>'+
@@ -718,7 +748,8 @@ try{
  await page.locator('[data-file]').setInputFiles({name:'review-duplicate.xml',mimeType:'application/xml',
    buffer:Buffer.from(duplicateFixture)});
  await page.waitForFunction(()=>document.querySelector('[data-occ-summary]')?.textContent?.includes('6 of 6'));
- if(!(await sourceQueue.textContent()).includes('STALE_SOURCE'))throw Error('P2 old source decision not marked STALE_SOURCE');
+ if(await sourceQueue.locator('[data-source-review-row]').count()!==0)
+   throw Error('P2 UX different SHA displayed another source queue');
  const importFixture=JSON.stringify(reviewExport);
  await sourceQueue.locator('[data-source-review-import]').setInputFiles({name:'review-evidence.json',mimeType:'application/json',buffer:Buffer.from(importFixture)});
  await page.waitForFunction(()=>document.querySelector('[data-source-review-status]')?.textContent?.includes('Import:'));
@@ -730,7 +761,7 @@ try{
     afterNewSource.sourceSha256===auditBefore.sourceSha256)
    throw Error('P2 source replacement did not invalidate review SHA');
  await assertNoExecutableMutation(afterNewSource,'stale JSON import');
- result.topoAP2Stale='PASS: source replacement and imported mismatched SHA remain STALE_SOURCE';
+ result.topoAP2Stale='PASS: different SHA begins empty; imported mismatched source stays STALE_SOURCE';
  await page.locator('[data-review-query="a"]').fill('6880');
  await page.locator('[data-review-query="b"]').fill('6450');
  if(!(await rPanel.textContent()).includes('AMBIGUOUS_PORT')||

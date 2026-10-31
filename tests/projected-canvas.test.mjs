@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {initialView,framePoints,projectOccurrence,zoomAt,cameraPresets} from '../tabs/topology-workspace/projected-canvas.mjs';
+import {initialView,framePoints,projectOccurrence,zoomAt,cameraPresets,placeCanvasLabels} from '../tabs/topology-workspace/projected-canvas.mjs';
 const bounds={center:{x:1e7,y:-2e7,z:3e7},span:6000};
 const points=[{x:1e7-3000,y:-2e7-2000,z:3e7-1000},{x:1e7+3000,y:-2e7+2000,z:3e7+1000}];
 const near=(a,b)=>assert.ok(Math.abs(a-b)<1e-6,`${a} != ${b}`);
@@ -31,4 +31,16 @@ test('top is XY, front is XZ, right is YZ; single point and zero span remain fin
  }
  const v=framePoints([{x:0,y:0,z:0}],b,initialView(),200,200);
  assert.ok(Number.isFinite(v.scale));
+});
+
+test('UX crowded labels are deconflicted but hovered and selected labels always show',()=>{
+ const near=[{id:'a',text:'100 PIPE',x:100,y:100,priority:0},
+   {id:'b',text:'110 PIPE',x:108,y:100,priority:0}];
+ const baseline=placeCanvasLabels(near,()=>80);
+ assert.equal(baseline.length,1,'nearby 10mm equivalent nodes must not draw on top of each other');
+ const withSelected=placeCanvasLabels([{...near[0],priority:2},near[1]],()=>80);
+ assert.equal(withSelected[0].id,'a');
+ const withHover=placeCanvasLabels([near[0],{...near[1],priority:3}],()=>80);
+ assert.equal(withHover[0].id,'b','hovered label must win');
+ assert.ok(withHover.some(x=>x.id==='b'),'hovered label must remain shown');
 });

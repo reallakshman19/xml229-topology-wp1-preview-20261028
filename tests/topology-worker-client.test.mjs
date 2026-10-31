@@ -65,3 +65,29 @@ test('idle worker recycles after eight completed jobs to bound Pyodide scratch g
  await next;
  c.dispose();
 });
+
+test('missing pinned Pyodide asset surfaces filename and permits retry',async()=>{
+ const c=createTopologyWorkerClient({WorkerCtor:FakeWorker,jobTimeoutMs:1000,startupTimeoutMs:1000});
+ const p=c.run(validJob),w=FakeWorker.instances.at(-1);
+ w.emit('message',{type:'READY'});
+ w.emit('message',{type:'ERROR',id:w.sent[0].id,
+   message:'TOPOLOGY_PYODIDE_ASSET_MISSING: vendor/pyodide/pyodide.asm.wasm (HTTP 404). Obtain pinned runtime assets using .github/workflows/repair-validation.yml.'});
+ await assert.rejects(p,/pyodide\.asm\.wasm.*repair-validation\.yml/);
+ c.cancel();
+ const next=c.run(validJob),w2=FakeWorker.instances.at(-1);
+ assert.notEqual(w2,w);
+ w2.emit('message',{type:'READY'});
+ w2.emit('message',{type:'RESULT',id:w2.sent[0].id,result:{ok:true}});
+ assert.deepEqual(await next,{ok:true});c.dispose();
+});
+
+test('silent worker startup failure fails fast and does not strand the next Analyze',async()=>{
+ const c=createTopologyWorkerClient({WorkerCtor:FakeWorker,jobTimeoutMs:1000,startupTimeoutMs:20});
+ const failed=c.run(validJob),w=FakeWorker.instances.at(-1);
+ await assert.rejects(failed,/TOPOLOGY_WORKER_START_FAILED.*pyodide\.asm\.wasm.*python_stdlib\.zip/);
+ assert.equal(w.terminated,true);
+ const next=c.run(validJob),fresh=FakeWorker.instances.at(-1);
+ fresh.emit('message',{type:'READY'});
+ fresh.emit('message',{type:'RESULT',id:fresh.sent[0].id,result:{ok:true}});
+ await next;c.dispose();
+});

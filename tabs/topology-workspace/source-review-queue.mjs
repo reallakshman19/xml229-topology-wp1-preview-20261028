@@ -115,7 +115,9 @@ export function editSourceReview(rows,id,decision,note,at=nowISO()){
 export function exportSourceReviewJSON(rows,currentSourceSha=null,at=nowISO()){
   if(!validTime(at)||!(currentSourceSha===null||validSha(currentSourceSha)))
     throw Error('SOURCE_REVIEW_EXPORT_INVALID');
-  const clean=rows.map(normalizedRow);
+  // Export presentation precision only; internal measured distance is unchanged.
+  const clean=rows.map(normalizedRow).map(row=>({...row,
+    distanceMm:row.distanceMm===null?null:Math.round(row.distanceMm*1000)/1000}));
   return JSON.stringify({schema:SOURCE_REVIEW_SCHEMA,kind:SOURCE_REVIEW_KIND,
     exportedAt:at,sourceSha256:currentSourceSha,rows:clean},null,2)+'\n';
 }
@@ -160,4 +162,30 @@ export function exportSourceReviewCSV(rows,currentSourceSha=null){
       r.updatedAt].map(safeCSV).join(','));
   }
   return table.join('\r\n')+'\r\n';
+}
+
+/** Browser-only persistence contract; explicit source-SHA key and versioned envelope.
+ * No implicit restoration across sources and no dependency on executable queues.
+ */
+export const SOURCE_REVIEW_STORAGE_PREFIX='topofix-source-review-queue/v1/';
+export function sourceReviewStorageKey(sourceSha256){
+  if(!validSha(sourceSha256))throw Error('SOURCE_REVIEW_STORAGE_SHA_INVALID');
+  return SOURCE_REVIEW_STORAGE_PREFIX+sourceSha256;
+}
+export function loadSourceReviewStorage(storage,sourceSha256){
+  const raw=storage.getItem(sourceReviewStorageKey(sourceSha256));
+  if(raw===null)return [];
+  // Reject mismatched envelopes and rows, rather than silently re-binding.
+  const parsed=JSON.parse(raw);
+  if(parsed.sourceSha256!==sourceSha256)throw Error('SOURCE_REVIEW_STORAGE_SHA_DRIFT');
+  return importSourceReviewJSON(raw).rows.filter(row=>row.sourceSha256===sourceSha256);
+}
+export function saveSourceReviewStorage(storage,sourceSha256,rows){
+  const onlyThisSource=rows.filter(r=>r.sourceSha256===sourceSha256);
+  storage.setItem(sourceReviewStorageKey(sourceSha256),
+    exportSourceReviewJSON(onlyThisSource,sourceSha256));
+  return onlyThisSource.length;
+}
+export function clearSourceReviewStorage(storage,sourceSha256){
+  storage.removeItem(sourceReviewStorageKey(sourceSha256));
 }
