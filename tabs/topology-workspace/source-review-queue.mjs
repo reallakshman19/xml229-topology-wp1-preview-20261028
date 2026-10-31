@@ -55,9 +55,9 @@ export function sourceReviewPairId(sha,a,b){
   return sha+'|'+[a,b].sort().join('|');
 }
 export function canAddSourceReview(r){
-  return r?.status==='REVIEW ONLY'&&validSha(r.sourceSha256)&&
+  return !!(r?.status==='REVIEW ONLY'&&validSha(r.sourceSha256)&&
     r.a&&r.b&&r.a.key!==r.b.key&&
-    SOURCE_KEY.test(r.a.key)&&SOURCE_KEY.test(r.b.key);
+    SOURCE_KEY.test(r.a.key)&&SOURCE_KEY.test(r.b.key));
 }
 function normalizedRow(row){
   exactKeys(row,ROW_KEYS);
