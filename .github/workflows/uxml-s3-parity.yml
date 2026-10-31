@@ -18,12 +18,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Fetch exact XCU fce00a60a1cbc360c8b3423d83d9692ffacb012d with sixteen Git blob checks, no vendoring
+      - name: Fetch exact XCU af5dc1fe15d1f78ab28cbd0d6be8c49d8877c006 with sixteen Git blob checks, no vendoring
         shell: bash
         run: |
           set -euo pipefail
           root="$RUNNER_TEMP/xcu-uxml-s3"
-          upstream="https://raw.githubusercontent.com/reallakshman19/XML_Compare_Utilities/fce00a60a1cbc360c8b3423d83d9692ffacb012d"
+          upstream="https://raw.githubusercontent.com/reallakshman19/XML_Compare_Utilities/af5dc1fe15d1f78ab28cbd0d6be8c49d8877c006"
           mkdir -p "$root/uxml" "$root/utils" "$root/tools" "$root/tests/fixtures" "$root/docs"
           curl --fail --location --retry 3 "$upstream/package.json" -o "$root/package.json"
           test "$(git hash-object "$root/package.json")" = "8b0cc1e976ef2cd3cd10f344b37463738d22ea3d"
