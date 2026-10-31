@@ -57,6 +57,20 @@ async function openInjected(mode){
    assert.notEqual(html,original,'default worker mount must be suppressed');
    await route.fulfill({response,body:html});
  });
+ // Only in the synthetic REVISION_RACE browser test, intercept the served
+ // workspace module and expose a test-only closure accessor. The product JS
+ // committed to the repository has no revision-mutation test hook.
+ if(mode==='REVISION_RACE'){
+   await page.route('**/tabs/topology-workspace/workspace-app.mjs',async route=>{
+     const response=await route.fetch();
+     const original=await response.text();
+     const marker='  function sourceMeta(){';
+     assert.equal(original.split(marker).length,2,
+       'private state accessor inserted only in test-delivered module bytes');
+     await route.fulfill({response,body:original.replace(marker,
+       '  window.__syntheticRevisionRaceBump=()=>++state.revision;\n'+marker)});
+   });
+ }
  await page.goto(url);
  await page.evaluate(async mode=>{
    const root=document.querySelector('#xml229-topology-workspace');
@@ -73,6 +87,15 @@ async function openInjected(mode){
      stages.push(job.options?.generateTopoFix?'TRANSACTION':
        committed?'POST_PUBLISH_RECHECK':'READ_ONLY_ANALYSIS');
      if(job.options?.generateTopoFix&&result?.topoFixCommitted===true)committed=true;
+     if(committed&&!job.options?.generateTopoFix&&mode==='REVISION_RACE'){
+       // The real Worker has already returned a valid read-only recheck.
+       // Hold the wrapper's result until the browser advances the simulated
+       // working revision; the product must reject that now-stale result.
+       await new Promise(resolve=>{
+         window.__evidenceFixture.releaseRace=resolve;
+         window.__evidenceFixture.raceStarted=true;
+       });
+     }
      if(committed&&!job.options?.generateTopoFix&&mode==='STALE'){
        // Stale plan is a synthetic mutation *only of the returned read-only
        // result*, never the validated transaction or source XML.
@@ -188,6 +211,35 @@ test('injected Worker: approved manual queue publishes new-revision evidence, st
       assert.deepEqual(errors,[]);
     }finally{await page.close();}
   }
+});
+
+test('revision-race negative: in-flight read-only recheck cannot enable evidence for a newer working revision',
+  {timeout:180000},async()=>{
+ const {page,errors}=await openInjected('REVISION_RACE');
+ try{
+   await loadAndAnalyze(page,shortXML);
+   await page.locator('[data-preview-short]').click();
+   await page.locator('[data-select-gaskets]').click();
+   assert.equal(await page.locator('[data-short-index]:checked').count(),1);
+   await page.locator('[data-run-short-drop]').click();
+   await page.waitForFunction(()=>window.__evidenceFixture?.raceStarted===true,
+     null,{timeout:120000});
+   const bumped=await page.evaluate(()=>window.__syntheticRevisionRaceBump());
+   assert.equal(bumped,2,'test must advance private state.revision from 1 while recheck is in flight');
+   await page.evaluate(()=>window.__evidenceFixture.releaseRace());
+   await page.waitForFunction(()=>document.querySelector('main')?.getAttribute('aria-busy')==='false'&&
+     document.querySelector('[data-evidence-proof]')?.textContent
+       ?.includes('EVIDENCE_RECHECK_STALE_REVISION'),null,{timeout:30000});
+   const state=await page.evaluate(()=>window.__evidenceFixture.workspace.getState());
+   assert.equal(state.revision,2);
+   assert.equal(await page.locator('[data-download-resolutions]').isDisabled(),true);
+   assert.equal(await page.locator('[data-trial-evidence]').isDisabled(),true);
+   assert.match(await page.locator('[data-evidence-proof]').textContent(),
+     /Connection evidence unavailable: EVIDENCE_RECHECK_STALE_REVISION/);
+   assert.equal(await page.locator('[data-download-working]').isEnabled(),true,
+     'do not delete the already validated corrected XML on a stale read-only recheck');
+   assert.deepEqual(errors,[]);
+ }finally{await page.close();}
 });
 
 test('UI clarity: hub-only short-drop explanation, review Next/Previous and retained source selection',
