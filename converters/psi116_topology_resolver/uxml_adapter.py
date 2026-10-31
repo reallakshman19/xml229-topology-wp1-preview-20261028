@@ -12,6 +12,7 @@ from html import escape as html_escape
 from pathlib import Path
 import json
 import math
+import re
 from typing import Any, Mapping
 import xml.etree.ElementTree as ET
 
@@ -48,6 +49,11 @@ def _number(value: object, name: str) -> float | None:
 def _integer(value: object, name: str) -> int | None:
     if value is None:
         return None
+    # JS JSON cannot precisely carry Python integers beyond 2**53-1.
+    # The XCU reader emits canonical decimal strings only for such values;
+    # reconstruct exact Python int without rounding, and never accept 0x10.
+    if isinstance(value, str) and re.fullmatch(r"-?[0-9]+", value):
+        return int(value)
     _need(isinstance(value, int) and not isinstance(value, bool), f"{name}:NOT_INTEGER")
     return value
 
