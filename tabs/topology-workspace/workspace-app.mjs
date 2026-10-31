@@ -1093,12 +1093,19 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       const result=await runEngine(readOnlyAnalysisJob(source));
       if(generation!==state.epoch)return;
       recordHubResult(result);
-      const current=establishCurrentAnalysisProof(result,{
-        epoch:generation,revision:state.revision,sourceRef:source,
-        sourceSha256:source.sourceSha256});
+      // DIFFERENT still publishes read-only findings/plan so the Owner sees
+      // precisely what disagrees. Only the current connection-evidence proof
+      // (and existing hub Auto-fix) is withheld. Do not turn it into analysis
+      // failure or hide the source-qualified review cases.
+      const current=acceptAnalysis(result,source.sourceSha256);
       state.plan=current.plan;state.findings=current.findings;
       state.resolutions=current.resolutions;state.shortElements=current.shortElements;
       state.manualPorts=current.manualPorts;
+      if(!state.hubEnabled||state.hubParity?.status==='EQUAL')
+        establishCurrentAnalysisProof(result,{epoch:generation,
+          revision:state.revision,sourceRef:source,sourceSha256:source.sourceSha256,
+          accepted:current});
+      else clearEvidenceProof('EVIDENCE_RECHECK_PARITY_NOT_EQUAL');
       updateStatus('Authoritative topology analysis complete. '+current.plan.actions.length+
         ' plan entries. No Weight/O1/Final/native session was supplied or created.');
     } catch(error) {
