@@ -32,6 +32,17 @@ jobs:
           echo 'feee5a5a6399207337e63bc56c8afb001fe37ab30c6a7a9283333ec60f6eea38  tests/FirstpassXML' | sha256sum -c -
       - name: Fetch immutable XCU reader for UXML preview (seven Git blob checks)
         run: bash tools/fetch-uxml-reader.sh dist
+      - name: Pinned XCU Python runbook from repository root and tests folder
+        shell: bash
+        env:
+          XCU_UXML_ROOT: ${{ github.workspace }}/dist/vendor/uxml
+          PYTHONPATH: ${{ github.workspace }}/converters
+        run: |
+          set -euo pipefail
+          python3 -B -m unittest discover -s tests -p test_uxml_psi116_s2.py -v
+          (cd tests && python3 -B -m unittest test_uxml_psi116_s2 -v)
+          python3 -B -m unittest discover -s tests -v
+          (cd tests && python3 -B -m unittest discover -v)
       - name: Full Chromium and Pyodide repair journey
         run: |
           npm install --no-save --ignore-scripts --package-lock=false playwright@1.52.0
