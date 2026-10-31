@@ -59,7 +59,7 @@ export function resolveConnectionReview(scene, manualPorts, witnesses, evidenceA
       z:b.position.z-a.position.z};
     distanceMm=Math.hypot(vector.x,vector.y,vector.z);
     if(!evidence)disposition='SOURCE_UNVERIFIED';
-    else if(first.blocked||second.blocked)disposition='SOURCE_REVIEW_REQUIRED'; // DELIBERATE MUTANT, must be restored
+    else if(first.blocked||second.blocked)disposition='CONFLICTS_WITH_CLOS';
     else if(!first.portQualified||!second.portQualified)disposition='HELPER_ONLY_ENDPOINT';
   }
   return {status:'REVIEW ONLY',disposition,occurrencesA,occurrencesB,
