@@ -39,19 +39,6 @@ jobs:
           curl --fail --location --retry 3 "$upstream/tools/psi116-to-uxml.mjs" -o "$root/tools/psi116-to-uxml.mjs"
           test "$(git hash-object "$root/tools/psi116-to-uxml.mjs")" = "7148fc20000963c5a32be27a7787705745e1d30b"
           echo "XCU_UXML_ROOT=$root" >> "$GITHUB_ENV"
-      - name: DELIBERATE RED - remove ignoreBOM only in verified ephemeral CLI (must fail parity)
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import os
-          from pathlib import Path
-          cli = Path(os.environ['XCU_UXML_ROOT']) / 'tools/psi116-to-uxml.mjs'
-          code = cli.read_text(encoding='utf-8')
-          original = "{fatal: true, ignoreBOM: true}"
-          assert code.count(original) == 1, "unexpected pinned reader; refuse mutant"
-          cli.write_text(code.replace(original, "{fatal: true}"), encoding='utf-8')
-          PY
       - name: Direct PSI116 vs pinned reader/UXML adapter same native engine
         shell: bash
         run: |
