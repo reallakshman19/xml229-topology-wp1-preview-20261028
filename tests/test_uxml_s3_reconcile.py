@@ -123,7 +123,7 @@ class SourceBackedReconciliation(unittest.TestCase):
             "synthetic last PIPINGELEMENT is exact source ordinal five")
         self.assertEqual(source_ref["elementIndex"],5)
         original=(self.xcu/"tests/fixtures/uxml-s3-synthetic.workspace.input.xml").read_text()
-        elements=list(re.finditer(r'<PIPINGELEMENT\\b[^>]+>',original))
+        elements=list(re.finditer(r'<PIPINGELEMENT\b[^>]+>',original))
         self.assertEqual(len(elements),6)
         last=elements[5]
         original_tag=last.group(0)
@@ -133,13 +133,13 @@ class SourceBackedReconciliation(unittest.TestCase):
                          "TO_X":("1100.000000","1150.000000")}
         tag=original_tag
         for field,(before_value,after_value) in expected_fields.items():
-            field_re=r'(\\b'+field+r'=\\")([^\\"]+)(\\")'
+            field_re=r'(\b'+field+r'=\")([^\"]+)(\")'
             match=re.search(field_re,tag)
             self.assertIsNotNone(match,field)
             self.assertEqual(match.group(2),before_value,field+" original source")
             tag=tag[:match.start(2)]+after_value+tag[match.end(2):]
         for field,(_,after_value) in expected_fields.items():
-            self.assertRegex(tag,r'\\b'+field+r'="'+after_value+r'"')
+            self.assertRegex(tag,r'\b'+field+r'="'+after_value+r'"')
         changed_source=original[:last.start()]+tag+original[last.end():]
         with tempfile.TemporaryDirectory(prefix="uxml-s3-geometric-red-") as td:
             target=Path(td)/"changed.input.xml"
@@ -161,7 +161,7 @@ class SourceBackedReconciliation(unittest.TestCase):
         self.assertEqual(len(position_rows),1,differences)
         exact=re.fullmatch(
             r'UNEXPLAINED CLASS=C_SOURCE_DIFFERENCE NODE_POSITION:node=110 slot=0 '
-            r'POSITION PSI116=(\\[[^\\]]+\\]) INPUT_XML=(\\[[^\\]]+\\]) deltaMm=50\\.000; '
+            r'POSITION PSI116=(\[[^\]]+\]) INPUT_XML=(\[[^\]]+\]) deltaMm=50\.000; '
             r'CAUSE: geometric coordinates differ in the SAME PSI116_XYZ_MM hub frame; '
             r'EVIDENCE: PSI116 Node@Position; InputXML PIPINGELEMENT DELTA_X/Y/Z & FROM/TO_X/Y/Z at Node=110',
             position_rows[0])
