@@ -252,6 +252,9 @@ class InputXmlNodeRecord(NodeRecord):
     inputxml_endpoint: str = ""
     inputxml_run_id: str = ""
     inputxml_anchored: bool = False
+    # Engine has one physical NodeRecord per route point. Retain EVERY
+    # original PIPINGELEMENT source key merged at that point.
+    inputxml_record_keys: tuple[str, ...] = ()
 
 
 def _caesar_int(value: str, label: str) -> int:
@@ -307,9 +310,80 @@ def _record_key(index: int, from_node: str, to_node: str) -> str:
     return f"E{index}:F{quote(from_node, safe=safe)}:T{quote(to_node, safe=safe)}"
 
 
+def _original_s3_physical(attrs: Mapping[str, str], field: str, index: int,
+                          context: dict[str, dict]) -> dict:
+    """Check inherited numerical context against ORIGINAL InputXML attributes."""
+    raw = attrs.get(field, "")
+    if raw:
+        try:
+            explicit = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise UxmlPsi116Error("INPUT_XML_PHYSICAL_NONNUMERIC:" + field) from exc
+        _need(math.isfinite(explicit), "INPUT_XML_PHYSICAL_NONFINITE:" + field)
+    else:
+        explicit = -1.0101
+    source_field = "PIPINGELEMENT@" + field
+    if raw and abs(explicit + 1.0101) >= .00001:
+        evidence = {"value": explicit, "mode": "EXPLICIT",
+                    "sourceElementIndex": index, "sourceField": source_field}
+        context[field] = evidence
+        return evidence
+    prior = context.get(field)
+    if prior:
+        return {**prior, "mode": "INHERITED"}
+    return {"value": None, "mode": "SOURCE_UNAVAILABLE",
+            "sourceElementIndex": None, "sourceField": source_field}
+
+
+def _original_s3_children(element: ET.Element, index: int) -> tuple[dict | None, list[dict]]:
+    children = [c for c in element if isinstance(c.tag, str)]
+    def local(child: ET.Element) -> str:
+        return child.tag.rsplit("}", 1)[-1].upper()
+    bend = next((c for c in children if local(c) == "BEND"), None)
+    bend_evidence = None
+    if bend is not None:
+        radius_raw = bend.attrib.get("RADIUS", "")
+        if radius_raw:
+            try:
+                radius = float(radius_raw)
+            except ValueError as exc:
+                raise UxmlPsi116Error("INPUT_XML_BEND_RADIUS_INVALID") from exc
+            if math.isfinite(radius) and abs(radius + 1.0101) >= .00001:
+                bend_evidence = {
+                    "radius": radius, "endpoint": "TO",
+                    "sourceElementIndex": index,
+                    "sourceField": "PIPINGELEMENT/BEND@RADIUS",
+                    "toNode": element.attrib.get("TO_NODE", ""),
+                    "rawAttributes": dict(bend.attrib),
+                }
+    sif_evidence = []
+    for child in children:
+        if local(child) != "SIF":
+            continue
+        raw_type = child.attrib.get("TYPE", "")
+        try:
+            code = float(raw_type) if raw_type else None
+        except ValueError:
+            code = None
+        if code is None or not math.isfinite(code) or abs(code + 1.0101) < .00001:
+            continue
+        sif_evidence.append({
+            "typeCode": code, "node": child.attrib.get("NODE", ""),
+            "sourceElementIndex": index,
+            "sourceField": "PIPINGELEMENT/SIF@TYPE",
+            "rawAttributes": dict(child.attrib),
+        })
+    return bend_evidence, sif_evidence
+
+
 def _document_from_caesar_inputxml(uxml: dict, *,
                                    source_name: str | None = None) -> Psi116Document:
-    """Read-only InputXML projection; geometry always checked against original deltas."""
+    """Reconcile only verified InputXML → TopoFix projection defects.
+
+    All positions, physical inheritance, bend/SIF source identity are independently
+    checked against original InputXML bytes. No PSI116 path or engine changes.
+    Source-only SIF=5 means OLET, NOT source-verified TEE; never fabricate TEE.
+    """
     _need(uxml.get("schemaVersion") == UXML_SCHEMA_VERSION and
           uxml.get("profile") == UXML_PROFILE, "INPUT_XML_NOT_TOPOLOGY_FULL")
     _need(len(uxml.get("sources") or []) == 1, "INPUT_XML_SINGLE_SOURCE_REQUIRED")
@@ -317,7 +391,7 @@ def _document_from_caesar_inputxml(uxml: dict, *,
     source_text, digest = source.get("sourceText"), source.get("hash")
     _need(source.get("format") == "INPUT_XML", "INPUT_XML_SOURCE_FORMAT_INVALID")
     _need(isinstance(source_text, str) and source_text, "INPUT_XML_ORIGINAL_TEXT_REQUIRED")
-    _need(isinstance(digest, str) and re.fullmatch(r"[a-f0-9]{64}", digest) is not None,
+    _need(isinstance(digest, str) and re.fullmatch(r"[a-f0-9]{64}", digest),
           "INPUT_XML_SOURCE_SHA256_REQUIRED")
     _need(sha256(source_text.encode("utf-8")).hexdigest() == digest,
           "INPUT_XML_ORIGINAL_SOURCE_SHA256_MISMATCH")
@@ -338,7 +412,6 @@ def _document_from_caesar_inputxml(uxml: dict, *,
           len(comps) == len(rows) and scope.get("elementCount") == len(rows),
           "INPUT_XML_PIPINGELEMENT_COUNT_MISMATCH")
     _need(len(ports) == 2 * len(rows), "INPUT_XML_PORTS_PER_ELEMENT_MISMATCH")
-
     runs = scope.get("runs")
     _need(isinstance(runs, list) and runs, "INPUT_XML_RUN_FRAME_DECLARATIONS_REQUIRED")
     run_by_index: dict[int, tuple[int, dict]] = {}
@@ -357,25 +430,44 @@ def _document_from_caesar_inputxml(uxml: dict, *,
             _need(isinstance(ix, int) and ix not in run_by_index and 0 <= ix < len(rows),
                   "INPUT_XML_DUPLICATE_OR_INVALID_RUN_ELEMENT_INDEX")
             run_by_index[ix] = (run_index, run)
-    _need(set(run_by_index) == set(range(len(rows))), "INPUT_XML_RUN_COVERAGE_INCOMPLETE")
-    by_component: dict[str, list[dict]] = {}
+    _need(set(run_by_index) == set(range(len(rows)), "INPUT_XML_RUN_COVERAGE_INCOMPLETE")
+    ports_by_component: dict[str, list[dict]] = {}
     for port in ports:
         _need(isinstance(port, dict) and isinstance(port.get("componentId"), str),
               "INPUT_XML_PORT_INVALID")
-        by_component.setdefault(port["componentId"], []).append(port)
+        ports_by_component.setdefault(port["componentId"], []).append(port)
 
-    run_records: dict[int, list[InputXmlNodeRecord]] = {i: [] for i in range(len(runs))}
+    # A SIF in original InputXML is an ownership witness, but SIF=5 is OLET
+    # (not TEE). Derive a synthetic BRAN route stub only when source has a
+    # separate route starting at the same SIF node; preserve literal code.
+    source_sifs: dict[str, tuple[str, int]] = {}
+    for idx, element in enumerate(rows):
+        _, items = _original_s3_children(element, idx)
+        for item in items:
+            if item["typeCode"] == 3:
+                source_sifs[item["node"]] = ("TEE", idx)
+            elif item["typeCode"] == 5:
+                source_sifs[item["node"]] = ("OLET", idx)
+
+    branches_raw: list[list[InputXmlNodeRecord]] = []
+    branch_run_ids: list[str] = []
     visited_nodes: dict[tuple[int, str], Position] = {}
     literal_anchors: dict[tuple[int, str], Position] = {}
-    used_keys: set[str] = set()
-    for index, (element, component) in enumerate(zip(rows, comps)):
+    seen_keys: set[str] = set()
+    current_run_index: int | None = None
+    current_to: str | None = None
+    context: dict[str, dict] = {}
+    route_index: int | None = None
+
+    for index, (element, comp) in enumerate(zip(rows, comps)):
         attrs = element.attrib
         from_node, to_node = attrs.get("FROM_NODE"), attrs.get("TO_NODE")
         _need(isinstance(from_node, str) and from_node and
-              isinstance(to_node, str) and to_node, "INPUT_XML_RECORD_NODE_ID_MISSING")
+              isinstance(to_node, str) and to_node,
+              "INPUT_XML_RECORD_NODE_ID_MISSING")
         key = _record_key(index, from_node, to_node)
-        _need(key not in used_keys, "INPUT_XML_DUPLICATE_RECORD_KEY")
-        used_keys.add(key)
+        _need(key not in seen_keys, "INPUT_XML_DUPLICATE_RECORD_KEY")
+        seen_keys.add(key)
         run_index, run = run_by_index[index]
         run_id, anchored = run["id"], run["anchored"]
         expected = {
@@ -383,99 +475,165 @@ def _document_from_caesar_inputxml(uxml: dict, *,
             "elementIndex": index, "fromNode": from_node, "toNode": to_node,
             "runId": run_id, "anchored": anchored,
         }
-        _need(isinstance(component, dict) and
-              component.get("sourceRefs") == [expected] and
-              component.get("id") == "IX-S3-E" + str(index),
+        _need(isinstance(comp, dict) and comp.get("id") == f"IX-S3-E{index}" and
+              comp.get("sourceRefs") == [expected],
               "INPUT_XML_COMPONENT_SOURCE_REF_MISMATCH:" + key)
-        info = (component.get("rawAttributes") or {}).get("inputXml") or {}
+        info = (comp.get("rawAttributes") or {}).get("inputXml") or {}
         _need(info.get("recordKey") == key and info.get("elementIndex") == index and
               info.get("fromNode") == from_node and info.get("toNode") == to_node and
               info.get("runId") == run_id and info.get("anchored") is anchored,
               "INPUT_XML_RAW_RECORD_ID_MISMATCH:" + key)
-        found_ports = by_component.get(component["id"], [])
-        _need(len(found_ports) == 2, "INPUT_XML_PORT_COUNT_MISMATCH:" + key)
-        values: dict[str, Position] = {}
-        for port in found_ports:
-            references = port.get("sourceRefs")
-            _need(isinstance(references, list) and len(references) == 1,
+
+        new_route = (route_index is None or current_run_index != run_index
+                     or current_to != from_node)
+        if new_route:
+            route_index = len(branches_raw)
+            branches_raw.append([])
+            branch_run_ids.append(run_id)
+            context = {}
+        current_run_index, current_to = run_index, to_node
+        fields = {
+            "outsideDiameter": _original_s3_physical(attrs, "DIAMETER", index, context),
+            "wallThickness": _original_s3_physical(attrs, "WALL_THICK", index, context),
+        }
+        _need(info.get("physicalEvidence") == fields and
+              info.get("outsideDiameter") == fields["outsideDiameter"]["value"] and
+              info.get("wallThickness") == fields["wallThickness"]["value"],
+              "INPUT_XML_PHYSICAL_PROVENANCE_MISMATCH:" + key)
+        bend, sifs = _original_s3_children(element, index)
+        _need(info.get("bendEvidence") == bend and info.get("sifEvidence") == sifs,
+              "INPUT_XML_NESTED_SOURCE_EVIDENCE_MISMATCH:" + key)
+        found = ports_by_component.get(comp["id"], [])
+        _need(len(found) == 2, "INPUT_XML_PORT_COUNT_MISMATCH:" + key)
+        positions: dict[str, Position] = {}
+        for port in found:
+            refs = port.get("sourceRefs")
+            _need(isinstance(refs, list) and len(refs) == 1,
                   "INPUT_XML_PORT_REF_MISSING:" + key)
-            ep = references[0].get("endpoint")
-            _need(ep in {"FROM", "TO"} and references == [{**expected, "endpoint": ep}],
+            ep = refs[0].get("endpoint")
+            _need(ep in {"FROM", "TO"} and refs == [{**expected, "endpoint": ep}],
                   "INPUT_XML_PORT_SOURCE_REF_MISMATCH:" + key)
-            _need(ep not in values, "INPUT_XML_DUPLICATE_ENDPOINT:" + key)
-            point = _position(port.get("point"))
-            _need(point is not None and port.get("runId") == run_id and
+            _need(ep not in positions, "INPUT_XML_DUPLICATE_ENDPOINT:" + key)
+            position = _position(port.get("point"))
+            _need(position is not None and port.get("runId") == run_id and
                   port.get("anchored") is anchored and
                   port.get("coordinateFrame") == "PSI116_XYZ_MM",
                   "INPUT_XML_PORT_FRAME_MISMATCH:" + key)
-            values[ep] = point
-        _need(set(values) == {"FROM", "TO"}, "INPUT_XML_ENDPOINT_COVERAGE_MISMATCH:" + key)
-        _need(info.get("from") == asdict(values["FROM"]) and
-              info.get("to") == asdict(values["TO"]),
+            positions[ep] = position
+        _need(set(positions) == {"FROM", "TO"}, "INPUT_XML_ENDPOINT_COVERAGE_MISMATCH:" + key)
+        _need(info.get("from") == asdict(positions["FROM"]) and
+              info.get("to") == asdict(positions["TO"]),
               "INPUT_XML_TYPED_COORDINATE_MISMATCH:" + key)
         step = _caesar_hub_delta(attrs, key)
-        declared_step = Position(values["TO"].x - values["FROM"].x,
-                                 values["TO"].y - values["FROM"].y,
-                                 values["TO"].z - values["FROM"].z)
-        _need(_close(step, declared_step), "INPUT_XML_DELTA_SUM_MISMATCH:" + key)
+        declared = Position(positions["TO"].x - positions["FROM"].x,
+                            positions["TO"].y - positions["FROM"].y,
+                            positions["TO"].z - positions["FROM"].z)
+        _need(_close(step, declared), "INPUT_XML_DELTA_SUM_MISMATCH:" + key)
         for ep, node in (("FROM", from_node), ("TO", to_node)):
             tag = (run_index, node)
-            value = values[ep]
+            val = positions[ep]
             if tag in visited_nodes:
-                _need(_close(visited_nodes[tag], value),
+                _need(_close(visited_nodes[tag], val),
                       "INPUT_XML_DELTA_PATH_CONFLICT:" + key + ":" + node)
             else:
-                visited_nodes[tag] = value
-            source_absolute = _caesar_hub_absolute(attrs, ep)
-            if source_absolute is not None:
-                literal_anchors[tag] = source_absolute
-                _need(_close(source_absolute, value),
+                visited_nodes[tag] = val
+            absolute = _caesar_hub_absolute(attrs, ep)
+            if absolute is not None:
+                literal_anchors[tag] = absolute
+                _need(_close(absolute, val),
                       "INPUT_XML_ABSOLUTE_ANCHOR_MISMATCH:" + key + ":" + ep)
-        od = _number(info.get("outsideDiameter"), "INPUT_XML_OUTSIDE_DIAMETER")
-        wall = _number(info.get("wallThickness"), "INPUT_XML_WALL_THICKNESS")
-        for field, claimed in (("DIAMETER", od), ("WALL_THICK", wall)):
-            raw = attrs.get(field, "")
-            if raw and abs(float(raw) + 1.0101) >= .00001:
-                _need(claimed is not None and abs(claimed-float(raw)) <= .00001,
-                      "INPUT_XML_SOURCE_DIMENSION_MISMATCH:" + key + ":" + field)
-        kind = str(info.get("componentType") or "PIPE").upper()
-        raw_type = str(info.get("rawComponentType") or kind).upper()
-        ref_no = component.get("refNo") or "INPUT_XML-E" + str(index)
-        row_start = len(run_records[run_index])
-        for offset, ep in enumerate(("FROM", "TO")):
-            literal = from_node if ep == "FROM" else to_node
-            is_restraint = any(
-                str(item.get("attributes", {}).get("NODE", "")) == literal
-                for item in (info.get("restraints") or [])
+
+        # Reconcile original source attribute authority for type, not a
+        # guessed equivalent of PSI116 component refs or helper nodes.
+        sif_at_to = next((item for item in sifs
+                          if item.get("node") == to_node and item["typeCode"] in (3, 5)), None)
+        if sif_at_to is not None:
+            allowed = "TEE" if sif_at_to["typeCode"] == 3 else "OLET"
+            _need(info.get("componentType") == allowed,
+                  "INPUT_XML_SIF_COMPONENT_TYPE_CONFLICT:" + key)
+        elif bend is not None:
+            _need(info.get("componentType") == "BEND",
+                  "INPUT_XML_BEND_COMPONENT_TYPE_CONFLICT:" + key)
+
+        od, wall = fields["outsideDiameter"]["value"], fields["wallThickness"]["value"]
+        source_ref = attrs.get("REF_NO", "")
+        _need(comp.get("refNo", "") in ("", source_ref),
+              "INPUT_XML_UNAUTHORIZED_COMPONENT_REFERENCE:" + key)
+
+        def new_record(ep: str) -> InputXmlNodeRecord:
+            node = from_node if ep == "FROM" else to_node
+            if ep == "FROM":
+                sif = source_sifs.get(node) if new_route else None
+                if sif is not None and sif[1] != index:
+                    kind, connection = "BRAN", sif[0]
+                else:
+                    kind, connection = "PIPE", ""
+                radius = None
+                name = attrs.get("FROM_NAME", "")
+                endpoint = 1
+            else:
+                kind, connection = "PIPE", ""
+                if sif_at_to is not None:
+                    kind = allowed
+                    connection = allowed
+                elif bend is not None:
+                    kind = "ELBO"
+                elif info.get("componentType") in {"FLANGE", "RIGI", "VALV", "REDU"}:
+                    kind = str(info["componentType"])
+                radius = bend["radius"] if bend is not None else None
+                name = attrs.get("TO_NAME") or attrs.get("NAME") or ""
+                endpoint = 0 if kind in {"TEE", "OLET"} else 2
+            has_restraint = any(
+                (child.tag.rsplit("}",1)[-1].upper() in {"RESTRAINT","RESTRANT"} and
+                 child.attrib.get("NODE") == node and
+                 child.attrib.get("TYPE") not in ("-1.010100","-1.0101"))
+                for child in element if isinstance(child.tag,str))
+            branch_name = f"{run_id}:ROUTE-{route_index:04d}"
+            return InputXmlNodeRecord(
+                branch_index=route_index,branch_name=branch_name,
+                source_index=len(branches_raw[route_index]),
+                node_number=_caesar_int(node,key+":"+ep),
+                node_name=name,endpoint=endpoint,
+                component_type=kind,raw_component_type=kind,
+                component_ref_no=source_ref,connection_type=connection,
+                position=positions[ep],rigid=None,weight=None,
+                outside_diameter=od,wall_thickness=wall,bend_radius=radius,
+                alpha_angle=None,has_restraint=has_restraint,
+                raw_xml=ET.tostring(element,encoding="unicode"),
+                inputxml_record_key=key,inputxml_endpoint=ep,
+                inputxml_run_id=run_id,inputxml_anchored=anchored,
+                inputxml_record_keys=(key,),
             )
-            run_records[run_index].append(InputXmlNodeRecord(
-                branch_index=run_index, branch_name=run_id,
-                source_index=row_start+offset,
-                node_number=_caesar_int(literal, key + ":" + ep),
-                node_name=(info.get("fromName", "") if ep == "FROM"
-                           else info.get("toName", "")),
-                endpoint=1 if ep == "FROM" else 2,
-                component_type=kind, raw_component_type=raw_type,
-                component_ref_no=ref_no, connection_type="",
-                position=values[ep], rigid=None, weight=None,
-                outside_diameter=od, wall_thickness=wall,
-                bend_radius=None, alpha_angle=None,
-                has_restraint=is_restraint, raw_xml=ET.tostring(element, encoding="unicode"),
-                inputxml_record_key=key, inputxml_endpoint=ep,
-                inputxml_run_id=run_id, inputxml_anchored=anchored,
-            ))
+
+        source_rows = branches_raw[route_index]
+        if new_route:
+            source_rows.append(new_record("FROM"))
+        else:
+            _need(bool(source_rows) and source_rows[-1].node_number ==
+                  _caesar_int(from_node,key+":FROM") and
+                  _close(source_rows[-1].position,positions["FROM"]),
+                  "INPUT_XML_ROUTE_CONTINUITY_CONFLICT:"+key)
+            previous = source_rows[-1]
+            _need(key not in previous.inputxml_record_keys,
+                  "INPUT_XML_DUPLICATE_SOURCE_KEY_ON_NODE:"+key)
+            source_rows[-1] = replace(previous,
+                inputxml_record_keys=(*previous.inputxml_record_keys,key))
+        source_rows.append(new_record("TO"))
     for i, run in enumerate(runs):
-        _need(run.get("anchored") is bool(any(key[0] == i for key in literal_anchors)),
+        _need(run.get("anchored") is any(key[0] == i for key in literal_anchors),
               "INPUT_XML_FALSE_ANCHORED_OR_UNANCHORED_RUN:" + run["id"])
-    branches = tuple(BranchRecord(index, run["id"], tuple(run_records[index]))
-                     for index, run in enumerate(runs))
+    branch_records = []
+    for i, records in enumerate(branches_raw):
+        _need(all(r.source_index==k for k,r in enumerate(records)),
+              "INPUT_XML_ROUTE_RECORD_ORDER_INVALID")
+        branch_records.append(BranchRecord(i, records[0].branch_name, tuple(records)))
+    branches = tuple(branch_records)
     occurrences = _build_occurrences(branches)
-    spans = _build_spans(branches, occurrences)
-    return Psi116Document(
-        source_path=source_name or "<inputxml>",
-        source_text=source_text, source_sha256=digest, namespace=namespace,
-        branches=branches, occurrences=tuple(occurrences), spans=tuple(spans),
-    )
+    spans = _build_spans(branches,occurrences)
+    return Psi116Document(source_path=source_name or "<inputxml>",
+        source_text=source_text,source_sha256=digest,namespace=namespace,
+        branches=branches,occurrences=tuple(occurrences),spans=tuple(spans))
+
 
 
 def resolve_inputxml_run_from_uxml(uxml: dict, run_id: str,
