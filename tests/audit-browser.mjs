@@ -589,11 +589,68 @@ try{
  if(!rText.includes('CONFLICTS_WITH_CLOS')||!rText.includes('240.600')||
    !rText.includes('B0:N6880:S1')||!rText.includes('114.300')||
    !rText.includes('upstream CAD')||!rText.includes('reimport')||
-   await rPanel.locator('button').count()||await page.locator('[data-download-working]').isEnabled())
+   await rPanel.locator('[data-queue-apply],[data-queue-second],[data-apply-second],[data-apply]').count()||
+   await page.locator('[data-download-working]').isEnabled())
    throw Error('TOPO-A P1 violated hidden CLOS review-only acceptance: '+rText);
  await mkdir(path.join(sourceRoot,'preview-test-results'),{recursive:true});
  await page.screenshot({path:path.join(sourceRoot,'preview-test-results','topo-a-p1-review-synthetic.png'),fullPage:true});
  result.topoAReview='SYNTHETIC: 6880/6450 240.600 mm, CLOS source witness, no Apply/Queue/XML mutation';
+
+ // P2: Source Review is a separate evidence-only shelf, never the executable queue.
+ const sourceQueue=page.locator('[data-source-review-queue]');
+ const beforeSourceMeta=await page.locator('[data-source-meta]').textContent();
+ const beforeFindings=await page.locator('[data-plan-summary]').textContent();
+ const manualShelf=page.locator('[data-manual-queue]');
+ if(!await manualShelf.count()||!await manualShelf.getByText('No approved repairs queued.').count())
+   throw Error('P2 baseline manual queue is not empty');
+ await rPanel.locator('[data-source-review-add]').click();
+ if(await sourceQueue.locator('[data-source-review-row]').count()!==1||
+    !(await sourceQueue.textContent()).includes('CONFLICTS_WITH_CLOS')||
+    !(await sourceQueue.textContent()).includes('240.600')||
+    !(await sourceQueue.textContent()).includes('B0:N6880:S1'))
+   throw Error('P2 exact CLOS review row missing');
+ await sourceQueue.locator('[data-source-review-decision]').selectOption('UPSTREAM_SOURCE_CORRECTION_REQUIRED');
+ await sourceQueue.locator('[data-source-review-note]').fill('Drawing P2-SYNTH: correct in upstream CAD/design source; never join closed connections');
+ await sourceQueue.locator('[data-source-review-save]').click();
+ if(!(await sourceQueue.textContent()).includes('upstream source correction required')||
+    !(await sourceQueue.textContent()).includes('Correct in the upstream CAD/design source, then reimport.'))
+   throw Error('P2 engineer decision or upstream instructions not preserved');
+ // Reverse the pair: same unordered source identities must update one row, not add another.
+ await page.locator('[data-review-query="a"]').fill('6450');
+ await page.locator('[data-review-query="b"]').fill('6880');
+ await rPanel.locator('[data-source-review-add]').click();
+ if(await sourceQueue.locator('[data-source-review-row]').count()!==1)
+   throw Error('P2 reversed pair was duplicated');
+ await sourceQueue.locator('[data-source-review-decision]').selectOption('UPSTREAM_SOURCE_CORRECTION_REQUIRED');
+ await sourceQueue.locator('[data-source-review-note]').fill('Drawing P2-SYNTH: source correction required');
+ await sourceQueue.locator('[data-source-review-save]').click();
+ const downloadedReview=page.waitForEvent('download');
+ await sourceQueue.locator('[data-source-review-export-json]').click();
+ const reviewExport=JSON.parse(await readFile(await (await downloadedReview).path(),'utf8'));
+ if(reviewExport.schema!=='topofix-source-review-queue/v1'||reviewExport.rows.length!==1||
+    reviewExport.rows[0].disposition!=='CONFLICTS_WITH_CLOS'||
+    reviewExport.rows[0].decision!=='UPSTREAM_SOURCE_CORRECTION_REQUIRED'||
+    reviewExport.rows[0].distanceMm.toFixed(3)!=='240.600'||
+    reviewExport.rows[0].ports.map(p=>p.sourceKey).join('|')!=='B0:N6880:S1|B1:N6450:S0')
+   throw Error('P2 JSON evidence lost exact identity, closure or decision');
+ const downloadedCSV=page.waitForEvent('download');
+ await sourceQueue.locator('[data-source-review-export-csv]').click();
+ const reviewCSV=await readFile(await (await downloadedCSV).path(),'utf8');
+ if(!reviewCSV.includes('UPSTREAM_SOURCE_CORRECTION_REQUIRED')||
+    !reviewCSV.includes('B0:N6880:S1')||!reviewCSV.includes('240.600'))
+   throw Error('P2 CSV evidence not source qualified');
+ if((await page.locator('[data-source-meta]').textContent())!==beforeSourceMeta||
+    (await page.locator('[data-plan-summary]').textContent())!==beforeFindings||
+    await page.locator('[data-download-working]').isEnabled()||
+    !(await manualShelf.getByText('No approved repairs queued.').count())||
+    await page.locator('[data-queue-apply]').isEnabled()||
+    await sourceQueue.locator('[data-queue-apply],[data-queue-second],[data-apply-second],[data-close-joint],[data-run-auto-fix-all]').count()||
+    await rPanel.locator('[data-queue-apply],[data-queue-second],[data-apply-second],[data-close-joint]').count())
+   throw Error('P2 source review leaked into executable repair or modified XML/findings');
+ result.topoAP2Isolation='PASS: 1 exact review pair, reversed duplicate update, decision, JSON/CSV, 0 executable queue and 0 XML/finding mutations';
+ await mkdir(path.join(sourceRoot,'preview-test-results'),{recursive:true});
+ await page.screenshot({path:path.join(sourceRoot,'preview-test-results','topo-a-p2-source-review-synthetic.png'),fullPage:true});
+
  // A nearby duplicate must not be chosen silently even when it looks closer.
  const duplicateBranch='<Branch><Branchname>REVIEW-DUPLICATE</Branchname>'+
   reviewNode(6880,'PIPE','ALT',1,1340.59)+reviewNode(9000,'PIPE','ALT',2,1440.59)+'</Branch>';
@@ -601,6 +658,14 @@ try{
  await page.locator('[data-file]').setInputFiles({name:'review-duplicate.xml',mimeType:'application/xml',
    buffer:Buffer.from(duplicateFixture)});
  await page.waitForFunction(()=>document.querySelector('[data-occ-summary]')?.textContent?.includes('6 of 6'));
+ if(!(await sourceQueue.textContent()).includes('STALE_SOURCE'))throw Error('P2 old source decision not marked STALE_SOURCE');
+ const importFixture=JSON.stringify(reviewExport);
+ await sourceQueue.locator('[data-source-review-import]').setInputFiles({name:'review-evidence.json',mimeType:'application/json',buffer:Buffer.from(importFixture)});
+ await page.waitForFunction(()=>document.querySelector('[data-source-review-status]')?.textContent?.includes('Import:'));
+ if(await sourceQueue.locator('[data-source-review-row]').count()!==1||
+    !(await sourceQueue.textContent()).includes('STALE_SOURCE'))
+   throw Error('P2 stale imported row was lost or re-bound');
+ result.topoAP2Stale='PASS: source replacement and imported mismatched SHA remain STALE_SOURCE';
  await page.locator('[data-review-query="a"]').fill('6880');
  await page.locator('[data-review-query="b"]').fill('6450');
  if(!(await rPanel.textContent()).includes('AMBIGUOUS_PORT')||
