@@ -85,18 +85,24 @@ class SourceBackedReconciliation(unittest.TestCase):
         original=(self.xcu/"tests/fixtures/uxml-s3-synthetic.workspace.input.xml").read_text()
         # Last disconnected route: update BOTH source absolute TO_X and DELTA_X
         # to retain internally consistent source geometry; compare must still FAIL.
-        from xml.etree import ElementTree as ET
-        tree=ET.fromstring(original)
-        rows=[e for e in tree.iter() if e.tag.rsplit("}",1)[-1]=="PIPINGELEMENT"]
-        self.assertEqual(len(rows),6)
-        last=rows[-1]
-        self.assertIsNotNone(last.get("TO_X"))
-        last.set("TO_X",format(float(last.get("TO_X"))+50,".6f"))
-        last.set("DELTA_X",format(float(last.get("DELTA_X"))+50,".6f"))
+        import re
+        # Preserve all original lexical XML/namespace bytes: change only two
+        # source attributes on the final PIPINGELEMENT, +50 mm each.
+        physical=list(re.finditer(r'<PIPINGELEMENT\b[^>]+>',original))
+        self.assertEqual(len(physical),6)
+        last=physical[-1]
+        original_tag=last.group(0)
+        tag=original_tag
+        for field in ("TO_X","DELTA_X"):
+            match=re.search(r'(\b'+field+r'=")([^"]+)(")',tag)
+            self.assertIsNotNone(match)
+            changed=format(float(match.group(2))+50,".6f")
+            tag=tag[:match.start(2)]+changed+tag[match.end(2):]
+        changed_source=original[:last.start()]+tag+original[last.end():]
         # For comparison of genuine changed source semantics, only synthetic.
         with tempfile.TemporaryDirectory(prefix="uxml-s3-geometric-red-") as td:
             target=Path(td)/"changed.input.xml"
-            target.write_bytes(ET.tostring(tree,encoding="utf8"))
+            target.write_bytes(changed_source.encode("utf8"))
             p=subprocess.run(["node",str(self.xcu/"tools/inputxml-to-uxml.mjs"),str(target)],
               cwd=self.xcu,capture_output=True,text=True,timeout=45)
             self.assertEqual(p.returncode,0,p.stderr)
