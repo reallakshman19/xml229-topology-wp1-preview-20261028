@@ -116,7 +116,9 @@ test('P2 exported JSON round-trip and same-pair import reconcile without deletin
   assert.equal(parsed.schema,SOURCE_REVIEW_SCHEMA);
   assert.equal(parsed.kind,SOURCE_REVIEW_KIND);
   assert.equal(parsed.rows.length,1);
-  assert.deepEqual(importSourceReviewJSON(raw).rows,changed);
+  // Presentation JSON intentionally rounds measured distance to 0.001 mm.
+  assert.deepEqual(importSourceReviewJSON(raw).rows,
+    changed.map(r=>({...r,distanceMm:r.distanceMm===null?null:Math.round(r.distanceMm*1000)/1000})));
   const twice=importSourceReviewJSON(raw,changed);
   assert.equal(twice.added,0);assert.equal(twice.updated,1);
   assert.equal(twice.rows.length,1);

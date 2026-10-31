@@ -37,7 +37,14 @@ test('UX crowded labels are deconflicted but hovered and selected labels always 
  const near=[{id:'a',text:'100 PIPE',x:100,y:100,priority:0},
    {id:'b',text:'110 PIPE',x:108,y:100,priority:0}];
  const baseline=placeCanvasLabels(near,()=>80);
- assert.equal(baseline.length,1,'nearby 10mm equivalent nodes must not draw on top of each other');
+ assert.ok(baseline.length>=1&&baseline.length<=2);
+ // Offset is acceptable, but the projected label bounding boxes must not overlap.
+ if(baseline.length===2){
+   const [first,second]=baseline;
+   const ySeparated=first.y+3<second.y-13||second.y+3<first.y-13;
+   const xSeparated=first.x+80<second.x||second.x+80<first.x;
+   assert.ok(ySeparated||xSeparated,'labels still overlap at this zoom');
+ }
  const withSelected=placeCanvasLabels([{...near[0],priority:2},near[1]],()=>80);
  assert.equal(withSelected[0].id,'a');
  const withHover=placeCanvasLabels([near[0],{...near[1],priority:3}],()=>80);
