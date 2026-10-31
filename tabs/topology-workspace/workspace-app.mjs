@@ -49,7 +49,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   runEngine ||= ownedWorker.run;
   cancelEngine ||= ownedWorker?()=>ownedWorker.cancel():()=>{};
   const state={epoch:0,source:null,original:null,revision:0,applied:0,history:[],resolutions:[],shortElements:[],shortPreview:null,scene:null,plan:null,findings:[],result:null,
-    selected:new Set(),search:'',filter:'all',category:'all',hubEnabled:false,hubParity:null,hubRevision:null,analysisProof:null,opsPreview:null,opsPreviewError:null,manualPorts:[],secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false,shortBulk:null,manualQueue:[],manualQueueRunning:false,manualQueueCheckpoint:null,manualQueueStatus:''};
+    selected:new Set(),search:'',filter:'all',category:'all',hubEnabled:false,hubParity:null,hubRevision:null,analysisProof:null,evidenceProofReason:'EVIDENCE_ANALYSIS_REQUIRED',opsPreview:null,opsPreviewError:null,manualPorts:[],secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false,shortBulk:null,manualQueue:[],manualQueueRunning:false,manualQueueCheckpoint:null,manualQueueStatus:''};
   // The queue lives alongside Second Pass, without changing the engineering audit.
   const queuePanel=document.createElement('section');
   queuePanel.dataset.manualQueue='';
@@ -177,6 +177,11 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
         ' · '+esc(r.node_keys.join(', '))+'</button><p>'+esc(r.message)+'</p></li>').join('')+'</ul></details>':'';
     const evidence=query(root,'[data-download-resolutions]');
     if(evidence)evidence.disabled=!state.plan||state.busy||state.batchRunning||!analysisProofCurrent();
+    const evidenceStatus=query(root,'[data-evidence-proof]');
+    if(evidenceStatus)evidenceStatus.textContent=analysisProofCurrent()?
+      'Connection evidence verified for working revision '+state.revision+'.':
+      'Connection evidence unavailable: '+(state.evidenceProofReason||'EVIDENCE_ANALYSIS_REQUIRED')+
+      ' · Re-analyse current XML to retry.';
     if(!plan){
       summary.textContent='Analyze XML to see findings grouped by engineering rule.';
       panel.innerHTML='';
@@ -301,6 +306,74 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       p.sourceSha256===state.source.sourceSha256&&
       p.result===state.result&&p.hubEnabled===state.hubEnabled&&
       (!state.hubEnabled||state.hubParity?.status==='EQUAL'));
+  }
+  // Shared custody predicate: a proof belongs to exactly the current
+  // source/revision/epoch/route, and to a complete read-only analysis result.
+  function establishCurrentAnalysisProof(result,{epoch=state.epoch,
+    revision=state.revision,sourceRef=state.source,
+    sourceSha256=state.source?.sourceSha256,hubEnabled=state.hubEnabled,
+    accepted=null}={}){
+    if(!state.source||state.source!==sourceRef||
+       state.epoch!==epoch||state.revision!==revision||
+       state.source.sourceSha256!==sourceSha256||
+       state.hubEnabled!==hubEnabled)
+      throw Error('EVIDENCE_RECHECK_STALE_REVISION');
+    const current=accepted||acceptAnalysis(result,sourceSha256);
+    if(hubEnabled&&state.hubParity?.status!=='EQUAL')
+      throw Error('EVIDENCE_RECHECK_PARITY_NOT_EQUAL');
+    state.result=result;
+    state.analysisProof={epoch,revision,sourceSha256,result,hubEnabled};
+    state.evidenceProofReason='';
+    return current;
+  }
+  function clearEvidenceProof(reason){
+    state.analysisProof=null;state.result=null;
+    state.evidenceProofReason=reason;
+  }
+  function readOnlyAnalysisJob(source){
+    return {sourceKind:'xml',sourceText:source.sourceText,
+      sourceName:source.name,topologyPreFinalOnly:true,
+      options:{outputMode:'enriched-only',analyzeTopology:true,generateTopoFix:false,
+        useTopoFixForCii:false,topologyActionIds:[],
+        topologyUxmlPreview:state.hubEnabled},
+      sourceRawSha256:source.rawSha256};
+  }
+  // One fresh analysis after a validated bulk/queue publish. Never
+  // promote a prior-revision transaction or result to connection evidence.
+  async function refreshPublishedEvidence(generation,revision,sourceRef){
+    clearEvidenceProof('EVIDENCE_RECHECK_PENDING');refresh();
+    const sourceSha256=sourceRef?.sourceSha256,hubEnabled=state.hubEnabled;
+    try{
+      if(generation!==state.epoch||revision!==state.revision||
+         state.source!==sourceRef||!sourceSha256||
+         hubEnabled!==state.hubEnabled)
+        throw Error('EVIDENCE_RECHECK_STALE_REVISION');
+      const recheck=await runEngine(readOnlyAnalysisJob(sourceRef));
+      if(generation!==state.epoch)return false;
+      if(revision!==state.revision||state.source!==sourceRef||
+         state.source?.sourceSha256!==sourceSha256||
+         hubEnabled!==state.hubEnabled)
+        throw Error('EVIDENCE_RECHECK_STALE_REVISION');
+      if(hubEnabled)recordHubResult(recheck,sourceRef.rawSha256);
+      const current=establishCurrentAnalysisProof(recheck,
+        {epoch:generation,revision,sourceRef,sourceSha256,hubEnabled});
+      state.plan=current.plan;state.findings=current.findings;
+      state.resolutions=current.resolutions;state.shortElements=current.shortElements;
+      state.manualPorts=current.manualPorts;
+      return true;
+    }catch(error){
+      if(generation!==state.epoch)return false;
+      const reason=String(error?.message||error);
+      clearEvidenceProof(reason==='EVIDENCE_RECHECK_STALE_REVISION'?
+        'EVIDENCE_RECHECK_STALE_REVISION':
+        reason==='EVIDENCE_RECHECK_PARITY_NOT_EQUAL'?
+          'EVIDENCE_RECHECK_PARITY_NOT_EQUAL':
+        reason.includes('SOURCE_DRIFT')?'EVIDENCE_RECHECK_SOURCE_DRIFT':
+          'EVIDENCE_RECHECK_FAILED:'+String(error?.name||'Error'));
+      return false;
+    }finally{
+      if(generation===state.epoch)refresh();
+    }
   }
   function downloadResolutions(){
     if(!state.source||!state.plan||!analysisProofCurrent()||state.busy||state.batchRunning)return;
@@ -445,8 +518,9 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       state.findings=current.findings;state.result=recheck;state.selected.clear();state.gapReviews.clear();
       state.selected=new Set(changedIds);
       state.revision++;state.applied+=ids.length;
-      state.analysisProof={epoch:generation,revision:state.revision,
-        sourceSha256:fixedSha,result:recheck,hubEnabled:state.hubEnabled};
+      establishCurrentAnalysisProof(recheck,{epoch:generation,
+        revision:state.revision,sourceRef:state.source,sourceSha256:fixedSha,
+        accepted:current});
       state.hubRevision=state.hubEnabled?state.revision:null;
       state.history.push({sourceSha256:source.sourceSha256,fixedSha256:fixedSha,
         actionIds:ids,operations:txn.operations,validation:validation.checks,jointRepairs,reviews:priorReviews,
@@ -541,7 +615,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   /** One UI publication for a fully audited sequence (or last validated checkpoint).
    * Never call runFix() or repaint the canvas per selected element.
    */
-  function publishShortBulk(outcome){
+  async function publishShortBulk(outcome,generation=state.epoch){
     if(!outcome||outcome.originSha256!==state.source?.sourceSha256)
       throw Error('SHORT_BULK_ORIGINAL_SOURCE_DRIFT');
     const beforeCount=state.findings.length,applied=outcome.applied||[];
@@ -566,6 +640,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       }
       state.revision+=applied.length;
       state.applied+=applied.length;
+      clearEvidenceProof('EVIDENCE_RECHECK_PENDING');
       state.fix={sourceSha256:state.source.sourceSha256,receiptKey:'drop',
         actionIds:applied.map(p=>p.id),xml:state.source.sourceText,
         name:(previous.name.replace(/\\.xml$/i,'')||'input')+'.bulk-'+applied.length+'.validated.topofix.xml',
@@ -601,6 +676,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     setFixStatus(message,reason==='COMPLETE'&&done?'ready':done?'stopped':'rejected','drop');
     updateStatus('Selected short-element batch finished. '+done+
       ' validated; '+skipped+' not eligible on reanalysis. Engineering review remains required.');
+    if(outcome.latest&&done)await refreshPublishedEvidence(generation,state.revision,state.source);
   }
   async function dropShortElements(){
     if(state.hubEnabled){setFixStatus('UXML_PREVIEW_AUTO_ONLY: short-element changes held. Turn preview off for the existing direct route.','rejected');return;}
@@ -641,13 +717,13 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       });
       if(generation!==state.epoch)return;
       state.shortBulk=null;
-      publishShortBulk(outcome);
+      await publishShortBulk(outcome,generation);
     }catch(error){
       if(generation!==state.epoch)return;
       const checkpoint=state.shortBulk||{originSha256:source.sourceSha256,latest:null,
         applied:[],skipped:[],requested:ids,completed:0};
       state.shortBulk=null;
-      publishShortBulk({...checkpoint,stopReason:'ERROR',stopMessage:error?.message||String(error)});
+      await publishShortBulk({...checkpoint,stopReason:'ERROR',stopMessage:error?.message||String(error)},generation);
     }finally{
       clearInterval(heartbeat);
       if(generation===state.epoch){state.batchRunning=false;state.shortBulk=null;refresh();}
@@ -696,7 +772,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       renderSecondPass();
     }
   }
-  function publishManualQueue(outcome){
+  async function publishManualQueue(outcome,generation=state.epoch){
     if(!outcome||outcome.initialSha256!==state.source?.sourceSha256)
       throw Error('SECOND_PASS_QUEUE_SOURCE_PUBLISH_DRIFT');
     const before=state.findings.length,applied=outcome.applied||[];
@@ -724,6 +800,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       }
       state.revision+=applied.length;
       state.applied+=applied.length;
+      clearEvidenceProof('EVIDENCE_RECHECK_PENDING');
       state.fix={sourceSha256:state.source.sourceSha256,receiptKey:'manual-queue',
         xml:state.source.sourceText,
         name:(state.source.name.replace(/\\.xml$/i,'')||'input')+
@@ -758,6 +835,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     setFixStatus(state.manualQueueStatus,a?'ready':'rejected','manual-queue');
     updateStatus('Manual Fix Queue reconciled. '+a+' validated connections; source review remains required.');
     renderManualQueue();
+    if(outcome.latest&&a)await refreshPublishedEvidence(generation,state.revision,state.source);
   }
   async function applyManualQueue(){
     if(state.hubEnabled){state.manualQueueStatus='UXML_PREVIEW_AUTO_ONLY: manual queue Apply held. Turn preview off for the existing route.';renderManualQueue();return;}
@@ -796,11 +874,11 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
           remaining=progress.remaining;heartbeat();
         }});
       if(generation!==state.epoch)return;
-      publishManualQueue(outcome);
+      await publishManualQueue(outcome,generation);
     }catch(error){
       if(generation!==state.epoch)return;
       const saved=state.manualQueueCheckpoint;
-      publishManualQueue({...saved,stopReason:'ERROR',message:String(error?.message||error)});
+      await publishManualQueue({...saved,stopReason:'ERROR',message:String(error?.message||error)},generation);
     }finally{
       clearInterval(heartbeatId);
       if(generation===state.epoch){
@@ -972,7 +1050,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     cancelEngine();
     const generation=++state.epoch;
     state.shortBulk=null;
-    state.source=null;state.original=null;state.revision=0;state.hubParity=null;state.hubRevision=null;state.analysisProof=null;state.opsPreview=null;state.opsPreviewError=null;state.applied=0;state.history=[];state.resolutions=[];state.shortElements=[];state.shortPreview=null;
+    state.source=null;state.original=null;state.revision=0;state.hubParity=null;state.hubRevision=null;clearEvidenceProof('EVIDENCE_ANALYSIS_REQUIRED');state.opsPreview=null;state.opsPreviewError=null;state.applied=0;state.history=[];state.resolutions=[];state.shortElements=[];state.shortPreview=null;
     const shortPanel=query(root,'[data-short-preview]');if(shortPanel)shortPanel.textContent='';
     state.manualPorts=[];state.secondPass=null;state.manualQueue=[];
     state.manualQueueCheckpoint=null;state.manualQueueRunning=false;
@@ -1009,42 +1087,37 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   async function analyze() {
     if(!state.source||state.busy)return;
     const generation=state.epoch,source=state.source;state.busy=true;
-    state.plan=null;state.findings=[];state.batch=null;state.manualPorts=[];state.secondPass=null;state.analysisProof=null;state.opsPreview=null;state.opsPreviewError=null;
+    state.plan=null;state.findings=[];state.batch=null;state.manualPorts=[];state.secondPass=null;clearEvidenceProof('EVIDENCE_RECHECK_PENDING');state.opsPreview=null;state.opsPreviewError=null;
     query(root,'[data-batch-confirm]').textContent='';setFixStatus('');refresh();updateStatus('Running authoritative PSI116 topology analysis…');
     try {
-      const result=await runEngine({sourceKind:'xml',sourceText:source.sourceText,
-        sourceName:source.name,topologyPreFinalOnly:true,
-        options:{outputMode:'enriched-only',analyzeTopology:true,generateTopoFix:false,
-          useTopoFixForCii:false,topologyActionIds:[],
-          topologyUxmlPreview:state.hubEnabled},sourceRawSha256:source.rawSha256});
+      const result=await runEngine(readOnlyAnalysisJob(source));
       if(generation!==state.epoch)return;
       recordHubResult(result);
-      if(result?.ok!==true||result.outputKind!=='topology-sidecars'||
-          result.ciiText||result.acceptedFinalTransferred!==false||
-          result.nativeCiiReleaseAuthorized!==false||result.topoFixCommitted===true||
-          result.topoFixXmlText)
-        throw Error(result?.error||'Topology-only engine contract rejected');
-      const plan=JSON.parse(result.topologyFixPlanText||'null');
-      const findings=JSON.parse(result.topologyFindingsText||'null');
-      if(plan?.source?.sha256!==source.sourceSha256||
-         findings?.source?.sha256!==source.sourceSha256)
-        throw Error('TOPOFIX_PLAN_SOURCE_DRIFT');
-      if(!Array.isArray(plan.actions)||!Array.isArray(findings.findings))
-        throw Error('PSI116 sidecar structure invalid');
-      state.plan=plan;state.findings=findings.findings;state.result=result;
-      state.resolutions=findings.resolvedConnections||[];
-      state.shortElements=findings.shortElements||[];state.manualPorts=findings.manualConnectionPorts||[];
-      state.analysisProof={epoch:generation,revision:state.revision,
-        sourceSha256:source.sourceSha256,result,hubEnabled:state.hubEnabled};
-      updateStatus('Authoritative topology analysis complete. '+plan.actions.length+
+      // DIFFERENT still publishes read-only findings/plan so the Owner sees
+      // precisely what disagrees. Only the current connection-evidence proof
+      // (and existing hub Auto-fix) is withheld. Do not turn it into analysis
+      // failure or hide the source-qualified review cases.
+      const current=acceptAnalysis(result,source.sourceSha256);
+      state.plan=current.plan;state.findings=current.findings;
+      state.resolutions=current.resolutions;state.shortElements=current.shortElements;
+      state.manualPorts=current.manualPorts;
+      if(!state.hubEnabled||state.hubParity?.status==='EQUAL')
+        establishCurrentAnalysisProof(result,{epoch:generation,
+          revision:state.revision,sourceRef:source,sourceSha256:source.sourceSha256,
+          accepted:current});
+      else clearEvidenceProof('EVIDENCE_RECHECK_PARITY_NOT_EQUAL');
+      updateStatus('Authoritative topology analysis complete. '+current.plan.actions.length+
         ' plan entries. No Weight/O1/Final/native session was supplied or created.');
     } catch(error) {
-      if(generation===state.epoch)updateStatus('Topology analysis failed: '+(error?.message||String(error)));
+      if(generation===state.epoch){
+        clearEvidenceProof('EVIDENCE_RECHECK_FAILED:'+String(error?.name||'Error'));
+        updateStatus('Topology analysis failed: '+(error?.message||String(error)));
+      }
     } finally {
       if(generation===state.epoch){state.busy=false;refresh();}
     }
   }
-  const click=event=>{
+  const click=async event=>{
     const target=event.target.closest('button');if(!target||!root.contains(target))return;
     if(target.hasAttribute('data-auto-fix-all'))planAutoFixAll();
     else if(target.hasAttribute('data-run-auto-fix-all'))autoFixAll();
@@ -1096,8 +1169,8 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       cancelEngine();state.epoch++;state.busy=false;
       state.batchRunning=false;state.manualQueueRunning=false;
       state.manualQueueCheckpoint=null;
-      publishManualQueue({...saved,stopReason:'CANCELLED',
-        message:'Operator cancelled. Last validated checkpoint retained.'});
+      await publishManualQueue({...saved,stopReason:'CANCELLED',
+        message:'Operator cancelled. Last validated checkpoint retained.'},state.epoch);
       refresh();
     }
     else if(target.hasAttribute('data-cancel')&&state.shortBulk){
@@ -1106,7 +1179,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       const saved=state.shortBulk;
       cancelEngine();state.epoch++;state.busy=false;state.batchRunning=false;
       state.shortBulk=null;
-      publishShortBulk({...saved,stopReason:'CANCELLED',stopMessage:'User cancelled active batch'});
+      await publishShortBulk({...saved,stopReason:'CANCELLED',stopMessage:'User cancelled active batch'},state.epoch);
       refresh();
     }
     else if(target.hasAttribute('data-cancel')){cancelEngine();state.secondPass=null;state.shortPreview=null;
@@ -1175,7 +1248,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     }
     if(event.target.matches('[data-uxml-toggle]')){
       if(state.busy||state.batchRunning){event.target.checked=state.hubEnabled;return;}
-      state.hubEnabled=event.target.checked;state.hubParity=null;state.analysisProof=null;state.opsPreview=null;state.opsPreviewError=null;
+      state.hubEnabled=event.target.checked;state.hubParity=null;clearEvidenceProof('EVIDENCE_ANALYSIS_REQUIRED');state.opsPreview=null;state.opsPreviewError=null;
       opsPanel.reset();
       renderHubParity();renderActions();refresh();
       updateStatus(state.hubEnabled?
