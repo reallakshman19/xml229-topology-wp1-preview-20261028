@@ -17,12 +17,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Fetch exact XCU c183aa5f135a459e2df68948919c905caac574d7 with sixteen Git blob checks, no vendoring
+      - name: Fetch exact XCU d8cf5228b0860ccda7f11c84cfd46229bd55f333 with sixteen Git blob checks, no vendoring
         shell: bash
         run: |
           set -euo pipefail
           root="$RUNNER_TEMP/xcu-uxml-s3"
-          upstream="https://raw.githubusercontent.com/reallakshman19/XML_Compare_Utilities/c183aa5f135a459e2df68948919c905caac574d7"
+          upstream="https://raw.githubusercontent.com/reallakshman19/XML_Compare_Utilities/d8cf5228b0860ccda7f11c84cfd46229bd55f333"
           mkdir -p "$root/uxml" "$root/utils" "$root/tools" "$root/tests/fixtures" "$root/docs"
           curl --fail --location --retry 3 "$upstream/package.json" -o "$root/package.json"
           test "$(git hash-object "$root/package.json")" = "8b0cc1e976ef2cd3cd10f344b37463738d22ea3d"
@@ -45,7 +45,7 @@ jobs:
           curl --fail --location --retry 3 "$upstream/tools/psi116-to-uxml.mjs" -o "$root/tools/psi116-to-uxml.mjs"
           test "$(git hash-object "$root/tools/psi116-to-uxml.mjs")" = "7148fc20000963c5a32be27a7787705745e1d30b"
           curl --fail --location --retry 3 "$upstream/tools/inputxml-to-uxml.mjs" -o "$root/tools/inputxml-to-uxml.mjs"
-          test "$(git hash-object "$root/tools/inputxml-to-uxml.mjs")" = "6083f4d8992160c4bd5dcbbb58248e0cf9089a4c"
+          test "$(git hash-object "$root/tools/inputxml-to-uxml.mjs")" = "7f32736308a0baea86b95c3281bb0bbd71d12176"
           curl --fail --location --retry 3 "$upstream/tests/fixtures/uxml-s3-synthetic.psi116.xml" -o "$root/tests/fixtures/uxml-s3-synthetic.psi116.xml"
           test "$(git hash-object "$root/tests/fixtures/uxml-s3-synthetic.psi116.xml")" = "f262e6a4affb5c5a929b12c415a04569b79dbe46"
           curl --fail --location --retry 3 "$upstream/tests/fixtures/uxml-s3-synthetic.workspace.input.xml" -o "$root/tests/fixtures/uxml-s3-synthetic.workspace.input.xml"
