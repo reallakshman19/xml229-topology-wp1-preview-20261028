@@ -430,7 +430,7 @@ def _document_from_caesar_inputxml(uxml: dict, *,
             _need(isinstance(ix, int) and ix not in run_by_index and 0 <= ix < len(rows),
                   "INPUT_XML_DUPLICATE_OR_INVALID_RUN_ELEMENT_INDEX")
             run_by_index[ix] = (run_index, run)
-    _need(set(run_by_index) == set(range(len(rows)), "INPUT_XML_RUN_COVERAGE_INCOMPLETE")
+    _need(set(run_by_index) == set(range(len(rows))), "INPUT_XML_RUN_COVERAGE_INCOMPLETE")
     ports_by_component: dict[str, list[dict]] = {}
     for port in ports:
         _need(isinstance(port, dict) and isinstance(port.get("componentId"), str),
