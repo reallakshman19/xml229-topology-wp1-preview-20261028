@@ -23,7 +23,9 @@ test('6880 / 6450 stays REVIEW ONLY with verified CLOS provenance and exact 240.
   assert.equal(r.disposition,'CONFLICTS_WITH_CLOS');
   assert.equal(r.status,'REVIEW ONLY');
   assert.equal(r.distanceMm.toFixed(3),'240.600');
-  assert.deepEqual(r.vector,{x:240.5999999999999,y:0,z:0});
+  assert.ok(Math.abs(r.vector.x-240.6)<1e-9);
+  assert.equal(r.vector.y,0);
+  assert.equal(r.vector.z,0);
   const html=reviewConnectionHTML(r);
   for(const token of ['REVIEW ONLY','CONFLICTS_WITH_CLOS','240.600','B0:N6880:S1',
     '114.300','6.020','upstream CAD','reimport','PROPOSAL'])
