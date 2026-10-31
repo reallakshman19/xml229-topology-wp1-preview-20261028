@@ -2,6 +2,7 @@
 import hashlib
 import json
 import sys
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -9,7 +10,10 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'converters'))
 from test_port_policy import node, doc, pipe_flange
 from psi116_topology_resolver import resolve_psi116, ResolverConfig
-from psi116_topology_resolver.closure_witness import closure_binding_witnesses
+from psi116_topology_resolver import read_psi116_xml
+from psi116_topology_resolver.connection_ports import PortModel, bound_closure_records
+from psi116_topology_resolver.closure_witness import (ROW_KEYS, _binding_kinds, _physical,
+                                                      closure_binding_witnesses)
 
 CLOS = '<ConnectionType>CLOS</ConnectionType>'
 PRE_CHANGE_KEYS = ['config', 'findings', 'manualConnectionPorts', 'resolvedConnections',
@@ -54,7 +58,8 @@ class ClosureWitness(unittest.TestCase):
                          ('BOUND', 'PORT', 6880, 0, 'RIGID', 'FLAN', 'V', 2))
         self.assertEqual(row['sourceSha256'], hashlib.sha256(gap_case().encode('utf-8')).hexdigest())
         self.assertEqual([(d['sourceKey'], d['bindingKinds']) for d in row['closureDeclarations']],
-                         [('B0:N6880:S1', ['EXACT_SOURCE_RECORD', 'SAME_COMPONENT_OWNER_ENDPOINT'])])
+                         [('B0:N6880:S1', ['EXACT_SOURCE_RECORD', 'SAME_POSITIVE_NODE_NUMBER_WITHIN_TOLERANCE',
+                                           'SAME_COMPONENT_OWNER_ENDPOINT'])])
         self.assertEqual(row['pairingEffect'], 'PORT_EXCLUDED_FROM_AUTOMATIC_AND_SECOND_PASS_PAIRING')
         # Explanation only: no finding or action ties the closed end to its 240.6 mm neighbour.
         pair = {'B0:N6880:S1', 'B1:N6450:S0'}
@@ -92,7 +97,9 @@ class ClosureWitness(unittest.TestCase):
         helper = rows['B0:N-1:S0']
         self.assertEqual((helper['bindingStatus'], helper['ownerType'], helper['positiveNodeNumber']),
                          ('BOUND', 'BRAN', False))
-        self.assertIn('BRANCH_BOUNDARY_START', helper['closureDeclarations'][0]['bindingKinds'])
+        # BRAN is never in the authority's `physical` list, so its own row is not a boundary binding.
+        self.assertEqual(helper['closureDeclarations'][0]['bindingKinds'],
+                         ['EXACT_SOURCE_RECORD', 'SAME_COMPONENT_OWNER_ENDPOINT'])
         blind = rows['B0:N10:S1']
         self.assertEqual([(d['sourceKey'], d['bindingKinds']) for d in blind['closureDeclarations']],
                          [('B0:N-1:S0', ['BRANCH_BOUNDARY_START'])])
@@ -101,6 +108,58 @@ class ClosureWitness(unittest.TestCase):
         self.assertEqual((rows['B0:N-1:S3']['bindingStatus'], rows['B0:N-1:S3']['portQualified'],
                           rows['B0:N-1:S3']['boundRecordKeys']), ('UNQUALIFIED', False, ['B0:N-1:S3']))
         self.assertEqual(rows['B0:N-1:S4']['bindingStatus'], 'EVIDENCE_UNAVAILABLE')
+        self.assertTrue(all(tuple(r) == ROW_KEYS for r in rows.values()))
+
+    def test_c_bran_boundary_label_follows_authority_predicates(self):
+        start_only_bran = doc(node(-1, 'BRAN', 'B', 1, '0 0 0', CLOS) + node(-1, 'BRAN', 'B', 2, '0 0 0'))
+        end_boundary = doc(node(10, 'FBLI', 'BL', 1, '0 0 0') + node(-1, 'FBLI', 'BL', 2, '32.2 0 0') +
+                           node(-1, 'BRAN', 'B', 2, '32.2 0 0', CLOS))
+        kinds = lambda src: {r['sourceKey']: [k for d in r['closureDeclarations'] for k in d['bindingKinds']]
+                             for r in witnesses(src)}
+        self.assertFalse(any('BRANCH_BOUNDARY_START' in v for v in kinds(start_only_bran).values()))
+        self.assertEqual(kinds(end_boundary), {'B0:N-1:S1': ['BRANCH_BOUNDARY_END'],
+                                               'B0:N-1:S2': ['EXACT_SOURCE_RECORD', 'SAME_COMPONENT_OWNER_ENDPOINT']})
+
+    def test_c_labels_agree_with_authority_for_every_record_pair(self):
+        sources = (gap_case(), pipe_flange(75, True).replace('<NodeNumber>30</NodeNumber>', '<NodeNumber>30</NodeNumber>' + CLOS),
+                   doc(node(-1, 'BRAN', 'B', 1, '0 0 0', CLOS) + node(10, 'FBLI', 'BLIND', 1, '0 0 0') +
+                       node(-1, 'FBLI', 'BLIND', 2, '32.2 0 0') + node(-1, 'BRAN', 'B', 2, '32.2 0 0', CLOS)),
+                   doc(n(500, 'FLAN', 'A', 1, '0 0 0', CLOS) + n(500, 'RIGID', 'A', 2, '0.3 0 0')))
+        for source in sources:
+            d = read_psi116_xml(source)
+            for branch in d.branches:
+                physical = _physical(branch)
+                for target in (x for x in branch.nodes if x.position):
+                    bound = {r.key for r in bound_closure_records(d, target, 0.5)}
+                    for decl in (x for x in branch.nodes if x.position and x.connection_type == 'CLOS'):
+                        labelled = _binding_kinds(branch, physical, decl, target, 0.5) != ['UNCLASSIFIED']
+                        self.assertEqual(labelled, decl.key in bound, (decl.key, target.key))
+
+    def test_sort_puts_branch_0_declaration_before_branch_1_port(self):
+        # Ports are collected before off-port declarations; only the sort restores source order.
+        source = doc(node(10, 'PIPE', 'P', 1, '0 0 0') + node(-1, 'ATTA', 'S', 0, '50 0 0', CLOS) +
+                     node(20, 'PIPE', 'P', 2, '100 0 0'),
+                     n(500, 'FLAN', 'A', 1, '5000 0 0', CLOS) + n(-1, 'RIGID', 'A', 2, '5100 0 0'))
+        self.assertEqual([(r['sourceKey'], r['bindingStatus']) for r in witnesses(source)],
+                         [('B0:N-1:S1', 'UNQUALIFIED'), ('B1:N500:S0', 'BOUND')])
+
+    def test_2000_node_branch_with_20_declarations_is_fast(self):
+        parts = []
+        for i in range(1000):
+            closed = i % 100 == 0
+            parts.append(node(2 * i + 1, 'PIPE', f'P{i}', 1, f'{200 * i} 0 0', CLOS if closed else '') +
+                         node(2 * i + 2, 'PIPE', f'P{i}', 2, f'{200 * i + 100} 0 0'))
+            if i % 100 == 50:  # off-port declaration: exercises the reverse scan
+                parts.append(node(-1, 'ATTA', f'S{i}', 0, f'{200 * i + 50} 0 0', CLOS))
+        d = read_psi116_xml(doc(''.join(parts)))
+        model = PortModel(d, ResolverConfig())
+        start = time.perf_counter()
+        rows = closure_binding_witnesses(d, ResolverConfig(), model)
+        elapsed = time.perf_counter() - start
+        self.assertEqual(sum(len(b.nodes) for b in d.branches), 2010)
+        self.assertEqual([r['bindingStatus'] for r in rows].count('BOUND'), 10)
+        self.assertEqual([r['bindingStatus'] for r in rows].count('UNQUALIFIED'), 10)
+        self.assertLess(elapsed, 0.25, f'witness extraction took {elapsed:.3f}s')
 
     def test_c_duplicate_port_labels_are_unqualified_not_dropped(self):
         source = doc(n(30, 'FLAN', 'F', 1, '0 0 0', CLOS) + n(31, 'RIGID', 'F', 1, '86 0 0'))
@@ -145,6 +204,9 @@ class ClosureWitness(unittest.TestCase):
         with mock.patch.dict(sys.modules, {'psi116_topology_resolver.closure_witness': None}):
             rows = result.findings_payload(ResolverConfig())['closureBindingWitnesses']
         self.assertEqual([r['bindingStatus'] for r in rows], ['EVIDENCE_UNAVAILABLE'])
+        self.assertEqual(tuple(rows[0]), ROW_KEYS)
+        self.assertIsNone(rows[0]['sourceKey'])
+        self.assertIsNone(rows[0]['branchIndex'])
 
 
 if __name__ == '__main__':

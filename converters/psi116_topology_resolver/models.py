@@ -260,12 +260,20 @@ def _closure_binding_witnesses(document: Psi116Document, config: ResolverConfig)
     except ModuleNotFoundError as error:
         if error.name != f"{__package__}.closure_witness":
             raise
-        return [{
-            "rowKind": "RUNTIME",
-            "bindingStatus": "EVIDENCE_UNAVAILABLE",
-            "sourceSha256": document.source_sha256,
-            "reason": "closure_witness module is not loaded in this runtime; CLOS bindings were not evaluated.",
-        }]
+        # Same keys as closure_witness.ROW_KEYS so consumers can index rows uniformly.
+        row = dict.fromkeys((
+            "sourceKey", "branchIndex", "branchName", "sourceIndex", "nodeNumber", "positiveNodeNumber",
+            "componentType", "componentRefNo", "endpoint", "connectionType", "sourceSha256", "rowKind",
+            "portQualified", "ownerType", "bindingStatus", "closureDeclarations", "boundRecordKeys",
+            "pairingEffect", "reason",
+        ))
+        row.update(
+            rowKind="RUNTIME",
+            bindingStatus="EVIDENCE_UNAVAILABLE",
+            sourceSha256=document.source_sha256,
+            reason="closure_witness module is not loaded in this runtime; CLOS bindings were not evaluated.",
+        )
+        return [row]
     return closure_binding_witnesses(document, config)
 
 
