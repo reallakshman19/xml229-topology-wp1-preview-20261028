@@ -13,8 +13,7 @@ export function mountSourceReviewPanel(reviewPanel,{getReview,getCurrentSha}){
   const add=document.createElement('button');
   add.type='button';add.dataset.sourceReviewAdd='';
   add.textContent='Add to Source Review';add.disabled=true;
-  // DELIBERATE BEHAVIORAL RED: add a forbidden executable dataset key.
-  add.dataset.queueApply='';
+
   reviewPanel.appendChild(add);
   const panel=document.createElement('section');
   panel.dataset.sourceReviewQueue='';
@@ -80,6 +79,8 @@ export function mountSourceReviewPanel(reviewPanel,{getReview,getCurrentSha}){
       const result=getReview();
       const outcome=upsertSourceReview(rows,result);
       rows=outcome.rows;
+      // DELIBERATE RED: forbidden executable marker injected after Add.
+      add.dataset.queueApply='';
       message=outcome.inserted?'Exact pair added for design review.':
         'Existing unordered pair refreshed: disposition, distance and time updated; saved engineer decision and note preserved.';
     }catch(error){message=String(error?.message||error);}
