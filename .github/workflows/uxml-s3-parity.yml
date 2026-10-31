@@ -5,6 +5,7 @@ on:
       - 'converters/psi116_topology_resolver/uxml_adapter.py'
       - 'converters/psi116_topology_resolver/uxml_compare.py'
       - 'tests/test_uxml_s3_caesar.py'
+      - 'tests/test_uxml_s3_reconcile.py'
       - '.github/workflows/uxml-s3-parity.yml'
   workflow_dispatch:
 permissions:
@@ -97,6 +98,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 -B -m unittest discover -s tests -p test_uxml_s3_caesar.py -v
+          python3 -B -m unittest discover -s tests -p test_uxml_s3_reconcile.py -v
           python3 -B -m unittest discover -s tests -p test_uxml_psi116_s1.py -v
       - name: Print exact cross-format engineering differences
         shell: bash
