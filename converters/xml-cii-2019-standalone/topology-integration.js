@@ -108,7 +108,7 @@ if job_generate_topofix:
         # sourceRefs -> ORIGINAL PSI116 patched by native transaction.py.
         # Direct transaction is a private comparator, never the hub download.
         from psi116_topology_resolver.uxml_edit_ops import export_edit_ops, apply_edit_ops
-            try:
+        try:
             if json.loads(job_joint_repairs_json) or json.loads(job_short_elements_json):
                 raise ValueError("UXML_PREVIEW_AUTO_ONLY: manual and short-element repair held")
             selection = TransactionPolicy(selected_action_ids=tuple(job_topology_action_ids))
