@@ -39,20 +39,6 @@ jobs:
           curl --fail --location --retry 3 "$upstream/tools/psi116-to-uxml.mjs" -o "$root/tools/psi116-to-uxml.mjs"
           test "$(git hash-object "$root/tools/psi116-to-uxml.mjs")" = "e403174b810c0d6eaab159aa1f1cc8bf2ebdf2f2"
           echo "XCU_UXML_ROOT=$root" >> "$GITHUB_ENV"
-      - name: DELIBERATE RED - make ephemeral checked reader drop CLOS declaration (test must fail)
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import os
-          from pathlib import Path
-          p = Path(os.environ['XCU_UXML_ROOT']) / 'uxml/UxmlPsi116SchemaMapper.js'
-          source = p.read_text(encoding='utf8')
-          original = "const connectionType = textOf(node, 'ConnectionType').toUpperCase();"
-          assert source.count(original) == 1, "Source pin changed; cannot stage falsifier"
-          p.write_text(source.replace(original, "const connectionType = ''; // RED: CLOS is intentionally lost"),
-                       encoding='utf8')
-          PY
       - name: Direct PSI116 vs pinned reader/UXML adapter same native engine
         shell: bash
         run: |
