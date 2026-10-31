@@ -48,6 +48,16 @@ jobs:
           npm install --no-save --ignore-scripts --package-lock=false playwright@1.52.0
           npx playwright install --with-deps chromium
           node tests/audit-browser.mjs
+      - name: Retain UXML-UI parity screenshot and browser receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: uxml-ui-parity-browser-evidence
+          path: |
+            preview-test-results/uxml-ui-parity-equal.png
+            preview-test-results.json
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Upload isolated candidate for Owner browser trial (no deployment)
         if: success()
         uses: actions/upload-artifact@v4
