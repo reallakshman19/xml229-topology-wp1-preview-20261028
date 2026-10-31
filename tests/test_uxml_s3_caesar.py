@@ -85,7 +85,7 @@ class S3CaesarCrossFormat(unittest.TestCase):
                 fileSha256="0"*64)),
             ("wrongRecordKey", lambda d: d["components"][0]["sourceRefs"][0].update(
                 recordKey="E5:F10:T20")),
-            ("wrongPortPoint", lambda d: d["ports"][0]["point"].update(x=0)),
+            ("wrongPortPoint", lambda d: d["ports"][0]["point"].update(x=50)),
             ("wrongFileSource", lambda d: d["sources"][0].update(hash="f"*64)),
             ("wrongElementCount", lambda d: d["inputXml"].update(elementCount=300)),
         ]:
