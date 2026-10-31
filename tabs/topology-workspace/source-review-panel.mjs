@@ -8,6 +8,8 @@ const friendly=d=>d.replaceAll('_',' ').toLowerCase();
 export function mountSourceReviewPanel(reviewPanel,{getReview,getCurrentSha}){
   if(!reviewPanel)throw Error('SOURCE_REVIEW_PANEL_MISSING');
   let rows=[],message='Read-only evidence. Nothing in this queue can be applied to XML.';
+  // Preserve unsaved form edits across unrelated workspace refreshes.
+  let renderedRows=null,renderedSha=undefined;
   const add=document.createElement('button');
   add.type='button';add.dataset.sourceReviewAdd='';
   add.textContent='Add to Source Review';add.disabled=true;
@@ -33,8 +35,11 @@ export function mountSourceReviewPanel(reviewPanel,{getReview,getCurrentSha}){
   }
   function render(){
     add.disabled=!eligible();
+    const sourceSha=getCurrentSha();
     panel.querySelector('[data-source-review-status]').textContent=
       rows.length+' review record(s) · '+message;
+    if(rows===renderedRows&&sourceSha===renderedSha)return;
+    renderedRows=rows;renderedSha=sourceSha;
     if(!rows.length){container.innerHTML='<p>No source review records yet.</p>';return;}
     container.innerHTML=rows.map((row,index)=>{
       const a=row.ports[0],b=row.ports[1],stale=sourceReviewStatus(row,getCurrentSha());
@@ -74,7 +79,7 @@ export function mountSourceReviewPanel(reviewPanel,{getReview,getCurrentSha}){
       const outcome=upsertSourceReview(rows,result);
       rows=outcome.rows;
       message=outcome.inserted?'Exact pair added for design review.':
-        'Existing unordered pair updated, not duplicated.';
+        'Existing unordered pair refreshed: disposition, distance and time updated; saved engineer decision and note preserved.';
     }catch(error){message=String(error?.message||error);}
     render();
   }

@@ -598,44 +598,102 @@ try{
 
  // P2: Source Review is a separate evidence-only shelf, never the executable queue.
  const sourceQueue=page.locator('[data-source-review-queue]');
+ // Behavioral guard examines ACTUAL UI buttons, not source-code strings.
+ // Adding a data-queue-apply attribute to an allowed button must fail.
+ const assertAllowedReviewControls=async()=>{
+   const controls=await page.evaluate(()=>{
+     const review=document.querySelector('[data-connection-review]');
+     const queue=document.querySelector('[data-source-review-queue]');
+     const allowed=new Set(['sourceReviewAdd','sourceReviewSave',
+       'sourceReviewExportJson','sourceReviewExportCsv']);
+     const buttons=[...review.querySelectorAll('button'),...queue.querySelectorAll('button')];
+     const bad=buttons.filter(button=>{
+       const keys=Object.keys(button.dataset);
+       return keys.length!==1||!allowed.has(keys[0])||
+         button.type!=='button'||button.hasAttribute('formaction');
+     }).map(button=>button.outerHTML.slice(0,300));
+     const imports=[...queue.querySelectorAll('input[type=file]')];
+     if(imports.length!==1||Object.keys(imports[0].dataset).join(',')!=='sourceReviewImport')
+       bad.push('unexpected import control');
+     return bad;
+   });
+   if(controls.length)throw Error('P2 BEHAVIORAL GUARD: unexpected executable review control: '+controls.join(' | '));
+ };
+ const actualQueueState=()=>page.evaluate(()=>
+   document.querySelector('#xml229-topology-workspace').topofixReviewAuditState());
+ const assertNoExecutableMutation=async(expected,stage)=>{
+   const observed=await actualQueueState();
+   if(observed.manualQueueLength!==expected.manualQueueLength||
+      observed.sourceSha256!==expected.sourceSha256)
+     throw Error('P2 BEHAVIORAL GUARD: executable queue or source SHA changed after '+stage);
+   await assertAllowedReviewControls();
+ };
  const beforeSourceMeta=await page.locator('[data-source-meta]').textContent();
  const beforeFindings=await page.locator('[data-plan-summary]').textContent();
  const manualShelf=page.locator('[data-manual-queue]');
  if(!await manualShelf.count()||!await manualShelf.getByText('No approved repairs queued.').count())
    throw Error('P2 baseline manual queue is not empty');
+ const auditBefore=await actualQueueState();
+ if(auditBefore.manualQueueLength!==0||!auditBefore.sourceSha256)
+   throw Error('P2 baseline actual executable queue/source SHA invalid');
+ await assertAllowedReviewControls();
  await rPanel.locator('[data-source-review-add]').click();
+ await assertNoExecutableMutation(auditBefore,'add');
  if(await sourceQueue.locator('[data-source-review-row]').count()!==1||
     !(await sourceQueue.textContent()).includes('CONFLICTS_WITH_CLOS')||
     !(await sourceQueue.textContent()).includes('240.600')||
     !(await sourceQueue.textContent()).includes('B0:N6880:S1'))
    throw Error('P2 exact CLOS review row missing');
  await sourceQueue.locator('[data-source-review-decision]').selectOption('UPSTREAM_SOURCE_CORRECTION_REQUIRED');
- await sourceQueue.locator('[data-source-review-note]').fill('Drawing P2-SYNTH: correct in upstream CAD/design source; never join closed connections');
+ const savedDesignNote='Drawing P2-SYNTH: correct in upstream CAD/design source; never join closed connections';
+ await sourceQueue.locator('[data-source-review-note]').fill(savedDesignNote);
  await sourceQueue.locator('[data-source-review-save]').click();
+ await assertNoExecutableMutation(auditBefore,'save decision');
  if(!(await sourceQueue.textContent()).includes('upstream source correction required')||
     !(await sourceQueue.textContent()).includes('Correct in the upstream CAD/design source, then reimport.'))
    throw Error('P2 engineer decision or upstream instructions not preserved');
- // Reverse the pair: same unordered source identities must update one row, not add another.
+ // Exercise real workspace refresh with UNSAVED decision and note.
+ await sourceQueue.locator('[data-source-review-decision]').selectOption('INTENTIONAL_TERMINATION');
+ await sourceQueue.locator('[data-source-review-note]').fill('UNSAVED draft survives workspace refresh');
+ await page.locator('[data-analyze]').click();
+ await page.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'),null,{timeout:120000});
+ if(await sourceQueue.locator('[data-source-review-decision]').inputValue()!=='INTENTIONAL_TERMINATION'||
+    await sourceQueue.locator('[data-source-review-note]').inputValue()!=='UNSAVED draft survives workspace refresh')
+   throw Error('P2 workspace refresh erased unsaved engineer inputs');
+ await assertNoExecutableMutation(auditBefore,'workspace refresh');
+ // Re-add in original order, then reversed: saved decision/note must survive both.
+ await sourceQueue.locator('[data-source-review-decision]').selectOption('UPSTREAM_SOURCE_CORRECTION_REQUIRED');
+ await sourceQueue.locator('[data-source-review-note]').fill(savedDesignNote);
+ await rPanel.locator('[data-source-review-add]').click();
+ if(await sourceQueue.locator('[data-source-review-row]').count()!==1||
+    await sourceQueue.locator('[data-source-review-decision]').inputValue()!=='UPSTREAM_SOURCE_CORRECTION_REQUIRED'||
+    await sourceQueue.locator('[data-source-review-note]').inputValue()!==savedDesignNote)
+   throw Error('P2 same-order re-add erased saved engineer decision/note');
+ await assertNoExecutableMutation(auditBefore,'same-order re-add');
  await page.locator('[data-review-query="a"]').fill('6450');
  await page.locator('[data-review-query="b"]').fill('6880');
  await rPanel.locator('[data-source-review-add]').click();
- if(await sourceQueue.locator('[data-source-review-row]').count()!==1)
-   throw Error('P2 reversed pair was duplicated');
- await sourceQueue.locator('[data-source-review-decision]').selectOption('UPSTREAM_SOURCE_CORRECTION_REQUIRED');
- await sourceQueue.locator('[data-source-review-note]').fill('Drawing P2-SYNTH: source correction required');
- await sourceQueue.locator('[data-source-review-save]').click();
+ if(await sourceQueue.locator('[data-source-review-row]').count()!==1||
+    await sourceQueue.locator('[data-source-review-decision]').inputValue()!=='UPSTREAM_SOURCE_CORRECTION_REQUIRED'||
+    await sourceQueue.locator('[data-source-review-note]').inputValue()!==savedDesignNote||
+    !(await sourceQueue.locator('[data-source-review-status]').textContent()).includes('decision and note preserved'))
+   throw Error('P2 reversed re-add erased saved engineer decision/note');
+ await assertNoExecutableMutation(auditBefore,'reversed re-add');
  const downloadedReview=page.waitForEvent('download');
  await sourceQueue.locator('[data-source-review-export-json]').click();
  const reviewExport=JSON.parse(await readFile(await (await downloadedReview).path(),'utf8'));
+ await assertNoExecutableMutation(auditBefore,'JSON export');
  if(reviewExport.schema!=='topofix-source-review-queue/v1'||reviewExport.rows.length!==1||
     reviewExport.rows[0].disposition!=='CONFLICTS_WITH_CLOS'||
     reviewExport.rows[0].decision!=='UPSTREAM_SOURCE_CORRECTION_REQUIRED'||
+    reviewExport.rows[0].note!==savedDesignNote||
     reviewExport.rows[0].distanceMm.toFixed(3)!=='240.600'||
     reviewExport.rows[0].ports.map(p=>p.sourceKey).join('|')!=='B0:N6880:S1|B1:N6450:S0')
    throw Error('P2 JSON evidence lost exact identity, closure or decision');
  const downloadedCSV=page.waitForEvent('download');
  await sourceQueue.locator('[data-source-review-export-csv]').click();
  const reviewCSV=await readFile(await (await downloadedCSV).path(),'utf8');
+ await assertNoExecutableMutation(auditBefore,'CSV export');
  if(!reviewCSV.includes('UPSTREAM_SOURCE_CORRECTION_REQUIRED')||
     !reviewCSV.includes('B0:N6880:S1')||!reviewCSV.includes('240.600'))
    throw Error('P2 CSV evidence not source qualified');
@@ -647,7 +705,7 @@ try{
     await sourceQueue.locator('[data-queue-apply],[data-queue-second],[data-apply-second],[data-close-joint],[data-run-auto-fix-all]').count()||
     await rPanel.locator('[data-queue-apply],[data-queue-second],[data-apply-second],[data-close-joint]').count())
    throw Error('P2 source review leaked into executable repair or modified XML/findings');
- result.topoAP2Isolation='PASS: 1 exact review pair, reversed duplicate update, decision, JSON/CSV, 0 executable queue and 0 XML/finding mutations';
+ result.topoAP2Isolation='PASS: re-add both orders preserves decision/note, unsaved drafts survive refresh, strict DOM button allowlist, JSON/CSV, actual manualQueue/source SHA unchanged';
  await mkdir(path.join(sourceRoot,'preview-test-results'),{recursive:true});
  // Capture the actual review queue (inside the independently scrollable findings aside),
  // not a full-page image that can omit the queue below the aside's scroll fold.
@@ -667,6 +725,11 @@ try{
  if(await sourceQueue.locator('[data-source-review-row]').count()!==1||
     !(await sourceQueue.textContent()).includes('STALE_SOURCE'))
    throw Error('P2 stale imported row was lost or re-bound');
+ const afterNewSource=await actualQueueState();
+ if(afterNewSource.manualQueueLength!==0||
+    afterNewSource.sourceSha256===auditBefore.sourceSha256)
+   throw Error('P2 source replacement did not invalidate review SHA');
+ await assertNoExecutableMutation(afterNewSource,'stale JSON import');
  result.topoAP2Stale='PASS: source replacement and imported mismatched SHA remain STALE_SOURCE';
  await page.locator('[data-review-query="a"]').fill('6880');
  await page.locator('[data-review-query="b"]').fill('6450');

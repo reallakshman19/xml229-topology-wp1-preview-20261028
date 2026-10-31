@@ -36,16 +36,26 @@ test('P2 add preserves source key, branch, node, endpoint, owner, source SHA, CL
   assert.equal(row.id,sourceReviewPairId(sha,a.key,b.key));
 });
 
-test('P2 reversed unordered exact pair updates, never duplicates',()=>{
-  const {rows}=make();
-  const second=upsertSourceReview(rows,reversed(),
-    {decision:'UPSTREAM_SOURCE_CORRECTION_REQUIRED',note:'Drawing review required',at:t1});
-  assert.equal(second.inserted,false);
-  assert.equal(second.rows.length,1);
-  assert.equal(second.row.createdAt,t0);
-  assert.equal(second.row.updatedAt,t1);
-  assert.equal(second.row.decision,'UPSTREAM_SOURCE_CORRECTION_REQUIRED');
-  assert.equal(second.row.note,'Drawing review required');
+test('P2 same/reversed re-add preserves engineer decision and note, updates only source observations',()=>{
+  const {rows,row}=make();
+  const saved=editSourceReview(rows,row.id,'UPSTREAM_SOURCE_CORRECTION_REQUIRED',
+    'Drawing review required — preserve this note',t1);
+  let current=saved;
+  for(const [orientation,at] of [[result(),t2],[reversed(),'2026-10-31T10:03:00.000Z']]){
+    const observed={...orientation,disposition:'SOURCE_UNVERIFIED',distanceMm:240.601};
+    const second=upsertSourceReview(current,observed,{at,
+      decision:'DRAWING_CHECK_PENDING',note:'must not override saved decision'});
+    assert.equal(second.inserted,false);
+    assert.equal(second.rows.length,1);
+    assert.equal(second.row.createdAt,t0);
+    assert.equal(second.row.updatedAt,at);
+    assert.equal(second.row.decision,'UPSTREAM_SOURCE_CORRECTION_REQUIRED');
+    assert.equal(second.row.note,'Drawing review required — preserve this note');
+    assert.equal(second.row.disposition,'SOURCE_UNVERIFIED');
+    assert.equal(second.row.distanceMm,240.601);
+    assert.deepEqual(second.row.ports,row.ports);
+    current=second.rows;
+  }
 });
 
 test('P2 decision updates only audit fields, never source identity/disposition',()=>{
@@ -123,6 +133,13 @@ test('P2 CSV uses exact witness identities, stale status, and neutralizes formul
   assert.match(csv,/RIGID/);
   assert.match(csv,/FBLI/);
   assert.ok(csv.includes("'=HYPERLINK("));
+  for(const leading of ['\t','\r']){
+    const dangerous=editSourceReview(rows,row.id,'DRAWING_CHECK_PENDING',
+      leading+'=HYPERLINK("http://unsafe")',t1);
+    const escaped=exportSourceReviewCSV(dangerous,otherSha);
+    assert.ok(escaped.includes('"\''+leading+'=HYPERLINK('),
+      'CSV formula prefix not neutralized: '+JSON.stringify(leading));
+  }
 });
 
 test('P2 forged executable/Apply fields are rejected at every import layer',()=>{

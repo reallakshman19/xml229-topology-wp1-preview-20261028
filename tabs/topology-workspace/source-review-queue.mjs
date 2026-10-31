@@ -81,19 +81,21 @@ export function sourceReviewStatus(row,currentSourceSha){
 }
 export function upsertSourceReview(rows,result,options={}){
   if(!canAddSourceReview(result))throw Error('SOURCE_REVIEW_EXACT_PAIR_REQUIRED');
-  const decision=options.decision||'DRAWING_CHECK_PENDING';
-  if(!validDecision(decision))throw Error('SOURCE_REVIEW_DECISION_INVALID');
-  const note=cleanNote(options.note??'');
   const at=options.at||nowISO();
   if(!validTime(at))throw Error('SOURCE_REVIEW_TIME_INVALID');
   const ports=[portFromRecord(result.a),portFromRecord(result.b)]
     .map(validatePort).sort((a,b)=>a.sourceKey.localeCompare(b.sourceKey));
   const id=sourceReviewPairId(result.sourceSha256,ports[0].sourceKey,ports[1].sourceKey);
   const before=rows.find(r=>r.id===id);
-  const base={id,kind:SOURCE_REVIEW_KIND,sourceSha256:result.sourceSha256,
-    ports,disposition:String(result.disposition),distanceMm:Number.isFinite(result.distanceMm)?
-      result.distanceMm:null,
-    decision,note,createdAt:before?.createdAt||at,updatedAt:at};
+  const disposition=String(result.disposition);
+  const distanceMm=Number.isFinite(result.distanceMm)?result.distanceMm:null;
+  // A repeated Add refreshes observation metadata, never an engineer decision.
+  // Only editSourceReview can change a previously saved decision and note.
+  const base=before
+    ? {...before,disposition,distanceMm,updatedAt:at}
+    : {id,kind:SOURCE_REVIEW_KIND,sourceSha256:result.sourceSha256,
+      ports,disposition,distanceMm,decision:options.decision??'DRAWING_CHECK_PENDING',
+      note:cleanNote(options.note??''),createdAt:at,updatedAt:at};
   const row=normalizedRow(base);
   return {rows:before?rows.map(r=>r.id===id?row:r):[...rows,row],
     row,inserted:!before};
@@ -141,7 +143,7 @@ export function importSourceReviewJSON(text,existing=[]){
 const safeCSV=v=>{
   const plain=String(v??'');
   // Prevent spreadsheet formula execution on untrusted branch names and notes.
-  const safe=/^[=+\-@]/.test(plain)?'\''+plain:plain;
+  const safe=/^[=+\-@\t\r]/.test(plain)?'\''+plain:plain;
   return '"'+safe.replace(/"/g,'""')+'"';
 };
 export function exportSourceReviewCSV(rows,currentSourceSha=null){

@@ -73,6 +73,10 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   const sourceReview=mountSourceReviewPanel(query(root,'[data-connection-review]'),{
     getReview:()=>review.refresh(),getCurrentSha:()=>state.source?.sourceSha256||null
   });
+  // Read-only browser audit of ACTUAL workspace state; exposes no execution action.
+  Object.defineProperty(root,'topofixReviewAuditState',{configurable:true,
+    value:()=>Object.freeze({manualQueueLength:state.manualQueue.length,
+      sourceSha256:state.source?.sourceSha256||null})});
   const updateStatus=message=>{query(root,'[data-status]').textContent=message;};
   const displayMessage=message=>{query(root,'[data-hits]').textContent=message;};
   function sourceMeta(){
@@ -1118,7 +1122,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     occurrences:state.scene?.records.length||0,actions:state.plan?.actions.length||0,
     selected:[...state.selected],busy:state.busy,
     queued:state.manualQueue.map(x=>({id:x.id,status:x.status})),queueBusy:state.manualQueueRunning}),load,analyze,
-    dispose(){cancelEngine();ownedWorker?.dispose();state.epoch++;sourceReview.dispose();review.dispose();canvas.dispose();root.removeEventListener('toggle',toggled,true);root.removeEventListener('click',click);
+    dispose(){cancelEngine();ownedWorker?.dispose();state.epoch++;delete root.topofixReviewAuditState;sourceReview.dispose();review.dispose();canvas.dispose();root.removeEventListener('toggle',toggled,true);root.removeEventListener('click',click);
       root.removeEventListener('change',changed);root.removeEventListener('input',input);}};
 }
 const root=document.querySelector('#xml229-topology-workspace');
