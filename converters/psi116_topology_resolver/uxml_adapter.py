@@ -6,10 +6,11 @@ _build_occurrences, _build_spans and analyze_document. Never emit XML or patch.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from hashlib import sha256
 from html import escape as html_escape
 from pathlib import Path
+from urllib.parse import quote
 import json
 import math
 import re
@@ -237,25 +238,25 @@ def document_from_uxml(uxml: dict, *, source_name: str | None = None) -> Psi116D
 def resolve_from_uxml(uxml: dict, config: ResolverConfig | None = None,
                       *, source_name: str | None = None):
     """Same TopoFix analyzer; no modifications to parser.py or resolver.py."""
+    if isinstance(uxml, dict) and (uxml.get('sources') or [{}])[0].get('format') == 'INPUT_XML':
+        runs=(uxml.get('inputXml') or {}).get('runs') or []
+        if len(runs)>1 and any(not r.get('anchored') for r in runs):
+            raise UxmlPsi116Error('INPUT_XML_CROSS_UNANCHORED_RUN_GAP_PROXIMITY_JOIN_REFUSED')
     return analyze_document(document_from_uxml(uxml, source_name=source_name), config)
 
 
 @dataclass(frozen=True)
 class InputXmlNodeRecord(NodeRecord):
-    """Engine-compatible source record retaining the real InputXML source key.
-
-    The existing engine uses the legacy B:N:S derived key for findings.
-    This additional immutable field is patch provenance, not an engine rewrite.
-    """
+    """Original InputXML ordinal key survives engine-compatible projection."""
     inputxml_record_key: str = ""
     inputxml_endpoint: str = ""
+    inputxml_run_id: str = ""
+    inputxml_anchored: bool = False
 
 
 def _caesar_int(value: str, label: str) -> int:
     _need(isinstance(value, str) and re.fullmatch(r"[+-]?[0-9]+(?:\.0+)?", value) is not None,
           "INPUT_XML_INVALID_NODE_NUMBER:" + label)
-    # Workspace 5C formats NodeNumber as 10.000000; decode only exact
-    # zero-fraction decimals. No rounding or float coercion is permitted.
     return int(value.split(".", 1)[0])
 
 
@@ -264,135 +265,236 @@ def _caesar_original_rows(source_text: str) -> tuple[list[ET.Element], str]:
         root = ET.fromstring(source_text.lstrip("\ufeff"))
     except ET.ParseError as err:
         raise UxmlPsi116Error("INPUT_XML_ORIGINAL_PARSE_FAILED") from err
-    _need(root.tag.rsplit("}", 1)[-1] == "CAESARII",
-          "INPUT_XML_CAESAR_ROOT_REQUIRED")
+    _need(root.tag.rsplit("}", 1)[-1] == "CAESARII", "INPUT_XML_CAESAR_ROOT_REQUIRED")
     rows = [item for item in root.iter() if item.tag.rsplit("}", 1)[-1] == "PIPINGELEMENT"]
     _need(bool(rows), "INPUT_XML_PIPINGELEMENT_REQUIRED")
     namespace = root.tag.partition("}")[0].lstrip("{") if "}" in root.tag else ""
     return rows, namespace
 
 
+def _caesar_hub_delta(attrs: Mapping[str, str], label: str) -> Position:
+    axes = []
+    for axis in "XYZ":
+        raw = attrs.get("DELTA_" + axis)
+        _need(isinstance(raw, str) and raw, "INPUT_XML_DELTA_REQUIRED:" + label + ":" + axis)
+        try:
+            number = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise UxmlPsi116Error("INPUT_XML_DELTA_NONNUMERIC:" + label + ":" + axis) from exc
+        _need(math.isfinite(number), "INPUT_XML_DELTA_NONFINITE:" + label + ":" + axis)
+        axes.append(0. if abs(number + 1.0101) < 0.00001 else number)
+    return Position(axes[0], -axes[2], axes[1])
+
+
+def _caesar_hub_absolute(attrs: Mapping[str, str], prefix: str) -> Position | None:
+    values = [attrs.get(prefix + "_" + axis) for axis in "XYZ"]
+    if all(v is None for v in values):
+        return None
+    _need(all(v is not None for v in values), "INPUT_XML_INCOMPLETE_ABSOLUTE_ANCHOR")
+    nums = [float(v) for v in values]
+    _need(all(math.isfinite(v) for v in nums), "INPUT_XML_NONFINITE_ABSOLUTE_ANCHOR")
+    return Position(nums[0], -nums[2], nums[1])
+
+
+def _close(a: Position, b: Position, tolerance: float = .001) -> bool:
+    return a.distance_to(b) <= tolerance
+
+
+def _record_key(index: int, from_node: str, to_node: str) -> str:
+    # Python quote's default safe '/' differs from JS encodeURIComponent.
+    # encodeURIComponent leaves unescaped A-Z a-z 0-9 - _ . ! ~ * ' ( ).
+    safe = "-_.!~*'()"
+    return f"E{index}:F{quote(from_node, safe=safe)}:T{quote(to_node, safe=safe)}"
+
+
 def _document_from_caesar_inputxml(uxml: dict, *,
                                    source_name: str | None = None) -> Psi116Document:
-    """Strict InputXML read-only projection into the existing TopoFix engine.
-
-    No geometry synthesis, no InputXML writer, no new findings algorithm.
-    All mutable-source identity remains E{index}:F{from}:T{to} and source SHA.
-    Absolute points must agree with the ORIGINAL PIPINGELEMENT fields.
-    """
+    """Read-only InputXML projection; geometry always checked against original deltas."""
     _need(uxml.get("schemaVersion") == UXML_SCHEMA_VERSION and
           uxml.get("profile") == UXML_PROFILE, "INPUT_XML_NOT_TOPOLOGY_FULL")
     _need(len(uxml.get("sources") or []) == 1, "INPUT_XML_SINGLE_SOURCE_REQUIRED")
     source = uxml["sources"][0]
-    text = source.get("sourceText")
-    sha = source.get("hash")
-    _need(isinstance(text, str) and text, "INPUT_XML_ORIGINAL_TEXT_REQUIRED")
-    _need(isinstance(sha, str) and re.fullmatch(r"[a-f0-9]{64}", sha) is not None,
+    source_text, digest = source.get("sourceText"), source.get("hash")
+    _need(source.get("format") == "INPUT_XML", "INPUT_XML_SOURCE_FORMAT_INVALID")
+    _need(isinstance(source_text, str) and source_text, "INPUT_XML_ORIGINAL_TEXT_REQUIRED")
+    _need(isinstance(digest, str) and re.fullmatch(r"[a-f0-9]{64}", digest) is not None,
           "INPUT_XML_SOURCE_SHA256_REQUIRED")
-    _need(sha256(text.encode("utf-8")).hexdigest() == sha,
+    _need(sha256(source_text.encode("utf-8")).hexdigest() == digest,
           "INPUT_XML_ORIGINAL_SOURCE_SHA256_MISMATCH")
     scope = uxml.get("inputXml") or {}
-    _need(scope.get("sourceSha256") == sha and
-          scope.get("coordinateAuthority") == "EXPLICIT_ABSOLUTE_FROM_TO_SOURCE_ATTRS_ONLY",
-          "INPUT_XML_PROVENANCE_NOT_AUTHORITATIVE")
-    rows, namespace = _caesar_original_rows(text)
-    comps = uxml.get("components")
-    ports = uxml.get("ports")
-    _need(isinstance(comps, list) and isinstance(ports, list) and len(comps) == len(rows)
-          and scope.get("elementCount") == len(rows),
+    frame = uxml.get("coordinateFrame") or {}
+    _need(scope.get("sourceSha256") == digest and
+          scope.get("coordinateAuthority") == "ANCHORED_OR_UNANCHORED_DELTA_GRAPH",
+          "INPUT_XML_DELTA_PROVENANCE_MISMATCH")
+    _need(scope.get("sourceFrame") == "CAESAR_INPUTXML_XYZ_MM" and
+          scope.get("hubFrame") == "PSI116_XYZ_MM" and
+          frame.get("source") == "CAESAR_INPUTXML_XYZ_MM" and
+          frame.get("hub") == "PSI116_XYZ_MM" and
+          frame.get("transform") == "(X,-Z,Y)",
+          "INPUT_XML_COORDINATE_FRAME_MISMATCH")
+    rows, namespace = _caesar_original_rows(source_text)
+    comps, ports = uxml.get("components"), uxml.get("ports")
+    _need(isinstance(comps, list) and isinstance(ports, list) and
+          len(comps) == len(rows) and scope.get("elementCount") == len(rows),
           "INPUT_XML_PIPINGELEMENT_COUNT_MISMATCH")
-    ports_by_comp = {}
-    for port in ports:
-        _need(isinstance(port, dict), "INPUT_XML_PORT_INVALID")
-        ports_by_comp.setdefault(port.get("componentId"), []).append(port)
     _need(len(ports) == 2 * len(rows), "INPUT_XML_PORTS_PER_ELEMENT_MISMATCH")
-    used_keys, source_records = set(), []
+
+    runs = scope.get("runs")
+    _need(isinstance(runs, list) and runs, "INPUT_XML_RUN_FRAME_DECLARATIONS_REQUIRED")
+    run_by_index: dict[int, tuple[int, dict]] = {}
+    for run_index, run in enumerate(runs):
+        _need(isinstance(run, dict) and run.get("id") == f"RUN-{run_index:04d}" and
+              isinstance(run.get("anchored"), bool),
+              "INPUT_XML_RUN_IDENTITY_INVALID")
+        _need(run.get("hubFrame") == "PSI116_XYZ_MM" and
+              run.get("sourceFrame") == "CAESAR_INPUTXML_XYZ_MM" and
+              run.get("crossUnanchoredRunPolicy") == "REFUSE_CROSS_RUN_GAP_PROXIMITY_JOIN",
+              "INPUT_XML_RUN_FRAME_INVALID")
+        indices = run.get("elementIndices")
+        _need(isinstance(indices, list) and len(indices) == run.get("edgeCount"),
+              "INPUT_XML_RUN_ELEMENT_INDEX_INVALID")
+        for ix in indices:
+            _need(isinstance(ix, int) and ix not in run_by_index and 0 <= ix < len(rows),
+                  "INPUT_XML_DUPLICATE_OR_INVALID_RUN_ELEMENT_INDEX")
+            run_by_index[ix] = (run_index, run)
+    _need(set(run_by_index) == set(range(len(rows))), "INPUT_XML_RUN_COVERAGE_INCOMPLETE")
+    by_component: dict[str, list[dict]] = {}
+    for port in ports:
+        _need(isinstance(port, dict) and isinstance(port.get("componentId"), str),
+              "INPUT_XML_PORT_INVALID")
+        by_component.setdefault(port["componentId"], []).append(port)
+
+    run_records: dict[int, list[InputXmlNodeRecord]] = {i: [] for i in range(len(runs))}
+    visited_nodes: dict[tuple[int, str], Position] = {}
+    literal_anchors: dict[tuple[int, str], Position] = {}
+    used_keys: set[str] = set()
     for index, (element, component) in enumerate(zip(rows, comps)):
         attrs = element.attrib
-        from_node = attrs.get("FROM_NODE")
-        to_node = attrs.get("TO_NODE")
-        _need(from_node and to_node, "INPUT_XML_RECORD_NODE_ID_MISSING")
-        from urllib.parse import quote
-        key = f"E{index}:F{quote(from_node, safe='~')}:T{quote(to_node, safe='~')}"
+        from_node, to_node = attrs.get("FROM_NODE"), attrs.get("TO_NODE")
+        _need(isinstance(from_node, str) and from_node and
+              isinstance(to_node, str) and to_node, "INPUT_XML_RECORD_NODE_ID_MISSING")
+        key = _record_key(index, from_node, to_node)
         _need(key not in used_keys, "INPUT_XML_DUPLICATE_RECORD_KEY")
         used_keys.add(key)
-        expected = {"format": "INPUT_XML", "fileSha256": sha, "recordKey": key,
-                    "elementIndex": index, "fromNode": from_node, "toNode": to_node}
-        _need(component.get("sourceRefs") == [expected] and
+        run_index, run = run_by_index[index]
+        run_id, anchored = run["id"], run["anchored"]
+        expected = {
+            "format": "INPUT_XML", "fileSha256": digest, "recordKey": key,
+            "elementIndex": index, "fromNode": from_node, "toNode": to_node,
+            "runId": run_id, "anchored": anchored,
+        }
+        _need(isinstance(component, dict) and
+              component.get("sourceRefs") == [expected] and
               component.get("id") == "IX-S3-E" + str(index),
               "INPUT_XML_COMPONENT_SOURCE_REF_MISMATCH:" + key)
         info = (component.get("rawAttributes") or {}).get("inputXml") or {}
         _need(info.get("recordKey") == key and info.get("elementIndex") == index and
-              info.get("fromNode") == from_node and info.get("toNode") == to_node,
+              info.get("fromNode") == from_node and info.get("toNode") == to_node and
+              info.get("runId") == run_id and info.get("anchored") is anchored,
               "INPUT_XML_RAW_RECORD_ID_MISMATCH:" + key)
-        original_from = Position(*(float(attrs["FROM_" + axis]) for axis in "XYZ"))
-        original_to = Position(*(float(attrs["TO_" + axis]) for axis in "XYZ"))
-        original_points = {"FROM": original_from, "TO": original_to}
-        canonical = {"FROM": "EP1", "TO": "EP2"}
-        found_ports = ports_by_comp.get(component["id"], [])
+        found_ports = by_component.get(component["id"], [])
         _need(len(found_ports) == 2, "INPUT_XML_PORT_COUNT_MISMATCH:" + key)
-        positions = {}
+        values: dict[str, Position] = {}
         for port in found_ports:
-            refs = port.get("sourceRefs")
-            _need(isinstance(refs, list) and len(refs) == 1,
-                  "INPUT_XML_PORT_SOURCE_REF_MISSING:" + key)
-            endpoint = refs[0].get("endpoint")
-            _need(endpoint in original_points and
-                  refs == [{**expected, "endpoint": endpoint}],
+            references = port.get("sourceRefs")
+            _need(isinstance(references, list) and len(references) == 1,
+                  "INPUT_XML_PORT_REF_MISSING:" + key)
+            ep = references[0].get("endpoint")
+            _need(ep in {"FROM", "TO"} and references == [{**expected, "endpoint": ep}],
                   "INPUT_XML_PORT_SOURCE_REF_MISMATCH:" + key)
-            _need(endpoint not in positions, "INPUT_XML_DUPLICATE_ENDPOINT:" + key)
-            pos = _position(port.get("point"))
-            _need(pos == original_points[endpoint],
-                  "INPUT_XML_PORT_ABSOLUTE_POINT_MISMATCH:" + key + ":" + endpoint)
-            positions[endpoint] = pos
-        _need(set(positions) == set(original_points),
-              "INPUT_XML_ENDPOINT_COVERAGE_MISMATCH:" + key)
-        _need(info.get("from") == asdict(original_from) and
-              info.get("to") == asdict(original_to),
+            _need(ep not in values, "INPUT_XML_DUPLICATE_ENDPOINT:" + key)
+            point = _position(port.get("point"))
+            _need(point is not None and port.get("runId") == run_id and
+                  port.get("anchored") is anchored and
+                  port.get("coordinateFrame") == "PSI116_XYZ_MM",
+                  "INPUT_XML_PORT_FRAME_MISMATCH:" + key)
+            values[ep] = point
+        _need(set(values) == {"FROM", "TO"}, "INPUT_XML_ENDPOINT_COVERAGE_MISMATCH:" + key)
+        _need(info.get("from") == asdict(values["FROM"]) and
+              info.get("to") == asdict(values["TO"]),
               "INPUT_XML_TYPED_COORDINATE_MISMATCH:" + key)
+        step = _caesar_hub_delta(attrs, key)
+        declared_step = Position(values["TO"].x - values["FROM"].x,
+                                 values["TO"].y - values["FROM"].y,
+                                 values["TO"].z - values["FROM"].z)
+        _need(_close(step, declared_step), "INPUT_XML_DELTA_SUM_MISMATCH:" + key)
+        for ep, node in (("FROM", from_node), ("TO", to_node)):
+            tag = (run_index, node)
+            value = values[ep]
+            if tag in visited_nodes:
+                _need(_close(visited_nodes[tag], value),
+                      "INPUT_XML_DELTA_PATH_CONFLICT:" + key + ":" + node)
+            else:
+                visited_nodes[tag] = value
+            source_absolute = _caesar_hub_absolute(attrs, ep)
+            if source_absolute is not None:
+                literal_anchors[tag] = source_absolute
+                _need(_close(source_absolute, value),
+                      "INPUT_XML_ABSOLUTE_ANCHOR_MISMATCH:" + key + ":" + ep)
         od = _number(info.get("outsideDiameter"), "INPUT_XML_OUTSIDE_DIAMETER")
         wall = _number(info.get("wallThickness"), "INPUT_XML_WALL_THICKNESS")
         for field, claimed in (("DIAMETER", od), ("WALL_THICK", wall)):
             raw = attrs.get(field, "")
-            if raw and raw != "-1.0101" and raw != "-1.010100":
-                _need(claimed == float(raw),
+            if raw and abs(float(raw) + 1.0101) >= .00001:
+                _need(claimed is not None and abs(claimed-float(raw)) <= .00001,
                       "INPUT_XML_SOURCE_DIMENSION_MISMATCH:" + key + ":" + field)
-        kind = info.get("componentType") or "PIPE"
-        raw_type = info.get("rawComponentType") or kind
+        kind = str(info.get("componentType") or "PIPE").upper()
+        raw_type = str(info.get("rawComponentType") or kind).upper()
         ref_no = component.get("refNo") or "INPUT_XML-E" + str(index)
-        # Real InputXML has element (span) records, not PSI116 nodes. Preserve
-        # each true endpoint separately and retain the exact element key on both.
-        for number, endpoint in enumerate(("FROM", "TO"), start=1):
-            name = from_node if endpoint == "FROM" else to_node
+        row_start = len(run_records[run_index])
+        for offset, ep in enumerate(("FROM", "TO")):
+            literal = from_node if ep == "FROM" else to_node
             is_restraint = any(
-                str(item.get("attributes", {}).get("NODE", "")) == name
+                str(item.get("attributes", {}).get("NODE", "")) == literal
                 for item in (info.get("restraints") or [])
             )
-            source_records.append(InputXmlNodeRecord(
-                branch_index=0,
-                branch_name=component.get("pipelineRef") or "CAESAR-INPUTXML",
-                source_index=2 * index + (number - 1),
-                node_number=_caesar_int(name, key + ":" + endpoint),
-                node_name=info.get("fromName", "") if endpoint == "FROM"
-                    else info.get("toName", ""),
-                endpoint=number, component_type=str(kind).upper(),
-                raw_component_type=str(raw_type).upper(),component_ref_no=ref_no,
-                connection_type="",
-                position=positions[endpoint], rigid=None,weight=None,
-                outside_diameter=od,wall_thickness=wall,
-                bend_radius=None,alpha_angle=None,has_restraint=is_restraint,
-                raw_xml=ET.tostring(element, encoding="unicode"),
-                inputxml_record_key=key,
-                inputxml_endpoint=endpoint,
+            run_records[run_index].append(InputXmlNodeRecord(
+                branch_index=run_index, branch_name=run_id,
+                source_index=row_start+offset,
+                node_number=_caesar_int(literal, key + ":" + ep),
+                node_name=(info.get("fromName", "") if ep == "FROM"
+                           else info.get("toName", "")),
+                endpoint=1 if ep == "FROM" else 2,
+                component_type=kind, raw_component_type=raw_type,
+                component_ref_no=ref_no, connection_type="",
+                position=values[ep], rigid=None, weight=None,
+                outside_diameter=od, wall_thickness=wall,
+                bend_radius=None, alpha_angle=None,
+                has_restraint=is_restraint, raw_xml=ET.tostring(element, encoding="unicode"),
+                inputxml_record_key=key, inputxml_endpoint=ep,
+                inputxml_run_id=run_id, inputxml_anchored=anchored,
             ))
-    branch_name = source_records[0].branch_name
-    _need(all(item.branch_name == branch_name for item in source_records),
-          "INPUT_XML_MULTIPLE_PIPELINES_NOT_YET_SUPPORTED")
-    branches = (BranchRecord(0, branch_name, tuple(source_records)),)
+    for i, run in enumerate(runs):
+        _need(run.get("anchored") is bool(any(key[0] == i for key in literal_anchors)),
+              "INPUT_XML_FALSE_ANCHORED_OR_UNANCHORED_RUN:" + run["id"])
+    branches = tuple(BranchRecord(index, run["id"], tuple(run_records[index]))
+                     for index, run in enumerate(runs))
     occurrences = _build_occurrences(branches)
     spans = _build_spans(branches, occurrences)
     return Psi116Document(
         source_path=source_name or "<inputxml>",
-        source_text=text, source_sha256=sha, namespace=namespace,
+        source_text=source_text, source_sha256=digest, namespace=namespace,
         branches=branches, occurrences=tuple(occurrences), spans=tuple(spans),
     )
+
+
+def resolve_inputxml_run_from_uxml(uxml: dict, run_id: str,
+                                   config: ResolverConfig | None = None,
+                                   *, source_name: str | None = None):
+    """Safe per-run engine execution; no cross-unanchored-run gap judgement."""
+    document = document_from_uxml(uxml, source_name=source_name)
+    _need((uxml.get("sources") or [{}])[0].get("format") == "INPUT_XML",
+          "INPUT_XML_RUN_RESOLUTION_FORMAT_REQUIRED")
+    branches = [branch for branch in document.branches if branch.name == run_id]
+    _need(len(branches) == 1, "INPUT_XML_RUN_ID_NOT_FOUND:" + str(run_id))
+    branch = branches[0]
+    rows = tuple(replace(node, branch_index=0, source_index=i)
+                 for i, node in enumerate(branch.nodes))
+    subset = (BranchRecord(0, run_id, rows),)
+    occurrences = _build_occurrences(subset)
+    spans = _build_spans(subset, occurrences)
+    local_document = Psi116Document(
+        source_path=document.source_path, source_text=document.source_text,
+        source_sha256=document.source_sha256, namespace=document.namespace,
+        branches=subset, occurrences=tuple(occurrences), spans=tuple(spans))
+    return analyze_document(local_document, config)
