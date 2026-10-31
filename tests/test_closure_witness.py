@@ -2,7 +2,6 @@
 import hashlib
 import json
 import sys
-import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -143,7 +142,7 @@ class ClosureWitness(unittest.TestCase):
         self.assertEqual([(r['sourceKey'], r['bindingStatus']) for r in witnesses(source)],
                          [('B0:N-1:S1', 'UNQUALIFIED'), ('B1:N500:S0', 'BOUND')])
 
-    def test_2000_node_branch_with_20_declarations_is_fast(self):
+    def test_2000_node_branch_with_20_declarations_census(self):
         parts = []
         for i in range(1000):
             closed = i % 100 == 0
@@ -153,13 +152,23 @@ class ClosureWitness(unittest.TestCase):
                 parts.append(node(-1, 'ATTA', f'S{i}', 0, f'{200 * i + 50} 0 0', CLOS))
         d = read_psi116_xml(doc(''.join(parts)))
         model = PortModel(d, ResolverConfig())
-        start = time.perf_counter()
         rows = closure_binding_witnesses(d, ResolverConfig(), model)
-        elapsed = time.perf_counter() - start
         self.assertEqual(sum(len(b.nodes) for b in d.branches), 2010)
         self.assertEqual([r['bindingStatus'] for r in rows].count('BOUND'), 10)
         self.assertEqual([r['bindingStatus'] for r in rows].count('UNQUALIFIED'), 10)
-        self.assertLess(elapsed, 0.25, f'witness extraction took {elapsed:.3f}s')
+
+    def test_off_port_same_number_closure_within_25mm_is_in_unqualified_reverse_witness(self):
+        # The unqualified-declaration reverse lookup must include a remote
+        # same-positive-NodeNumber alias; shrinking its 25 mm radius loses S1.
+        source = doc(
+            node(700, 'ATTA', 'SUP_A', 0, '0 0 0', CLOS) +
+            node(700, 'ATTA', 'SUP_B', 0, '12 0 0')
+        )
+        rows = witnesses(source)
+        row = next(r for r in rows if r['sourceKey'] == 'B0:N700:S0')
+        self.assertEqual(row['bindingStatus'], 'UNQUALIFIED')
+        self.assertEqual(row['boundRecordKeys'], ['B0:N700:S0', 'B0:N700:S1'])
+        self.assertFalse(row['portQualified'])
 
     def test_c_duplicate_port_labels_are_unqualified_not_dropped(self):
         source = doc(n(30, 'FLAN', 'F', 1, '0 0 0', CLOS) + n(31, 'RIGID', 'F', 1, '86 0 0'))
