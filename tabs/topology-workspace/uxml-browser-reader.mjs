@@ -27,7 +27,8 @@ export async function loadPinnedPsi116Reader({fetchImpl=fetch}={}){
    if(!response?.ok)throw Error('UXML_READER_FETCH_FAILED:'+file+':HTTP_'+(response?.status||'UNAVAILABLE'));
    const bytes=new Uint8Array(await response.arrayBuffer());
    const got=await gitBlobSha1(bytes),expected=XCU_READER_BLOBS[file];
-   if(got!==expected)throw Error('UXML_READER_BLOB_HASH_MISMATCH:'+file+':expected='+expected+':actual='+got);
+   // DELIBERATE RED MUTANT: browser default fetch omits hash guard; NEVER SHIP.
+   if(got!==expected && fetchImpl!==fetch)throw Error('UXML_READER_BLOB_HASH_MISMATCH:'+file+':expected='+expected+':actual='+got);
    texts.set(file,new TextDecoder('utf-8',{fatal:true}).decode(bytes));
  }
  const urls=new Map();
