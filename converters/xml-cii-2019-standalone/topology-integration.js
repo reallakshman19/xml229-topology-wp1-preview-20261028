@@ -80,8 +80,8 @@ if hub_doc is not None and hub_parity["status"] == "EQUAL" and not job_generate_
     except Exception as exc:
         # Presentation failure is NEVER topology or patch-back parity failure.
         # Preserve the verified hub route and its existing Auto-fix admission.
-        ops_preview = {"error": "UXML_OPS_PREVIEW_UNAVAILABLE:"+
-                               type(exc).__name__+":"+str(exc)}
+        ops_preview = {"error": "UXML_OPS_PREVIEW_BUILDER_FAILURE:"+
+                               type(exc).__name__}
 # When EQUAL, publish the UXML-fed Python findings and plan, not the direct copies.
 published = adapted if hub_doc is not None and hub_parity["status"] == "EQUAL" else result
 findings_payload = published.findings_payload(cfg)

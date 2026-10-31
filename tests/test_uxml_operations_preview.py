@@ -152,7 +152,7 @@ class UxmlPreviewReadOnlyContract(unittest.TestCase):
             }
             with patch(
                 "psi116_topology_resolver.uxml_operations_preview.build_operation_preview",
-                side_effect=RuntimeError("SYNTHETIC_PREVIEW_BUILDER_THROW"),
+                side_effect=RuntimeError("SYNTHETIC_SECRET_MUST_NOT_LEAK"),
             ):
                 exec(compile(snippet, "<published-pyodide-topology-snippet>", "exec"),
                      context)
@@ -160,7 +160,10 @@ class UxmlPreviewReadOnlyContract(unittest.TestCase):
             self.assertEqual(status["hubParity"], {"status": "EQUAL", "differences": []})
             self.assertEqual(
                 status["opsPreview"]["error"],
-                "UXML_OPS_PREVIEW_UNAVAILABLE:RuntimeError:SYNTHETIC_PREVIEW_BUILDER_THROW")
+                "UXML_OPS_PREVIEW_BUILDER_FAILURE:RuntimeError")
+            self.assertNotIn("SYNTHETIC_SECRET_MUST_NOT_LEAK",
+                             json.dumps(status),
+                             "exception payload must not disclose raw builder messages")
             self.assertFalse(status["committed"], "analyze is not an Apply call")
             plan = json.loads(paths["plan"].read_text(encoding="utf-8"))
             self.assertTrue(any(

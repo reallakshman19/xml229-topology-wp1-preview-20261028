@@ -108,7 +108,7 @@ test('injected hub EQUAL previews each S2 row, filters, finds, exports; DIFFEREN
            // Nonempty SAME preview in every parity mode: exercises the actual
            // parity gate instead of passing because input has no operations.
            topologyOperationsPreview:state==='PREVIEW_FAILURE'?
-             {error:'UXML_OPS_PREVIEW_UNAVAILABLE:RuntimeError:SYNTHETIC_PREVIEW_FAILURE'}:
+             {error:'UXML_OPS_PREVIEW_BUILDER_FAILURE:RuntimeError'}:
              state==='PREVIEW_INVALID'?{...preview,sourceSha256:'synthetic-mismatched-sha'}:
              preview,
          };
@@ -192,7 +192,7 @@ test('injected hub EQUAL previews each S2 row, filters, finds, exports; DIFFEREN
      ?.textContent?.includes('SYNTHETIC_PREVIEW_FAILURE'));
    assert.equal(await panel.locator('[data-op-id]').count(),0);
    assert.match(await panel.locator('[data-ops-status]').textContent(),
-     /Preview unavailable: UXML_OPS_PREVIEW_UNAVAILABLE:RuntimeError:SYNTHETIC_PREVIEW_FAILURE/);
+     /Preview unavailable: UXML_OPS_PREVIEW_BUILDER_FAILURE:RuntimeError/);
    assert.equal(await page.locator('[data-auto-fix-all]').isDisabled(),false,
      'read-only preview error must never disable EQUAL hub Auto-fix');
    assert.equal(await panel.locator('[data-ops-json]').isDisabled(),true);
