@@ -12,6 +12,7 @@ const TOPOLOGY_PACKAGE_FILES = Object.freeze([
   'joint_repair.py',
   'manual_connections.py',
   'connection_ports.py',
+  'closure_witness.py',
   'short_elements.py',
   'lineage.py',
 ]);
