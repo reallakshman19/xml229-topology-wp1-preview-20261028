@@ -226,6 +226,7 @@ class ResolutionResult:
             "resolvedConnections": list(self.connection_resolutions),
             "shortElements": short_elements(self.document,config),
             "manualConnectionPorts": manual_ports(self.document,config),
+            "closureBindingWitnesses": _closure_binding_witnesses(self.document, config),
         }
 
     def fix_plan_payload(self, config: ResolverConfig) -> dict[str, object]:
@@ -249,6 +250,23 @@ class ResolutionResult:
             },
             "actions": [action_to_dict(action) for action in self.fix_actions],
         }
+
+
+def _closure_binding_witnesses(document: Psi116Document, config: ResolverConfig) -> list[dict[str, object]]:
+    # A runtime that ships a fixed package file list may not include the witness
+    # module yet; say so explicitly instead of failing or emitting an empty list.
+    try:
+        from .closure_witness import closure_binding_witnesses
+    except ModuleNotFoundError as error:
+        if error.name != f"{__package__}.closure_witness":
+            raise
+        return [{
+            "rowKind": "RUNTIME",
+            "bindingStatus": "EVIDENCE_UNAVAILABLE",
+            "sourceSha256": document.source_sha256,
+            "reason": "closure_witness module is not loaded in this runtime; CLOS bindings were not evaluated.",
+        }]
+    return closure_binding_witnesses(document, config)
 
 
 def finding_to_dict(finding: Finding) -> dict[str, object]:
