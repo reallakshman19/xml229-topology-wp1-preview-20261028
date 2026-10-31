@@ -136,5 +136,30 @@ class UxmlPsi116Equivalence(unittest.TestCase):
                             "Deleting CLOS must NOT yield an EQUAL report")
 
 
+    def test_real_compare_cli_prints_equal_or_exact_clos_difference(self):
+        if not self.available:
+            self.skipTest("Only pinned XCU reader environment runs cross-repo native test")
+        with tempfile.TemporaryDirectory(prefix="topofix-uxml-cli-") as temp:
+            base = Path(temp)
+            file, payload_file, uxml = self.to_uxml(
+                verified_synthetic(gap_case(True)), base)
+            module = "converters.psi116_topology_resolver.uxml_compare"
+            command = [sys.executable, "-m", module, str(file), str(payload_file)]
+            good = subprocess.run(command, cwd=Path(__file__).resolve().parents[1],
+                                  capture_output=True, text=True, timeout=45)
+            self.assertEqual(good.returncode, 0, good.stderr)
+            self.assertEqual(good.stdout.strip(), "EQUAL")
+            for component in uxml["components"]:
+                record = component["rawAttributes"]["psi116"]
+                if record["connectionType"] == "CLOS":
+                    record["connectionType"] = ""
+            payload_file.write_text(json.dumps(uxml), encoding="utf-8")
+            red = subprocess.run(command, cwd=Path(__file__).resolve().parents[1],
+                                 capture_output=True, text=True, timeout=45)
+            self.assertEqual(red.returncode, 1)
+            self.assertIn("DIFFERENT", red.stdout)
+            self.assertIn("closureBindingWitnesses", red.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
