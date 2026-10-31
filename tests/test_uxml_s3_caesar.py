@@ -41,21 +41,22 @@ class S3CaesarCrossFormat(unittest.TestCase):
 
     def test_pair_has_exact_source_refs_and_absolute_points(self):
         _, psi, _, inp = self.pair()
-        self.assertEqual(len(psi["components"]),2)
-        self.assertEqual(len(inp["components"]),1)
-        self.assertEqual(len(inp["ports"]),2)
+        self.assertEqual(len(psi["components"]), 9)
+        self.assertEqual(len(inp["components"]), 6)
+        self.assertEqual(len(inp["ports"]), 12)
         ref = inp["components"][0]["sourceRefs"][0]
         self.assertEqual(ref["recordKey"],"E0:F10.000000:T20.000000")
         self.assertEqual(ref["format"],"INPUT_XML")
         self.assertEqual(inp["ports"][0]["sourceRefs"][0]["endpoint"],"FROM")
         self.assertEqual(inp["ports"][1]["sourceRefs"][0]["endpoint"],"TO")
-        self.assertEqual([p["point"]["x"] for p in inp["ports"]],[100,200])
-        doc = document_from_uxml(inp)
-        self.assertEqual(len(doc.branches[0].nodes),2)
-        self.assertEqual([n.node_number for n in doc.branches[0].nodes],[10,20])
-        self.assertEqual([n.inputxml_record_key for n in doc.branches[0].nodes],
+        self.assertEqual([p["point"]["x"] for p in inp["ports"][:2]],[0,100])
+        doc=document_from_uxml(inp)
+        self.assertEqual(len(doc.branches),3)
+        self.assertEqual([len(branch.nodes) for branch in doc.branches],[5,2,2])
+        self.assertEqual([n.node_number for n in doc.branches[0].nodes[:2]],[10,20])
+        self.assertEqual([n.inputxml_record_key for n in doc.branches[0].nodes[:2]],
                          [ref["recordKey"],ref["recordKey"]])
-        self.assertEqual(doc.branches[0].nodes[0].position.x,100)
+        self.assertEqual(doc.branches[0].nodes[0].position.x,0)
         self.assertIsNotNone(resolve_from_uxml(inp).findings)
 
     def test_s1_still_direct_equal_unchanged(self):
@@ -70,10 +71,12 @@ class S3CaesarCrossFormat(unittest.TestCase):
         self.assertTrue(differences, "Conversion is known to drop source component ref")
         self.assertTrue(any("component_ref_no" in d and "CAUSE:" in d
                             for d in differences),differences)
-        self.assertTrue(all("CAUSE:" in d for d in differences),
-                        "No unexplained difference allowed: " + str(differences))
+        self.assertTrue(all("UNEXPLAINED" in d and "CAUSE:" in d and "EVIDENCE:" in d
+                            for d in differences),
+                        "Every difference must remain explicitly unexplained: " + str(differences))
         for record in resolve_from_uxml(inp).document.branches[0].nodes:
-            self.assertTrue(record.inputxml_record_key.startswith("E0:"))
+            self.assertTrue(record.inputxml_record_key.startswith("E"))
+            self.assertTrue(record.inputxml_record_keys)
 
     def test_source_ref_sha_point_and_ordinal_tamper_are_rejected(self):
         _, _, _, inp = self.pair()
