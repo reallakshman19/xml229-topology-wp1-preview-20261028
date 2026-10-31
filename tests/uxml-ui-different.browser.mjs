@@ -96,6 +96,12 @@ test('injected runEngine DIFFERENT shows exact paths, disables all hub Auto-fix/
      'DIFFERENT');
    assert.match(await page.locator('[data-uxml-differences]').textContent(),
      /\/findings\/synthetic\/position: direct=20.0 uxml=21.0/);
+   // Parity is emitted before the public analysis view finishes its render.
+   // Wait for a completed, source-bound plan before checking eligible controls.
+   await page.waitForFunction(()=>
+     document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.')&&
+     document.querySelector('[data-auto-fix-all]')?.textContent?.includes('1 actions'),
+     null,{timeout:30000});
    assert.match(await page.locator('[data-auto-fix-all]').textContent(),/1 actions/);
    assert.equal(await page.locator('[data-auto-fix-all]').isDisabled(),true);
    assert.equal(await page.locator('[data-download-working]').isDisabled(),true);
