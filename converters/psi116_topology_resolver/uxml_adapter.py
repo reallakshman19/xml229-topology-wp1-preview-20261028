@@ -252,7 +252,7 @@ class InputXmlNodeRecord(NodeRecord):
 
 
 def _caesar_int(value: str, label: str) -> int:
-    _need(isinstance(value, str) and re.fullmatch(r"[+-]?[0-9]+(?:\\.0+)?", value) is not None,
+    _need(isinstance(value, str) and re.fullmatch(r"[+-]?[0-9]+(?:\.0+)?", value) is not None,
           "INPUT_XML_INVALID_NODE_NUMBER:" + label)
     # Workspace 5C formats NodeNumber as 10.000000; decode only exact
     # zero-fraction decimals. No rounding or float coercion is permitted.
