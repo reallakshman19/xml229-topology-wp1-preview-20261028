@@ -623,6 +623,8 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       state.resolutions=next.findings.resolvedConnections||[];
       state.shortElements=next.findings.shortElements||[];
       state.manualPorts=next.findings.manualConnectionPorts||[];
+      state.closureWitnesses=Array.isArray(next.findings.closureBindingWitnesses)?next.findings.closureBindingWitnesses:null;
+      review.reset();
       state.selected.clear();state.openCases.clear();state.gapReviews.clear();
       state.secondPass=null;state.shortPreview=null;
       const shortPanel=query(root,'[data-short-preview]');
