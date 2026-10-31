@@ -11,6 +11,8 @@ export function mountSourceReviewPanel(reviewPanel,{getReview,getCurrentSha}){
   const add=document.createElement('button');
   add.type='button';add.dataset.sourceReviewAdd='';
   add.textContent='Add to Source Review';add.disabled=true;
+  // DELIBERATE RED TEST ONLY: forbidden executable button attribute.
+  add.setAttribute('data-queue-apply','');
   reviewPanel.appendChild(add);
   const panel=document.createElement('section');
   panel.dataset.sourceReviewQueue='';
