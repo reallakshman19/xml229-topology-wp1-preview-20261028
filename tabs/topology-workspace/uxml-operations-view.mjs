@@ -48,22 +48,32 @@ export function kindCounts(preview){
   return Object.entries(preview?.summary?.byKind||{}).sort(([a],[b])=>a.localeCompare(b))
     .map(([kind,count])=>({kind,count,name:names.get(kind)||kind.replaceAll('_',' ').toLowerCase()}));
 }
-export function visibleOperationExport(preview,reviewOnlyCount=0){
-  // Deliberately omit source SHA, original XML and every unseen UXML field.
-  return {schema:OPS_PREVIEW_SCHEMA,
-    summary:{totalOps:preview.summary.totalOps,
-      byKind:{...preview.summary.byKind},
+export function visibleOperationExport(preview,reviewOnlyCount=0,filter={}){
+  // Exactly the actively visible rows and values; no internal identifiers,
+  // source SHA, schema markers, or source-record totals absent from the panel.
+  const rows=filterOperationRows(preview,filter);
+  const allKinds=kindCounts(preview);
+  return {
+    summary:{
+      totalOps:preview.summary.totalOps,
+      byKind:Object.fromEntries(allKinds.map(({name,count})=>[name,count])),
       untouchedRecordCount:preview.summary.untouchedRecordCount,
-      sourceRecordCount:preview.summary.sourceRecordCount,reviewOnlyCount},
-    operations:preview.ops.map(row=>({
-      opId:row.opId,kind:row.kind,kindName:row.kindName,
+      reviewOnlyCount,
+      visibleOpsCount:rows.length,
+    },
+    operations:rows.map(row=>({
+      opId:row.opId,kindName:row.kindName,
       uxmlIds:[...row.uxmlIds],
-      sourceRecords:row.sourceRecords.map(r=>({format:r.format,recordKey:r.recordKey,
-        changed:r.changed===true})),
-      changes:row.changes.map(c=>({recordKey:c.recordKey,field:c.field,
-        before:c.before,after:c.after})),
+      sourceRecords:row.sourceRecords.map(r=>({
+        format:r.format,recordKey:r.recordKey,
+        changed:r.changed===true,
+      })),
+      changes:row.changes.map(c=>({
+        recordKey:c.recordKey,field:c.field,before:c.before,after:c.after,
+      })),
       policyReason:row.policyReason,
-    }))};
+    })),
+  };
 }
 function csvCell(value){
   let valueText=text(value);
@@ -71,8 +81,8 @@ function csvCell(value){
   if(/^[\s]*[=+@-]/.test(valueText))valueText="'"+valueText;
   return '"'+valueText.replaceAll('"','""')+'"';
 }
-export function operationsCSV(preview,reviewOnlyCount=0){
-  const published=visibleOperationExport(preview,reviewOnlyCount);
+export function operationsCSV(preview,reviewOnlyCount=0,filter={}){
+  const published=visibleOperationExport(preview,reviewOnlyCount,filter);
   const header=['Operation ID','Kind','UXML IDs','Original source records',
     'Before → after fields','Auto eligibility reason'];
   const rows=published.operations.map(row=>[

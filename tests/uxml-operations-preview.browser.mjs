@@ -61,6 +61,7 @@ test('injected hub EQUAL previews each S2 row, filters, finds, exports; DIFFEREN
          const hash=[...new Uint8Array(digest)]
            .map(b=>b.toString(16).padStart(2,'0')).join('');
          const state=window.__mode;
+         const parityStatus=state.startsWith('PREVIEW_')?'EQUAL':state;
          const findings={source:{sha256:hash},findings:[
            {finding_id:'AUTO-A',code:'NEAR_MISS_PIPE_JOINT',
             node_keys:['B0:N1:S0'],blocking:false,severity:'WARNING',message:'synthetic'},
@@ -102,9 +103,14 @@ test('injected hub EQUAL previews each S2 row, filters, finds, exports; DIFFEREN
            ciiText:null,enrichedText:'',
            topologyFindingsText:JSON.stringify(findings),
            topologyFixPlanText:JSON.stringify({source:{sha256:hash},actions}),
-           topologyUxmlParity:{status:state,differences:state==='EQUAL'?[]:
+           topologyUxmlParity:{status:parityStatus,differences:parityStatus==='EQUAL'?[]:
              ['/findings/example: DIRECT != UXML']},
-           topologyOperationsPreview:state==='EQUAL'?preview:null,
+           // Nonempty SAME preview in every parity mode: exercises the actual
+           // parity gate instead of passing because input has no operations.
+           topologyOperationsPreview:state==='PREVIEW_FAILURE'?
+             {error:'UXML_OPS_PREVIEW_UNAVAILABLE:RuntimeError:SYNTHETIC_PREVIEW_FAILURE'}:
+             state==='PREVIEW_INVALID'?{...preview,sourceSha256:'synthetic-mismatched-sha'}:
+             preview,
          };
        },
      });
@@ -132,9 +138,32 @@ test('injected hub EQUAL previews each S2 row, filters, finds, exports; DIFFEREN
    assert.equal(await panel.locator('[data-auto-fix],[data-apply-second],[data-queue-apply],[data-short-drop]').count(),0);
    await panel.locator('[data-ops-kind]').selectOption('ALIAS_COINCIDENT_NODE');
    assert.equal(await panel.locator('[data-op-id]').count(),1);
+   const filteredJSONDownload=page.waitForEvent('download');
+   await panel.locator('[data-ops-json]').click();
+   const filteredJSON=JSON.parse(await readFile(await (await filteredJSONDownload).path(),'utf8'));
+   assert.deepEqual(filteredJSON.operations.map(row=>row.opId),['UXML-OP-A']);
+   assert.equal(filteredJSON.summary.visibleOpsCount,1);
+   assert.equal(filteredJSON.summary.totalOps,2);
+   assert.equal('kind' in filteredJSON.operations[0],false);
+   assert.equal('sourceActionId' in filteredJSON.operations[0],false);
+   assert.equal('sourceRecordCount' in filteredJSON.summary,false);
+   assert.equal('schema' in filteredJSON,false);
+   assert.deepEqual(Object.keys(filteredJSON.summary.byKind).sort(),
+     ['Alias coincident node','Close compatible connection ports']);
+   const filteredCSVDownload=page.waitForEvent('download');
+   await panel.locator('[data-ops-csv]').click();
+   const filteredCSV=await readFile(await (await filteredCSVDownload).path(),'utf8');
+   assert.equal(filteredCSV.trimEnd().split('\n').length,2);
+   assert.match(filteredCSV,/Alias coincident node/);
+   assert.doesNotMatch(filteredCSV,/Close compatible connection ports/);
    await panel.locator('[data-ops-kind]').selectOption('all');
    await panel.locator('[data-ops-search]').fill('B0:N2:S1');
    assert.equal(await panel.locator('[data-op-id]').count(),1);
+   const searchedDownload=page.waitForEvent('download');
+   await panel.locator('[data-ops-json]').click();
+   const searched=JSON.parse(await readFile(await (await searchedDownload).path(),'utf8'));
+   assert.deepEqual(searched.operations.map(row=>row.opId),['UXML-OP-B']);
+   assert.equal(searched.summary.visibleOpsCount,1);
    await panel.locator('[data-ops-search]').fill('');
    await panel.locator('[data-ops-locate="UXML-OP-A"]').click();
    assert.match(await page.locator('[data-selection]').textContent(),/1 source occurrence/);
@@ -154,12 +183,39 @@ test('injected hub EQUAL previews each S2 row, filters, finds, exports; DIFFEREN
    await panel.locator('[data-ops-review]').click();
    assert.equal(await page.locator('[data-audit-filter="manual"]').getAttribute('aria-pressed'),'true');
 
+   // Builder throws on a synthetic UXML: parity remains EQUAL, Auto-fix
+   // admission remains enabled, preview fails independently and visibly.
+   await page.evaluate(()=>{window.__mode='PREVIEW_FAILURE';});
+   await page.locator('[data-analyze]').click();
+   await page.waitForFunction(()=>document.querySelector('[data-uxml-parity]')
+     ?.dataset?.parity==='EQUAL'&&document.querySelector('[data-ops-status]')
+     ?.textContent?.includes('SYNTHETIC_PREVIEW_FAILURE'));
+   assert.equal(await panel.locator('[data-op-id]').count(),0);
+   assert.match(await panel.locator('[data-ops-status]').textContent(),
+     /Preview unavailable: UXML_OPS_PREVIEW_UNAVAILABLE:RuntimeError:SYNTHETIC_PREVIEW_FAILURE/);
+   assert.equal(await page.locator('[data-auto-fix-all]').isDisabled(),false,
+     'read-only preview error must never disable EQUAL hub Auto-fix');
+   assert.equal(await panel.locator('[data-ops-json]').isDisabled(),true);
+   assert.equal(await panel.locator('[data-ops-csv]').isDisabled(),true);
+   assert.equal(await panel.locator('[data-apply-second],[data-download-fix],[data-queue-apply]').count(),0);
+   // Also test JS validation exceptions, not just a Python named error.
+   await page.evaluate(()=>{window.__mode='PREVIEW_INVALID';});
+   await page.locator('[data-analyze]').click();
+   await page.waitForFunction(()=>document.querySelector('[data-uxml-parity]')
+     ?.dataset?.parity==='EQUAL'&&document.querySelector('[data-ops-status]')
+     ?.textContent?.includes('UXML_OPS_PREVIEW_INVALID'));
+   assert.equal(await panel.locator('[data-op-id]').count(),0);
+   assert.equal(await page.locator('[data-auto-fix-all]').isDisabled(),false);
+   assert.match(await panel.locator('[data-ops-status]').textContent(),/Preview unavailable:/);
    await page.evaluate(()=>{window.__mode='DIFFERENT';});
    await page.locator('[data-analyze]').click();
    await page.waitForFunction(()=>document.querySelector('[data-uxml-parity]')
       ?.dataset?.parity==='DIFFERENT');
    assert.equal(await panel.locator('[data-op-id]').count(),0);
    assert.match(await panel.locator('[data-ops-status]').textContent(),/DIRECT != UXML/);
+   assert.equal(await page.evaluate(()=>window.__mode),'DIFFERENT');
+   assert.match(await page.locator('[data-uxml-differences]').textContent(),
+     /DIRECT != UXML/);
    assert.equal(await panel.locator('[data-ops-json]').isDisabled(),true);
    assert.equal(await panel.locator('[data-ops-csv]').isDisabled(),true);
    assert.equal(await page.locator('[data-auto-fix-all]').isDisabled(),true);

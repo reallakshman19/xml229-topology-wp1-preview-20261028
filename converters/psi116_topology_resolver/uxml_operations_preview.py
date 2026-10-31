@@ -168,7 +168,8 @@ def build_operation_preview(uxml: dict, *,
             "changes": changes,
             "policyReason": "PROPOSED; no action blockers; confidence " +
                             format(action.confidence, ".3g") +
-                            " >= 0.95; S2 sourceRefs/loss-contract checked. " +
+                            " >= " + format(TransactionPolicy().minimum_confidence, ".3g") +
+                            "; S2 sourceRefs/loss-contract checked. " +
                             "Execution still requires native validation.",
         })
     by_kind = dict(sorted(Counter(row["kind"] for row in rows).items()))

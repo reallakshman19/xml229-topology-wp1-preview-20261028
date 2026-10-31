@@ -44,6 +44,33 @@ test('kind filter and exact record-key query never hide operations in the canoni
    .map(r=>r.opId),['UXML-OP-B']);
  assert.equal(preview.ops.length,2);
 });
+test('export mirrors active kind/search and drops every non-visible internal field',()=>{
+ const preview=sample();
+ const filtered=visibleOperationExport(preview,3,{kind:'ALIAS_COINCIDENT_NODE'});
+ assert.equal(filtered.operations.length,1);
+ assert.deepEqual(filtered.operations.map(row=>row.opId),['UXML-OP-A']);
+ assert.equal(filtered.summary.totalOps,2);
+ assert.equal(filtered.summary.visibleOpsCount,1);
+ assert.equal(filtered.summary.untouchedRecordCount,1);
+ assert.deepEqual(Object.keys(filtered.summary.byKind).sort(),
+   ['Alias coincident node','Close compatible connection ports']);
+ assert.equal('kind' in filtered.operations[0],false);
+ assert.equal('sourceActionId' in filtered.operations[0],false);
+ assert.equal('sourceRecordCount' in filtered.summary,false);
+ assert.equal('schema' in filtered,false);
+ assert.equal('sourceSha256' in filtered,false);
+ const searched=visibleOperationExport(preview,3,{search:'B0:N2:S1'});
+ assert.deepEqual(searched.operations.map(row=>row.opId),['UXML-OP-B']);
+ assert.equal(searched.summary.visibleOpsCount,1);
+ const csv=operationsCSV(preview,3,{kind:'ALIAS_COINCIDENT_NODE'});
+ assert.equal(csv.trimEnd().split('\n').length,2);
+ assert.match(csv,/Alias coincident node/);
+ assert.doesNotMatch(csv,/Close compatible connection ports/);
+ const zero=visibleOperationExport(preview,3,{search:'NOT_A_SOURCE_REF'});
+ assert.equal(zero.operations.length,0);
+ assert.equal(zero.summary.visibleOpsCount,0);
+ assert.equal(operationsCSV(preview,3,{search:'NOT_A_SOURCE_REF'}).trimEnd().split('\n').length,1);
+});
 test('JSON and CSV disclose only visible columns, one row per operation and reject formula-like data',()=>{
  const preview=sample();
  preview.ops[0].policyReason='=INJECT()';

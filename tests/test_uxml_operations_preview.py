@@ -8,10 +8,12 @@ from collections import Counter
 from pathlib import Path
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "converters"))
@@ -114,6 +116,65 @@ class UxmlPreviewReadOnlyContract(unittest.TestCase):
                              "read-only preview must never modify original bytes")
             self.assertEqual(sorted(item.name for item in Path(temp).iterdir()),
                              ["synthetic.xml"],"no patch/validation/output files written")
+
+    def test_preview_builder_throw_keeps_hub_equal_and_native_auto_eligible(self):
+        """Execute real embedded Python; only a read-only renderer is injected."""
+        root = os.environ.get("XCU_UXML_ROOT")
+        if not root or not (Path(root)/"tools"/"psi116-to-uxml.mjs").is_file():
+            self.skipTest("Pinned external XCU_UXML_ROOT required for hub parity test")
+        with tempfile.TemporaryDirectory(prefix="uxml-preview-failure-synthetic-") as temp:
+            scratch = Path(temp)
+            source = scratch/"synthetic.xml"
+            raw = verified_synthetic(pipe_flange(25)).encode("utf-8")
+            source.write_bytes(raw)
+            cli = subprocess.run(
+                ["node", str(Path(root)/"tools"/"psi116-to-uxml.mjs"), str(source)],
+                cwd=root, capture_output=True, text=True, timeout=45, check=False,
+            )
+            self.assertEqual(cli.returncode, 0, cli.stderr)
+            doc = json.loads(cli.stdout)
+
+            script = (REPO/"converters/xml-cii-2019-standalone/topology-integration.js").read_text(
+                encoding="utf-8")
+            match = re.search(r"const TOPOLOGY_SNIPPET = \x60\n(.*?)\n\x60;", script, re.S)
+            self.assertIsNotNone(match, "Use actual published Pyodide code")
+            snippet = match.group(1).replace("\\\\", "\\")
+            paths = {name: scratch/(name + ".json") for name in
+                     ("findings", "plan", "status")}
+            context = {
+                "job_topology_input_path": str(source),
+                "job_topology_uxml_json": json.dumps(doc),
+                "job_generate_topofix": False,
+                "job_topology_findings_path": str(paths["findings"]),
+                "job_topology_plan_path": str(paths["plan"]),
+                "job_topology_status_path": str(paths["status"]),
+                "job_connection_preview_json": "null",
+            }
+            with patch(
+                "psi116_topology_resolver.uxml_operations_preview.build_operation_preview",
+                side_effect=RuntimeError("SYNTHETIC_PREVIEW_BUILDER_THROW"),
+            ):
+                exec(compile(snippet, "<published-pyodide-topology-snippet>", "exec"),
+                     context)
+            status = json.loads(paths["status"].read_text(encoding="utf-8"))
+            self.assertEqual(status["hubParity"], {"status": "EQUAL", "differences": []})
+            self.assertEqual(
+                status["opsPreview"]["error"],
+                "UXML_OPS_PREVIEW_UNAVAILABLE:RuntimeError:SYNTHETIC_PREVIEW_BUILDER_THROW")
+            self.assertFalse(status["committed"], "analyze is not an Apply call")
+            plan = json.loads(paths["plan"].read_text(encoding="utf-8"))
+            self.assertTrue(any(
+                action["status"] == "PROPOSED" and not action["blockers"] and
+                action["confidence"] >= TransactionPolicy().minimum_confidence and
+                action["disposition"] == "CLOSE_PORT_CONNECTION"
+                for action in plan["actions"]),
+                "native Auto-eligible actions must survive a preview display failure")
+            self.assertEqual(source.read_bytes(), raw)
+            self.assertEqual(
+                sorted(item.name for item in scratch.iterdir()),
+                ["findings.json", "plan.json", "status.json", "synthetic.xml"],
+                "display failure must not write corrected XML or mutation receipts",
+            )
 
     def test_preview_is_not_a_mutation_or_review_queue_api(self):
         import inspect

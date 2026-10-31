@@ -40,13 +40,23 @@ Review-only findings are counted from the existing grouped manual audit,
 and **Source Review Queue** navigates to the existing Manual fix / review
 filter; no review-only action is represented as an edit operation.
 
-The panel contains only locating and CSV/JSON export controls. Exports
-contain precisely the row/summary fields shown, not full source XML,
-unmapped UXML details, source hashes, original JSON or a patch. CSV escapes
-spreadsheet-formula introductions. Parity DIFFERENT/UNAVAILABLE, source
-replacement, toggle changes, cancellation or outdated epoch/revision
-disables applicable rows and exports. Auto-fix and existing transaction
-policy are untouched.
+The panel contains only locating and CSV/JSON export controls. Both
+exports use the **current kind filter and source-key search**, so they contain
+only the visible operation rows. JSON omits internal kind/action IDs and
+unshown source-record counts; its summary uses the same plain kind names
+and overall / visible counts displayed in the panel. CSV contains one row per
+visible operation. Neither contains full XML, unmapped UXML, source hashes
+or a patch. CSV escapes spreadsheet-formula introductions.
+
+**Presentation independence:** if the Python preview builder raises or the
+browser rejects its rows, the native parity badge remains **EQUAL** (assuming
+topology parity was EQUAL), and native Auto-fix admission is unchanged.
+The panel instead shows **"Preview unavailable: <named reason>"**, with
+zero applicable preview rows and exports disabled. This is NOT a topology
+DIFFERENT result. Actual topology DIFFERENT/reader UNAVAILABLE still show
+the parity reason with no preview rows, even if a nonempty preview payload is
+received. Source replacement, toggle, cancel or stale epoch/revision also
+block preview export.
 
 ## Qualification
 

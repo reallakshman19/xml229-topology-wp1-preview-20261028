@@ -49,7 +49,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   runEngine ||= ownedWorker.run;
   cancelEngine ||= ownedWorker?()=>ownedWorker.cancel():()=>{};
   const state={epoch:0,source:null,original:null,revision:0,applied:0,history:[],resolutions:[],shortElements:[],shortPreview:null,scene:null,plan:null,findings:[],result:null,
-    selected:new Set(),search:'',filter:'all',category:'all',hubEnabled:false,hubParity:null,hubRevision:null,analysisProof:null,opsPreview:null,manualPorts:[],secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false,shortBulk:null,manualQueue:[],manualQueueRunning:false,manualQueueCheckpoint:null,manualQueueStatus:''};
+    selected:new Set(),search:'',filter:'all',category:'all',hubEnabled:false,hubParity:null,hubRevision:null,analysisProof:null,opsPreview:null,opsPreviewError:null,manualPorts:[],secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false,shortBulk:null,manualQueue:[],manualQueueRunning:false,manualQueueCheckpoint:null,manualQueueStatus:''};
   // The queue lives alongside Second Pass, without changing the engineering audit.
   const queuePanel=document.createElement('section');
   queuePanel.dataset.manualQueue='';
@@ -86,30 +86,36 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     state.hubParity=parity&&['EQUAL','DIFFERENT','UNAVAILABLE'].includes(parity.status)?
       {status:parity.status,differences:Array.isArray(parity.differences)?parity.differences:[]}:
       {status:'DIFFERENT',differences:['/handshake: MISSING_UXML_PARITY_RECEIPT']};
-    if(state.hubParity.status==='EQUAL'&&result?.topologyOperationsPreview){
+    if(state.hubParity.status!=='EQUAL'){
+      // Parity is authoritative; a non-applicable preview cannot publish rows.
+      state.opsPreview=null;
+      state.opsPreviewError=null;
+    }else if(result?.topologyOperationsPreview?.error){
+      state.opsPreview=null;
+      state.opsPreviewError=String(result.topologyOperationsPreview.error);
+    }else if(result?.topologyOperationsPreview){
       try{
         state.opsPreview=assertOperationsPreview(result.topologyOperationsPreview,
           expectedRawSha);
+        state.opsPreviewError=null;
       }catch(error){
+        // Read-only presentation failure cannot downgrade the hub's EQUAL
+        // resolver and patch-back parity or disable native Auto-fix.
         state.opsPreview=null;
-        state.hubParity={status:'DIFFERENT',
-          differences:['/operationsPreview: '+String(error?.message||error)]};
+        state.opsPreviewError='UXML_OPS_PREVIEW_INVALID:'+
+          String(error?.message||error);
       }
-    }else if(state.hubParity.status!=='EQUAL'){
-      state.opsPreview=null;
     }else if(result?.topologySummary?.generateTopoFix!==true){
-      // A parity badge without its complete read-only operation disclosure
-      // must not silently claim that proposals were previewed.
       state.opsPreview=null;
-      state.hubParity={status:'DIFFERENT',
-        differences:['/operationsPreview: MISSING_CANONICAL_S2_OPERATIONS_PREVIEW']};
+      state.opsPreviewError='MISSING_CANONICAL_S2_OPERATIONS_PREVIEW';
     }
     renderHubParity();
     opsPanel.render();
   }
   const opsPanel=createOperationsPreviewPanel(root,{
     snapshot:()=>({hubEnabled:state.hubEnabled,parity:state.hubParity,
-      preview:state.opsPreview,proof:analysisProofCurrent(),
+      preview:state.opsPreview,previewError:state.opsPreviewError,
+      proof:analysisProofCurrent(),
       busy:state.busy||state.batchRunning,
       reviewOnlyCount:state.plan?
         buildAudit(state.findings,state.plan.actions||[]).counts.manual:0}),
@@ -966,7 +972,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     cancelEngine();
     const generation=++state.epoch;
     state.shortBulk=null;
-    state.source=null;state.original=null;state.revision=0;state.hubParity=null;state.hubRevision=null;state.analysisProof=null;state.opsPreview=null;state.applied=0;state.history=[];state.resolutions=[];state.shortElements=[];state.shortPreview=null;
+    state.source=null;state.original=null;state.revision=0;state.hubParity=null;state.hubRevision=null;state.analysisProof=null;state.opsPreview=null;state.opsPreviewError=null;state.applied=0;state.history=[];state.resolutions=[];state.shortElements=[];state.shortPreview=null;
     const shortPanel=query(root,'[data-short-preview]');if(shortPanel)shortPanel.textContent='';
     state.manualPorts=[];state.secondPass=null;state.manualQueue=[];
     state.manualQueueCheckpoint=null;state.manualQueueRunning=false;
@@ -1003,7 +1009,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   async function analyze() {
     if(!state.source||state.busy)return;
     const generation=state.epoch,source=state.source;state.busy=true;
-    state.plan=null;state.findings=[];state.batch=null;state.manualPorts=[];state.secondPass=null;state.analysisProof=null;state.opsPreview=null;
+    state.plan=null;state.findings=[];state.batch=null;state.manualPorts=[];state.secondPass=null;state.analysisProof=null;state.opsPreview=null;state.opsPreviewError=null;
     query(root,'[data-batch-confirm]').textContent='';setFixStatus('');refresh();updateStatus('Running authoritative PSI116 topology analysis…');
     try {
       const result=await runEngine({sourceKind:'xml',sourceText:source.sourceText,
@@ -1169,7 +1175,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     }
     if(event.target.matches('[data-uxml-toggle]')){
       if(state.busy||state.batchRunning){event.target.checked=state.hubEnabled;return;}
-      state.hubEnabled=event.target.checked;state.hubParity=null;state.analysisProof=null;state.opsPreview=null;
+      state.hubEnabled=event.target.checked;state.hubParity=null;state.analysisProof=null;state.opsPreview=null;state.opsPreviewError=null;
       opsPanel.reset();
       renderHubParity();renderActions();refresh();
       updateStatus(state.hubEnabled?

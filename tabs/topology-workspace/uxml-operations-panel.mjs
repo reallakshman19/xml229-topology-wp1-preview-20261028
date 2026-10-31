@@ -37,6 +37,9 @@ export function createOperationsPreviewPanel(root,{snapshot,onLocate,onReview}){
       why.textContent=['DIFFERENT','UNAVAILABLE'].includes(status)?
         status+' · '+(state.parity?.differences||[]).join(' | ')+
         ' · No operations applicable or exportable.':
+        status==='EQUAL'&&state.previewError?
+          'Preview unavailable: '+state.previewError+
+          ' · Hub Auto-fix parity remains EQUAL; the operation disclosure is unavailable.':
         status==='EQUAL'?'Source custody / operations preview not ready; re-analyse.':
         'Select Analyze to compare the original PSI116 with pinned UXML.';
       rows.textContent='';
@@ -80,8 +83,11 @@ export function createOperationsPreviewPanel(root,{snapshot,onLocate,onReview}){
   function exportRows(format){
     const state=snapshot();
     if(!ready(state))return;
-    const body=format==='csv'?operationsCSV(state.preview,state.reviewOnlyCount):
-      JSON.stringify(visibleOperationExport(state.preview,state.reviewOnlyCount),null,2)+'\n';
+    // Export exactly the rows visible under the CURRENT kind/search inputs.
+    const filter={kind,search};
+    const body=format==='csv'?
+      operationsCSV(state.preview,state.reviewOnlyCount,filter):
+      JSON.stringify(visibleOperationExport(state.preview,state.reviewOnlyCount,filter),null,2)+'\n';
     const url=URL.createObjectURL(new Blob([body],
       {type:format==='csv'?'text/csv;charset=utf-8':'application/json'}));
     const link=document.createElement('a');
