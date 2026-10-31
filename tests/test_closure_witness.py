@@ -157,12 +157,12 @@ class ClosureWitness(unittest.TestCase):
         self.assertEqual([r['bindingStatus'] for r in rows].count('BOUND'), 10)
         self.assertEqual([r['bindingStatus'] for r in rows].count('UNQUALIFIED'), 10)
 
-    def test_off_port_same_number_closure_within_25mm_is_in_unqualified_reverse_witness(self):
+    def test_off_port_same_number_closure_within_binding_tolerance_is_in_unqualified_reverse_witness(self):
         # The unqualified-declaration reverse lookup must include a remote
-        # same-positive-NodeNumber alias; shrinking its 25 mm radius loses S1.
+        # same-positive-NodeNumber alias; shrinking the 0.5 mm binding radius loses S1.
         source = doc(
             node(700, 'ATTA', 'SUP_A', 0, '0 0 0', CLOS) +
-            node(700, 'ATTA', 'SUP_B', 0, '12 0 0')
+            node(700, 'ATTA', 'SUP_B', 0, '0.4 0 0')
         )
         rows = witnesses(source)
         row = next(r for r in rows if r['sourceKey'] == 'B0:N700:S0')
