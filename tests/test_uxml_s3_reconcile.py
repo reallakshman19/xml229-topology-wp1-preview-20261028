@@ -50,6 +50,8 @@ class SourceBackedReconciliation(unittest.TestCase):
         by_no={r.node_number:r for b in doc.branches for r in b.nodes}
         self.assertEqual(by_no[50].component_type,"ELBO",
             "PIPINGELEMENT[2]/BEND belongs to TO_NODE=50")
+        self.assertEqual(by_no[50].raw_component_type,"BEND",
+            "original XML carries literal BEND; normalized engine uses ELBO")
         self.assertEqual(by_no[50].bend_radius,150,
             "PIPINGELEMENT[2]/BEND@RADIUS=150")
         self.assertEqual(inp["components"][2]["rawAttributes"]["inputXml"]["bendEvidence"]["endpoint"],"TO")
