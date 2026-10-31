@@ -3,6 +3,7 @@ import {createTopologyWorkerClient} from './topology-worker-client.mjs';
 import {parseOccurrenceScene, affectedOccurrenceIds, escapeValue as esc} from './occurrence-scene.mjs';
 import {createTopologyCanvas} from './projected-canvas.mjs';
 import {mountConnectionReview} from './connection-review.mjs';
+import {mountSourceReviewPanel} from './source-review-panel.mjs';
 import {buildAudit,renderAuditHTML,renderAuditSummary,filterCounts} from './audit-view.mjs';
 import {eligibleActions,previewBatchPlan,explicitlyRejectedActionIds} from './batch-plan.mjs';
 import {runValidatedPasses} from './batch-runner.mjs';
@@ -68,6 +69,14 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       if(ids.length===2)canvas.focus(ids);
     }
   });
+  // Independent review evidence shelf; receives no state/manualQueue or engine callbacks.
+  const sourceReview=mountSourceReviewPanel(query(root,'[data-connection-review]'),{
+    getReview:()=>review.refresh(),getCurrentSha:()=>state.source?.sourceSha256||null
+  });
+  // Read-only browser audit of ACTUAL workspace state; exposes no execution action.
+  Object.defineProperty(root,'topofixReviewAuditState',{configurable:true,
+    value:()=>Object.freeze({manualQueueLength:state.manualQueue.length,
+      sourceSha256:state.source?.sourceSha256||null})});
   const updateStatus=message=>{query(root,'[data-status]').textContent=message;};
   const displayMessage=message=>{query(root,'[data-hits]').textContent=message;};
   function sourceMeta(){
@@ -856,7 +865,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   }
   function refresh() {
     root.setAttribute('aria-busy',String(state.busy||state.batchRunning));
-    renderRecords();renderActions();renderSelection();renderSecondPass();renderManualQueue();review.refresh();
+    renderRecords();renderActions();renderSelection();renderSecondPass();renderManualQueue();review.refresh();sourceReview.refresh();
     query(root,'[data-analyze]').disabled=!state.source||state.busy||state.batchRunning;
     query(root,'[data-cancel]').disabled=!(state.busy||state.batchRunning);
     getNodes(root,'[data-auto-fix],[data-close-joint],[data-add-second-pass]').forEach(button=>button.disabled=state.busy||state.batchRunning);
@@ -1113,7 +1122,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     occurrences:state.scene?.records.length||0,actions:state.plan?.actions.length||0,
     selected:[...state.selected],busy:state.busy,
     queued:state.manualQueue.map(x=>({id:x.id,status:x.status})),queueBusy:state.manualQueueRunning}),load,analyze,
-    dispose(){cancelEngine();ownedWorker?.dispose();state.epoch++;review.dispose();canvas.dispose();root.removeEventListener('toggle',toggled,true);root.removeEventListener('click',click);
+    dispose(){cancelEngine();ownedWorker?.dispose();state.epoch++;delete root.topofixReviewAuditState;sourceReview.dispose();review.dispose();canvas.dispose();root.removeEventListener('toggle',toggled,true);root.removeEventListener('click',click);
       root.removeEventListener('change',changed);root.removeEventListener('input',input);}};
 }
 const root=document.querySelector('#xml229-topology-workspace');

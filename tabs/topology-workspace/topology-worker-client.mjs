@@ -5,14 +5,18 @@ export function createTopologyWorkerClient({
   WorkerCtor=globalThis.Worker,
   workerUrl=new URL('./topology-worker.mjs',import.meta.url),
   jobTimeoutMs=180000,
+  startupTimeoutMs=15000,
 }={}) {
   let worker=null;
   let sequence=0;
   let completedInWorker=0;
   let disposed=false;
+  let startupTimeout=null;
+  const assetHelp='Check vendor/pyodide/pyodide.asm.wasm and vendor/pyodide/python_stdlib.zip; obtain pinned assets using the fetch commands in .github/workflows/repair-validation.yml.';
   const pending=new Map();
 
   function reset(reason) {
+    if(startupTimeout!==null){clearTimeout(startupTimeout);startupTimeout=null;}
     const old=worker;
     worker=null;
     completedInWorker=0;
@@ -26,9 +30,18 @@ export function createTopologyWorkerClient({
   function ensureWorker() {
     if(worker) return worker;
     if(typeof WorkerCtor !== 'function') throw Error('TOPOLOGY_WORKER_UNAVAILABLE: use a browser with module Worker support.');
-    const created=new WorkerCtor(workerUrl,{type:'module'});
+    let created;
+    try{created=new WorkerCtor(workerUrl,{type:'module'});}
+    catch(error){throw Error('TOPOLOGY_WORKER_START_FAILED: '+
+      (error?.message||String(error))+'. '+assetHelp);}
     created.addEventListener('message',({data})=>{
-      if(worker!==created || !data || !Number.isSafeInteger(data.id)) return;
+      if(worker!==created||!data)return;
+      if(data.type==='READY'){
+        if(startupTimeout!==null){clearTimeout(startupTimeout);startupTimeout=null;}
+        return;
+      }
+      if(!Number.isSafeInteger(data.id))return;
+      if(startupTimeout!==null){clearTimeout(startupTimeout);startupTimeout=null;}
       const task=pending.get(data.id);
       if(!task) return;
       pending.delete(data.id);
@@ -44,11 +57,14 @@ export function createTopologyWorkerClient({
     });
     const crashed=(event)=>{
       const message=event?.message || 'Worker failed to load or exchange data';
-      reset('TOPOLOGY_WORKER_CRASH: '+message);
+      reset('TOPOLOGY_WORKER_CRASH: '+message+'. '+assetHelp);
     };
     created.addEventListener('error',crashed);
     created.addEventListener('messageerror',crashed);
     worker=created;
+    startupTimeout=setTimeout(()=>{
+      if(worker===created)reset('TOPOLOGY_WORKER_START_FAILED: worker did not start. '+assetHelp);
+    },startupTimeoutMs);
     return worker;
   }
   function run(job) {

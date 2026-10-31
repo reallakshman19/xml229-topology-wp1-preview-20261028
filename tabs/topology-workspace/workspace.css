@@ -55,3 +55,16 @@ footer{font-size:12px;color:#94a3b8;margin-top:14px}
 .topo-review-list ul{max-height:130px;overflow:auto;padding-left:20px;margin:5px 0}
 .topo-review-list li{margin:4px 0}
 @media(max-width:600px){.topo-review-inputs{grid-template-columns:1fr}}
+
+/* TOPO-A P2: Source Review evidence shelf, visually separate from executable queue. */
+.topo-source-review{padding:10px;border:1px solid #c084fc;border-radius:7px;background:#17142b}
+.topo-source-review h2{color:#e9d5ff}.topo-source-review p{font-size:12px}
+.topo-source-review-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:7px}
+.topo-source-review-toolbar label{font-size:11px;max-width:100%}
+.topo-source-review-toolbar input{max-width:100%;display:block;font-size:11px}
+.topo-source-review-row{padding:9px;margin:9px 0;border:1px solid #64748b;border-radius:6px;overflow-wrap:anywhere}
+.topo-source-review-row p{margin:5px 0}.topo-source-review-row small{display:block;margin:3px 0;color:#cbd5e1}
+.topo-source-review-row code{overflow-wrap:anywhere;font-size:10px}
+.topo-source-review-row label{display:block;margin:7px 0}
+.topo-source-review-row select,.topo-source-review-row textarea{display:block;width:100%;margin-top:4px;background:#07101f;color:#f8fafc;border:1px solid #64748b;border-radius:4px;padding:6px}
+.topo-source-review [data-source-review-status]{font-size:11px;color:#e9d5ff}
