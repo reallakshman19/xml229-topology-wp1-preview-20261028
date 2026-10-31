@@ -649,7 +649,9 @@ try{
    throw Error('P2 source review leaked into executable repair or modified XML/findings');
  result.topoAP2Isolation='PASS: 1 exact review pair, reversed duplicate update, decision, JSON/CSV, 0 executable queue and 0 XML/finding mutations';
  await mkdir(path.join(sourceRoot,'preview-test-results'),{recursive:true});
- await page.screenshot({path:path.join(sourceRoot,'preview-test-results','topo-a-p2-source-review-synthetic.png'),fullPage:true});
+ // Capture the actual review queue (inside the independently scrollable findings aside),
+ // not a full-page image that can omit the queue below the aside's scroll fold.
+ await sourceQueue.screenshot({path:path.join(sourceRoot,'preview-test-results','topo-a-p2-source-review-synthetic.png')});
 
  // A nearby duplicate must not be chosen silently even when it looks closer.
  const duplicateBranch='<Branch><Branchname>REVIEW-DUPLICATE</Branchname>'+
