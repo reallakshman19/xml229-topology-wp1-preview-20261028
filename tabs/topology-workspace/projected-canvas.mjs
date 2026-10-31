@@ -40,7 +40,7 @@ export function hitOccurrences(scene,view,width,height,x,y,showHelpers=true){
 }
 export function createTopologyCanvas(canvas,onHits=()=>{}){
  const ctx=canvas.getContext('2d');if(!ctx)throw Error('2D Canvas unavailable');
- let scene=null,selected=new Set(),mode='select',view=initialView(),pointer=null;
+ let scene=null,selected=new Set(),reviewPair=[],mode='select',view=initialView(),pointer=null;
  let showHelpers=true,showLabels=true,disposed=false,framedIds=null;
  const size=()=>dimensions(canvas);
  const points=ids=>(ids?[...ids].map(id=>scene?.byId.get(id)):scene?.records||[]).filter(r=>r?.position&&(r.route||showHelpers)).map(r=>r.position);
@@ -56,6 +56,18 @@ export function createTopologyCanvas(canvas,onHits=()=>{}){
   for(const edge of scene.segments){const a=scene.byId.get(edge.a),b=scene.byId.get(edge.b);if(!a?.position||!b?.position)continue;
    const p=project(a.position),q=project(b.position);ctx.strokeStyle=palette[edge.branchIndex%palette.length];
    ctx.beginPath();ctx.moveTo(p.x,p.y);ctx.lineTo(q.x,q.y);ctx.stroke();}
+  // Canvas-only visual hypothesis; never write reviewPair to the solver scene.
+  if(reviewPair.length===2){
+    const a=scene.byId.get(reviewPair[0]),b=scene.byId.get(reviewPair[1]);
+    if(a?.position&&b?.position){
+      const p=project(a.position),q=project(b.position);
+      ctx.save();ctx.strokeStyle='#f472b6';ctx.fillStyle='#fbcfe8';
+      ctx.lineWidth=2;ctx.setLineDash([9,7]);ctx.beginPath();
+      ctx.moveTo(p.x,p.y);ctx.lineTo(q.x,q.y);ctx.stroke();ctx.setLineDash([]);
+      ctx.font='bold 11px system-ui';ctx.fillText('PROPOSAL · REVIEW ONLY',(p.x+q.x)/2+8,(p.y+q.y)/2-9);
+      ctx.restore();
+    }
+  }
   for(const r of scene.records){if(!r.position||(!r.route&&!showHelpers))continue;
    const p=project(r.position),active=selected.has(r.id);ctx.beginPath();ctx.arc(p.x,p.y,active?7:r.route?3.5:2.7,0,Math.PI*2);
    ctx.fillStyle=active?'#fff':r.route?palette[r.branchIndex%palette.length]:'#94a3b8';ctx.fill();
@@ -85,8 +97,8 @@ export function createTopologyCanvas(canvas,onHits=()=>{}){
  const listeners={pointerdown:down,pointermove:move,pointerup:up,pointercancel:abort,lostpointercapture:abort,contextmenu:context,dblclick:dbl,keydown:key};
  for(const [type,fn] of Object.entries(listeners))canvas.addEventListener(type,fn);canvas.addEventListener('wheel',wheel,{passive:false});
  const observer=typeof ResizeObserver!=='undefined'?new ResizeObserver(()=>frame(framedIds)):null;observer?.observe(canvas);draw();
- return {setScene(next){const changed=next?.sourceSha256!==scene?.sourceSha256;scene=next;if(changed){view=initialView();frame();}else draw();},
-  setSelection(ids){selected=new Set(ids);draw();},setMode(value){if(['select','pan','orbit'].includes(value))mode=value;canvas.style.cursor=mode==='orbit'?'grab':mode==='pan'?'move':'crosshair';},
+ return {setScene(next){const changed=next?.sourceSha256!==scene?.sourceSha256;scene=next;if(changed){view=initialView();reviewPair=[];frame();}else draw();},
+  setSelection(ids){selected=new Set(ids);draw();},setReviewPair(ids){reviewPair=[...ids].slice(0,2);draw();},setMode(value){if(['select','pan','orbit'].includes(value))mode=value;canvas.style.cursor=mode==='orbit'?'grab':mode==='pan'?'move':'crosshair';},
   setShowHelpers(value){showHelpers=!!value;draw();},setShowLabels(value){showLabels=!!value;draw();},
   zoom(factor){const {width,height}=size();view=zoomAt(view,factor,width/2,height/2,width,height);draw();},
   setPreset(preset){if(cameraPresets[preset]){[view.yaw,view.pitch]=cameraPresets[preset];frame(selected.size?selected:null);}},
