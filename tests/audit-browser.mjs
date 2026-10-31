@@ -578,22 +578,26 @@ try{
    throw Error('Universal XML preview must default OFF');
  await page.locator('[data-file]').setInputFiles(hubFixture);
  await page.waitForFunction(()=>document.querySelector('[data-occ-summary]')?.textContent?.includes('4 of 4'));
+ result.uxmlUiStage='TOGGLE_BEFORE_ANALYZE';
  await page.locator('[data-uxml-toggle]').check();
  if((await page.locator('[data-uxml-parity]').getAttribute('data-parity'))!=='NOT_CHECKED')
    throw Error('UXML toggle silently asserted parity without a worker run');
+ result.uxmlUiStage='ANALYZE_WAIT_PARITY';
  await page.locator('[data-analyze]').click();
  await page.waitForFunction(()=>['EQUAL','DIFFERENT','UNAVAILABLE'].includes(
    document.querySelector('[data-uxml-parity]')?.dataset?.parity),null,{timeout:120000});
  const parity=await page.locator('[data-uxml-parity]').getAttribute('data-parity');
+ result.uxmlUiStage='PARITY_'+parity;
  if(parity!=='EQUAL')
    throw Error('Pinned reader must give EQUAL for synthetic auto fixture; got '+
      parity+' '+await page.locator('[data-uxml-differences]').textContent());
  await page.locator('[data-auto-fix-all]').click();
  const go=page.locator('[data-run-auto-fix-all]');
  if(!await go.count())throw Error('No authorized Auto-fix batch for synthetic hub fixture');
+ result.uxmlUiStage='BULK_APPLY_WAIT_OUTPUT';
  await go.click();
  await page.waitForFunction(()=>document.querySelector('[data-download-working]')?.disabled===false||
-   /NOT APPLIED|ERROR/.test(document.querySelector('[data-progress]')?.textContent||''),null,{timeout:120000});
+   /NOT APPLIED|ERROR|STOPPED|REJECTED/.test(document.querySelector('[data-progress]')?.textContent||''),null,{timeout:120000});
  if(await page.locator('[data-download-working]').isDisabled())
    throw Error('UXML hub patch was not verified for download: '+
      await page.locator('[data-progress]').textContent()+' / '+await page.locator('[data-uxml-differences]').textContent());
@@ -601,9 +605,11 @@ try{
    throw Error('UXML parity was not retained through validated patch and recheck');
  await page.locator('[data-uxml-parity]').scrollIntoViewIfNeeded();
  await page.screenshot({path:path.join(sourceRoot,'preview-test-results','uxml-ui-parity-equal.png'),fullPage:false});
+ result.uxmlUiStage='DOWNLOAD_HUB_XML';
  const hubDownload=page.waitForEvent('download');
  await page.locator('[data-download-working]').click();
  const hubBytes=await readFile(await (await hubDownload).path());
+ result.uxmlUiStage='COMPARE_DIRECT_ROUTE';
  const directPage=await browser.newPage({viewport:{width:1440,height:960}});
  try {
    await directPage.goto('http://127.0.0.1:'+port+'/index.html');
@@ -615,7 +621,7 @@ try{
    await directPage.locator('[data-auto-fix-all]').click();
    await directPage.locator('[data-run-auto-fix-all]').click();
    await directPage.waitForFunction(()=>document.querySelector('[data-download-working]')?.disabled===false||
-     /NOT APPLIED|ERROR/.test(document.querySelector('[data-progress]')?.textContent||''),null,{timeout:120000});
+     /NOT APPLIED|ERROR|STOPPED|REJECTED/.test(document.querySelector('[data-progress]')?.textContent||''),null,{timeout:120000});
    if(await directPage.locator('[data-download-working]').isDisabled())
      throw Error('Direct comparator did not commit synthetic batch');
    const dl=directPage.waitForEvent('download');
@@ -627,6 +633,7 @@ try{
    result.uxmlUiBytesEqual=true;
    result.uxmlUiFixedSha256=createHash('sha256').update(hubBytes).digest('hex');
  } finally { await directPage.close(); }
+ result.uxmlUiStage='TAMPER_READER_VERIFY';
  // Independent tamper: the Worker must NEVER import a reader blob whose
  // source differs by even one harmless comment, even on a valid fixture.
  const badContext=await browser.newContext({viewport:{width:1440,height:960}});
@@ -663,7 +670,20 @@ try{
  } finally { await badContext.close(); }
  if(pageErrors.length)throw Error('Browser errors: '+pageErrors.join(' | '));
  result.status='PASS';
-}catch(e){result.status='FAIL';result.error=String(e);throw e;}
+}catch(e){
+ result.status='FAIL';result.error=String(e);
+ // Public synthetic diagnostic: never include file contents or private data.
+ result.uxmlUiDebug=await page.evaluate(()=>({
+   parity:document.querySelector('[data-uxml-parity]')?.dataset?.parity,
+   parityWhy:document.querySelector('[data-uxml-differences]')?.textContent?.slice(0,900),
+   analysisStatus:document.querySelector('[data-status]')?.textContent?.slice(0,900),
+   progress:document.querySelector('[data-progress]')?.textContent?.slice(0,900),
+   opsStatus:document.querySelector('[data-ops-status]')?.textContent?.slice(0,900),
+   opsCount:document.querySelectorAll('[data-ops-rows] [data-op-id]').length,
+   busy:document.querySelector('main')?.getAttribute('aria-busy'),
+ }));
+ throw e;
+}
 finally{
  result.pageErrors=pageErrors;
  await writeFile(path.join(sourceRoot,'preview-test-results.json'),JSON.stringify(result,null,2)+'\n');

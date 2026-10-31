@@ -47,6 +47,7 @@ jobs:
         run: |
           npm install --no-save --ignore-scripts --package-lock=false playwright@1.52.0
           npx playwright install --with-deps chromium
+          node --test tests/uxml-operations-preview.browser.mjs
           node --test tests/uxml-ui-different.browser.mjs
           node tests/audit-browser.mjs
       - name: Retain UXML-UI parity screenshot and browser receipt

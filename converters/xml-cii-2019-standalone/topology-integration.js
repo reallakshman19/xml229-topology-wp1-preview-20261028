@@ -17,6 +17,7 @@ const TOPOLOGY_PACKAGE_FILES = Object.freeze([
   'uxml_adapter.py',
   'uxml_compare.py',
   'uxml_edit_ops.py',
+  'uxml_operations_preview.py',
 ]);
 
 const TOPOLOGY_SNIPPET = `
@@ -55,6 +56,7 @@ cfg = ResolverConfig()
 result = resolve_psi116(Path(job_topology_input_path))
 hub_doc = json.loads(job_topology_uxml_json)
 hub_parity = {"status": "OFF", "differences": []}
+ops_preview = None
 if hub_doc is not None:
     # The same Python resolver consumes either ORIGINAL PSI116 or XCU's UXML.
     from psi116_topology_resolver.uxml_adapter import resolve_from_uxml
@@ -68,6 +70,18 @@ if hub_doc is not None:
     except Exception as exc:
         hub_parity = {"status": "DIFFERENT",
                       "differences": ["/uxmlReader: "+type(exc).__name__+": "+str(exc)]}
+# This is an inspection projection only. export_edit_ops remains the one
+# authority for which operations exist; no transaction is executed here.
+if hub_doc is not None and hub_parity["status"] == "EQUAL" and not job_generate_topofix:
+    try:
+        from psi116_topology_resolver.uxml_operations_preview import build_operation_preview
+        ops_preview = build_operation_preview(
+            hub_doc, source_name=str(job_topology_input_path), config=cfg)
+    except Exception as exc:
+        # Presentation failure is NEVER topology or patch-back parity failure.
+        # Preserve the verified hub route and its existing Auto-fix admission.
+        ops_preview = {"error": "UXML_OPS_PREVIEW_UNAVAILABLE:"+
+                               type(exc).__name__+":"+str(exc)}
 # When EQUAL, publish the UXML-fed Python findings and plan, not the direct copies.
 published = adapted if hub_doc is not None and hub_parity["status"] == "EQUAL" else result
 findings_payload = published.findings_payload(cfg)
@@ -175,6 +189,7 @@ if job_generate_topofix:
             json.dumps(after.fix_plan_payload(cfg), indent=2, sort_keys=True) + "\\n", encoding="utf-8"
         )
 
+status["opsPreview"] = ops_preview if hub_parity["status"] == "EQUAL" else None
 status["hubParity"] = hub_parity
 Path(job_topology_status_path).write_text(
     json.dumps(status, indent=2, sort_keys=True) + "\\n",
@@ -303,6 +318,7 @@ export async function runPsi116TopologyStage(pyodide, job, inputPath, jobDir, st
 
   const status = JSON.parse(readOptional(pyodide, paths.status) || '{}');
   const topologyUxmlParity = status.hubParity || null;
+  const topologyOperationsPreview = status.opsPreview || null;
   const topologyFindingsText = readOptional(pyodide, paths.findings);
   const topologyFixPlanText = readOptional(pyodide, paths.plan);
   const topoFixTransactionText = generateTopoFix ? readOptional(pyodide, paths.transaction) : '';
@@ -348,6 +364,7 @@ export async function runPsi116TopologyStage(pyodide, job, inputPath, jobDir, st
     topoFixPreFinalHandoffName: topoFixCommitted ? names.handoff : '',
     topoFixCommitted,
     topologyUxmlParity,
+    topologyOperationsPreview,
     ciiInputSource: useTopoFixForCii ? 'topofix' : 'original',
     topologySummary: {
       requested: true,
