@@ -44,7 +44,9 @@ if hub_doc is not None:
     except Exception as exc:
         hub_parity = {"status": "DIFFERENT",
                       "differences": ["/uxmlReader: "+type(exc).__name__+": "+str(exc)]}
-findings_payload = result.findings_payload(cfg)
+# When EQUAL, publish the UXML-fed Python findings and plan, not the direct copies.
+published = adapted if hub_doc is not None and hub_parity["status"] == "EQUAL" else result
+findings_payload = published.findings_payload(cfg)
 preview_request = json.loads(job_connection_preview_json)
 if preview_request:
     from psi116_topology_resolver.manual_connections import preview_connection
@@ -54,7 +56,7 @@ Path(job_topology_findings_path).write_text(
     encoding="utf-8",
 )
 Path(job_topology_plan_path).write_text(
-    json.dumps(result.fix_plan_payload(cfg), indent=2, sort_keys=True) + "\\n",
+    json.dumps(published.fix_plan_payload(cfg), indent=2, sort_keys=True) + "\\n",
     encoding="utf-8",
 )
 

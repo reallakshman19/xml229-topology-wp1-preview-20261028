@@ -120,7 +120,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   }
   function renderActions() {
     const shortButton=query(root,'[data-preview-short]');
-    if(shortButton)shortButton.disabled=!state.plan||state.busy||state.batchRunning;
+    if(shortButton)shortButton.disabled=!state.plan||state.busy||state.batchRunning||state.hubEnabled;
     const plan=state.plan;
     const summary=query(root,'[data-plan-summary]');
     const panel=query(root,'[data-issues]');
@@ -547,6 +547,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       ' validated; '+skipped+' not eligible on reanalysis. Engineering review remains required.');
   }
   async function dropShortElements(){
+    if(state.hubEnabled){setFixStatus('UXML_PREVIEW_AUTO_ONLY: short-element changes held. Turn preview off for the existing direct route.','rejected');return;}
     const p=state.shortPreview;
     if(state.busy||state.batchRunning||!p||p.epoch!==state.epoch||
        p.sha!==state.source?.sourceSha256)return;
@@ -616,7 +617,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       'Only authoritatively qualified and explicitly approved movements execute.</p>'+
       (state.manualQueue.length?'<ol>'+list+'</ol>':'<p>No approved repairs queued.</p>')+
       '<div><button data-queue-apply type="button" '+
-      (!approved.length||state.busy||state.batchRunning?'disabled':'')+
+      (!approved.length||state.busy||state.batchRunning||state.hubEnabled?'disabled':'')+
       '>Apply '+approved.length+' approved fix(es) &amp; recheck</button> '+
       '<button data-queue-clear type="button" '+
       (!state.manualQueue.length||state.busy||state.batchRunning?'disabled':'')+
@@ -703,6 +704,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     renderManualQueue();
   }
   async function applyManualQueue(){
+    if(state.hubEnabled){state.manualQueueStatus='UXML_PREVIEW_AUTO_ONLY: manual queue Apply held. Turn preview off for the existing route.';renderManualQueue();return;}
     if(state.busy||state.batchRunning||!state.source||!state.plan)return;
     const entries=state.manualQueue.filter(x=>x.status==='APPROVED');
     if(!entries.length)return;
@@ -759,7 +761,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   function updateSecondApply(){
     const d=state.secondPass;
     getNodes(root,'[data-apply-second],[data-queue-second]').forEach(button=>{
-      button.disabled=state.busy||state.batchRunning||!d?.preview||!d.confirmed||d.evidence.trim().length<10;
+      button.disabled=state.hubEnabled||state.busy||state.batchRunning||!d?.preview||!d.confirmed||d.evidence.trim().length<10;
     });
   }
   function beginSecondPass(findingId){
