@@ -14,6 +14,9 @@ const TOPOLOGY_PACKAGE_FILES = Object.freeze([
   'connection_ports.py',
   'short_elements.py',
   'lineage.py',
+  'uxml_adapter.py',
+  'uxml_compare.py',
+  'uxml_edit_ops.py',
 ]);
 
 const TOPOLOGY_SNIPPET = `
@@ -25,7 +28,25 @@ from psi116_topology_resolver.lineage import build_topofix_source_lineage, verif
 
 cfg = ResolverConfig()
 result = resolve_psi116(Path(job_topology_input_path))
-findings_payload = result.findings_payload(cfg)
+hub_doc = json.loads(job_topology_uxml_json)
+hub_parity = {"status": "OFF", "differences": []}
+if hub_doc is not None:
+    # The same Python resolver consumes either ORIGINAL PSI116 or XCU's UXML.
+    from psi116_topology_resolver.uxml_adapter import resolve_from_uxml
+    from psi116_topology_resolver.uxml_compare import _diff
+    try:
+        adapted = resolve_from_uxml(hub_doc, cfg, source_name=str(job_topology_input_path))
+        differences = []
+        _diff("/findings", result.findings_payload(cfg), adapted.findings_payload(cfg), differences)
+        _diff("/fixPlan", result.fix_plan_payload(cfg), adapted.fix_plan_payload(cfg), differences)
+        hub_parity = {"status": "DIFFERENT" if differences else "EQUAL",
+                      "differences": differences}
+    except Exception as exc:
+        hub_parity = {"status": "DIFFERENT",
+                      "differences": ["/uxmlReader: "+type(exc).__name__+": "+str(exc)]}
+# When EQUAL, publish the UXML-fed Python findings and plan, not the direct copies.
+published = adapted if hub_doc is not None and hub_parity["status"] == "EQUAL" else result
+findings_payload = published.findings_payload(cfg)
 preview_request = json.loads(job_connection_preview_json)
 if preview_request:
     from psi116_topology_resolver.manual_connections import preview_connection
@@ -35,7 +56,7 @@ Path(job_topology_findings_path).write_text(
     encoding="utf-8",
 )
 Path(job_topology_plan_path).write_text(
-    json.dumps(result.fix_plan_payload(cfg), indent=2, sort_keys=True) + "\\n",
+    json.dumps(published.fix_plan_payload(cfg), indent=2, sort_keys=True) + "\\n",
     encoding="utf-8",
 )
 
@@ -50,13 +71,44 @@ status = {
 }
 
 if job_generate_topofix:
-    transaction = apply_topofix_transaction(
+    direct_transaction = apply_topofix_transaction(
         result,
         policy=TransactionPolicy(selected_action_ids=tuple(job_topology_action_ids),
                                  short_element_requests=tuple(json.loads(job_short_elements_json)),
                                  joint_repairs=tuple(json.loads(job_joint_repairs_json))),
         config=cfg,
     )
+    transaction = direct_transaction
+    if hub_doc is not None and hub_parity["status"] == "EQUAL":
+        # This is the complete S2 Auto-only patch route: UXML -> edit ops ->
+        # sourceRefs -> ORIGINAL PSI116 patched by native transaction.py.
+        # Direct transaction is a private comparator, never the hub download.
+        from psi116_topology_resolver.uxml_edit_ops import export_edit_ops, apply_edit_ops
+        from psi116_topology_resolver.uxml_compare import _diff
+        try:
+            if json.loads(job_joint_repairs_json) or json.loads(job_short_elements_json):
+                raise ValueError("UXML_PREVIEW_AUTO_ONLY: manual and short-element repair held")
+            selection = TransactionPolicy(selected_action_ids=tuple(job_topology_action_ids))
+            ops = export_edit_ops(hub_doc, policy=selection, source_name=str(job_topology_input_path))
+            if sorted(op["sourceActionId"] for op in ops["ops"]) != sorted(job_topology_action_ids):
+                raise ValueError("UXML_SELECTED_ACTION_IDS_NOT_ALL_MUTATING")
+            patched = apply_edit_ops(Path(job_topology_input_path), hub_doc, ops, config=cfg)
+            if patched is None:
+                raise ValueError("UXML_PATCH_NO_OPERATIONS")
+            differences = []
+            _diff("/transaction", direct_transaction.transaction_payload(),
+                  patched.transaction_payload(), differences)
+            _diff("/validation", direct_transaction.validation_payload(),
+                  patched.validation_payload(), differences)
+            if patched.fixed_xml != direct_transaction.fixed_xml:
+                differences.append("/fixedXml: PATCH_BYTES_DIFFER_FROM_DIRECT")
+            if differences:
+                hub_parity = {"status": "DIFFERENT", "differences": differences}
+            else:
+                transaction = patched
+        except Exception as exc:
+            hub_parity = {"status": "DIFFERENT",
+                          "differences": ["/patchBack: "+type(exc).__name__+": "+str(exc)]}
     Path(job_topology_transaction_path).write_text(
         json.dumps(transaction.transaction_payload(), indent=2, sort_keys=True) + "\\n",
         encoding="utf-8",
@@ -65,9 +117,12 @@ if job_generate_topofix:
         json.dumps(transaction.validation_payload(), indent=2, sort_keys=True) + "\\n",
         encoding="utf-8",
     )
-    status["committed"] = bool(transaction.committed)
+    status["committed"] = bool(transaction.committed) and (
+        hub_doc is None or hub_parity["status"] == "EQUAL")
     status["rejectReasons"] = list(transaction.reject_reasons)
-    if transaction.committed and transaction.fixed_xml is not None:
+    if hub_doc is not None and hub_parity["status"] != "EQUAL":
+        status["rejectReasons"].append("UXML_PARITY_DIFFERENT_NO_DOWNLOAD")
+    if status["committed"] and transaction.fixed_xml is not None:
         lineage = build_topofix_source_lineage(transaction)
         qualified = verify_topofix_pre_final(
             result.document.source_text, transaction.fixed_xml,
@@ -97,6 +152,7 @@ if job_generate_topofix:
             json.dumps(after.fix_plan_payload(cfg), indent=2, sort_keys=True) + "\\n", encoding="utf-8"
         )
 
+status["hubParity"] = hub_parity
 Path(job_topology_status_path).write_text(
     json.dumps(status, indent=2, sort_keys=True) + "\\n",
     encoding="utf-8",
@@ -216,12 +272,14 @@ export async function runPsi116TopologyStage(pyodide, job, inputPath, jobDir, st
   pyodide.globals.set('job_topology_status_path', paths.status);
   pyodide.globals.set('job_generate_topofix', generateTopoFix);
   pyodide.globals.set('job_topology_action_ids', actionIds);
+  pyodide.globals.set('job_topology_uxml_json', JSON.stringify(job.uxmlDocument||null));
   pyodide.globals.set('job_joint_repairs_json', JSON.stringify(options.topologyJointRepairs || []));
   pyodide.globals.set('job_connection_preview_json', JSON.stringify(options.topologyConnectionPreview || null));
   pyodide.globals.set('job_short_elements_json', JSON.stringify(options.topologyShortElementRequests || []));
   await pyodide.runPythonAsync(TOPOLOGY_SNIPPET);
 
   const status = JSON.parse(readOptional(pyodide, paths.status) || '{}');
+  const topologyUxmlParity = status.hubParity || null;
   const topologyFindingsText = readOptional(pyodide, paths.findings);
   const topologyFixPlanText = readOptional(pyodide, paths.plan);
   const topoFixTransactionText = generateTopoFix ? readOptional(pyodide, paths.transaction) : '';
@@ -266,6 +324,7 @@ export async function runPsi116TopologyStage(pyodide, job, inputPath, jobDir, st
     topoFixPostPlanText,
     topoFixPreFinalHandoffName: topoFixCommitted ? names.handoff : '',
     topoFixCommitted,
+    topologyUxmlParity,
     ciiInputSource: useTopoFixForCii ? 'topofix' : 'original',
     topologySummary: {
       requested: true,

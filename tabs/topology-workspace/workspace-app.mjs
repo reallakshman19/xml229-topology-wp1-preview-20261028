@@ -47,7 +47,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   runEngine ||= ownedWorker.run;
   cancelEngine ||= ownedWorker?()=>ownedWorker.cancel():()=>{};
   const state={epoch:0,source:null,original:null,revision:0,applied:0,history:[],resolutions:[],shortElements:[],shortPreview:null,scene:null,plan:null,findings:[],result:null,
-    selected:new Set(),search:'',filter:'all',category:'all',manualPorts:[],secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false,shortBulk:null,manualQueue:[],manualQueueRunning:false,manualQueueCheckpoint:null,manualQueueStatus:''};
+    selected:new Set(),search:'',filter:'all',category:'all',hubEnabled:false,hubParity:null,hubRevision:null,manualPorts:[],secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false,shortBulk:null,manualQueue:[],manualQueueRunning:false,manualQueueCheckpoint:null,manualQueueStatus:''};
   // The queue lives alongside Second Pass, without changing the engineering audit.
   const queuePanel=document.createElement('section');
   queuePanel.dataset.manualQueue='';
@@ -58,6 +58,34 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   const canvas=createTopologyCanvas(query(root,'[data-canvas]'),onHits);
   const updateStatus=message=>{query(root,'[data-status]').textContent=message;};
   const displayMessage=message=>{query(root,'[data-hits]').textContent=message;};
+  function hubCanRelease(fix=false){
+    if(!state.hubEnabled)return true;
+    return state.hubParity?.status==='EQUAL'&&state.hubRevision===state.revision&&
+      (!fix||state.fix?.hubRoute===true);
+  }
+  function renderHubParity(){
+    const badge=query(root,'[data-uxml-parity]');
+    const details=query(root,'[data-uxml-differences]');
+    if(!badge||!details)return;
+    const status=state.hubEnabled?(state.hubParity?.status||'NOT_CHECKED'):'OFF';
+    badge.dataset.parity=status;
+    badge.textContent=!state.hubEnabled?'UXML preview OFF · direct TopoFix':
+      'Universal XML route (preview) · '+status;
+    const differences=state.hubParity?.differences||[];
+    details.textContent=!state.hubEnabled?'UXML preview off. Direct route remains available.':
+      status==='EQUAL'?'EQUAL · direct findings and plan match the pinned UXML reader'+
+        (state.hubRevision===state.revision?' · hub corrected XML verified for download.':' · run Auto fix through hub to enable corrected download.'):
+      differences.length?differences.join('\n'):
+      'Analyze to compare direct PSI116 and pinned UXML. Download blocked until EQUAL.';
+  }
+  function recordHubResult(result){
+    if(!state.hubEnabled)return;
+    const parity=result?.topologyUxmlParity;
+    state.hubParity=parity&&['EQUAL','DIFFERENT','UNAVAILABLE'].includes(parity.status)?
+      {status:parity.status,differences:Array.isArray(parity.differences)?parity.differences:[]}:
+      {status:'DIFFERENT',differences:['/handshake: MISSING_UXML_PARITY_RECEIPT']};
+    renderHubParity();
+  }
   function sourceMeta(){
     query(root,'[data-source-meta]').textContent=state.source.name+' · working revision '+state.revision+
       ' · '+state.scene.records.length+' occurrences · SHA256 '+state.source.sourceSha256;
@@ -92,7 +120,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   }
   function renderActions() {
     const shortButton=query(root,'[data-preview-short]');
-    if(shortButton)shortButton.disabled=!state.plan||state.busy||state.batchRunning;
+    if(shortButton)shortButton.disabled=!state.plan||state.busy||state.batchRunning||state.hubEnabled;
     const plan=state.plan;
     const summary=query(root,'[data-plan-summary]');
     const panel=query(root,'[data-issues]');
@@ -132,7 +160,8 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     const batchButton=query(root,'[data-auto-fix-all]');
     const allowed=eligibleActions(state.findings,plan.actions||[]);
     if(batchButton){
-      batchButton.disabled=state.busy||state.batchRunning||allowed.length===0;
+      batchButton.disabled=state.busy||state.batchRunning||allowed.length===0||
+        (state.hubEnabled&&state.hubParity?.status!=='EQUAL');
       batchButton.textContent='Autofix-All ('+allowed.length+' actions)';
     }
   }
@@ -141,7 +170,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     if(!panel)return;
     panel.setAttribute('data-result',kind);
     panel.textContent=message;
-    if(['ready','stopped','rejected'].includes(kind)&&state.fix?.sourceSha256===state.source?.sourceSha256){
+    if(['ready','stopped','rejected'].includes(kind)&&state.fix?.sourceSha256===state.source?.sourceSha256&&hubCanRelease(true)){
       const button=document.createElement('button');
       button.type='button';button.setAttribute('data-download-fix','');
       button.textContent='Download validated corrected XML';
@@ -191,7 +220,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   }
   function downloadBatchReport(){
     const fix=state.fix;
-    if(!fix?.report||fix.sourceSha256!==state.source?.sourceSha256)return;
+    if(!fix?.report||fix.sourceSha256!==state.source?.sourceSha256||!hubCanRelease(true))return;
     const filename=(state.source.name.replace(/\\.xml$/i,'')||'input')+
       '.autofix-batch-report.json';
     const url=URL.createObjectURL(new Blob([JSON.stringify(fix.report,null,2)],
@@ -201,7 +230,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     window.setTimeout(()=>URL.revokeObjectURL(url),1000);
   }
   function downloadFix(){
-    if(!state.fix||state.fix.sourceSha256!==state.source?.sourceSha256)return;
+    if(!state.fix||state.fix.sourceSha256!==state.source?.sourceSha256||!hubCanRelease(true))return;
     const blob=new Blob([state.fix.xml],{type:'application/xml;charset=utf-8'});
     const url=URL.createObjectURL(blob);
     const anchor=document.createElement('a');
@@ -210,7 +239,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     window.setTimeout(()=>URL.revokeObjectURL(url),1000);
   }
   function downloadCurrent(history=false){
-    if(!state.source||!state.revision)return;
+    if(!state.source||!state.revision||!hubCanRelease())return;
     const body=history?JSON.stringify({schema:'topofix-working-history/v1',
       originalSha256:state.original.sourceSha256,currentSha256:state.source.sourceSha256,
       revision:state.revision,repairs:state.history},null,2):state.source.sourceText;
@@ -220,7 +249,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     document.body.appendChild(a);a.click();a.remove();window.setTimeout(()=>URL.revokeObjectURL(url),1000);
   }
   function downloadResolutions(){
-    if(!state.source||!state.plan)return;
+    if(!state.source||!state.plan||(state.hubEnabled&&state.hubParity?.status!=='EQUAL'))return;
     const receipt={schema:'topofix-connection-evidence/v1',sourceSha256:state.source.sourceSha256,
       toleranceMm:25,resolvedConnections:state.resolutions,remainingFindings:state.findings,
       workingRevision:state.revision,xmlChangedByResolution:false};
@@ -260,7 +289,8 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       ids[0]==='JOIN:'+jointRepairs[0].findingId+':'+jointRepairs[0].moveKey;
     const drop=shortElementRequests.length===1&&ids.length===1&&ids[0]===shortElementRequests[0].id;
     const dropWitness=drop?state.shortElements.find(r=>r.id===ids[0]):null;
-    if(!state.source||state.busy||(state.batchRunning&&receiptKey!=='batch')||!ids.length||(joint&&drop)||(!joint&&!drop&&ids.some(id=>!allowed.has(id)))){
+    if(!state.source||state.busy||(state.batchRunning&&receiptKey!=='batch')||!ids.length||(joint&&drop)||(!joint&&!drop&&ids.some(id=>!allowed.has(id)))||
+      (state.hubEnabled&&(state.hubParity?.status!=='EQUAL'||joint||drop))){
       setFixStatus('Auto fix is not authorized for this selection. No XML was modified.','rejected');
       return;
     }
@@ -278,8 +308,12 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
           sourceName:source.name,topologyPreFinalOnly:true,
           options:{outputMode:'enriched-only',analyzeTopology:true,
             generateTopoFix:true,useTopoFixForCii:false,topologyActionIds:ids,
-            topologyJointRepairs:jointRepairs,topologyShortElementRequests:shortElementRequests}});
+            topologyJointRepairs:jointRepairs,topologyShortElementRequests:shortElementRequests,
+            topologyUxmlPreview:state.hubEnabled},sourceRawSha256:source.rawSha256});
         if(generation!==state.epoch)return;
+        recordHubResult(result);
+        if(state.hubEnabled&&state.hubParity?.status!=='EQUAL')
+          throw Error('UXML_PREVIEW_PARITY_BLOCKED: '+state.hubParity?.differences.join(' | '));
         txn=JSON.parse(result?.topoFixTransactionText||'null');
         validation=JSON.parse(result?.topoFixValidationText||'null');
         reasons=[...(txn?.rejectReasons||[]),...(validation?.rejectReasons||[])];
@@ -329,7 +363,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       const excluded=[...skippedByPlan,...skippedByEngine];
       const proposed=eligibleActions(state.findings,state.plan.actions).length;
       const beforeCount=state.findings.length;
-      const nextSource={...source,sourceText:result.topoFixXmlText,sourceSha256:fixedSha};
+      const nextSource={...source,sourceText:result.topoFixXmlText,sourceSha256:fixedSha,rawSha256:fixedSha};
       const nextScene=parseOccurrenceScene(nextSource.sourceText,fixedSha);
       const lineage=JSON.parse(result.topoFixLineageText);
       const changedLocations=(lineage.sourceOccurrenceMap||[])
@@ -341,8 +375,12 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       const recheck=await runEngine({sourceKind:'xml',sourceText:nextSource.sourceText,
         sourceName:source.name,topologyPreFinalOnly:true,
         options:{outputMode:'enriched-only',analyzeTopology:true,generateTopoFix:false,
-          useTopoFixForCii:false,topologyActionIds:[]}});
+          useTopoFixForCii:false,topologyActionIds:[],
+          topologyUxmlPreview:state.hubEnabled},sourceRawSha256:fixedSha});
       if(generation!==state.epoch)return;
+      recordHubResult(recheck);
+      if(state.hubEnabled&&state.hubParity?.status!=='EQUAL')
+        throw Error('UXML_RECHECK_PARITY_BLOCKED: '+state.hubParity?.differences.join(' | '));
       const current=acceptAnalysis(recheck,fixedSha);
       const priorReviews=Object.fromEntries(state.gapReviews);
       state.source=nextSource;state.scene=nextScene;state.plan=current.plan;
@@ -353,6 +391,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       state.findings=current.findings;state.result=recheck;state.selected.clear();state.gapReviews.clear();
       state.selected=new Set(changedIds);
       state.revision++;state.applied+=ids.length;
+      state.hubRevision=state.hubEnabled?state.revision:null;
       state.history.push({sourceSha256:source.sourceSha256,fixedSha256:fixedSha,
         actionIds:ids,operations:txn.operations,validation:validation.checks,jointRepairs,reviews:priorReviews,
         resolvedConnections:current.resolutions});
@@ -362,6 +401,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
         state.applied+' action(s) applied · findings '+beforeCount+' → '+current.findings.length+
         ' after full recheck. Canvas and counts show the corrected working copy.';
       state.fix={sourceSha256:fixedSha,receiptKey,actionIds:ids,
+        hubRoute:state.hubEnabled,
         xml:result.topoFixXmlText,
         name:(source.name.replace(/\\.xml$/i,'')||'input')+'.'+suffix+
           '.validated.topofix.xml',
@@ -507,6 +547,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       ' validated; '+skipped+' not eligible on reanalysis. Engineering review remains required.');
   }
   async function dropShortElements(){
+    if(state.hubEnabled){setFixStatus('UXML_PREVIEW_AUTO_ONLY: short-element changes held. Turn preview off for the existing direct route.','rejected');return;}
     const p=state.shortPreview;
     if(state.busy||state.batchRunning||!p||p.epoch!==state.epoch||
        p.sha!==state.source?.sourceSha256)return;
@@ -576,7 +617,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       'Only authoritatively qualified and explicitly approved movements execute.</p>'+
       (state.manualQueue.length?'<ol>'+list+'</ol>':'<p>No approved repairs queued.</p>')+
       '<div><button data-queue-apply type="button" '+
-      (!approved.length||state.busy||state.batchRunning?'disabled':'')+
+      (!approved.length||state.busy||state.batchRunning||state.hubEnabled?'disabled':'')+
       '>Apply '+approved.length+' approved fix(es) &amp; recheck</button> '+
       '<button data-queue-clear type="button" '+
       (!state.manualQueue.length||state.busy||state.batchRunning?'disabled':'')+
@@ -663,6 +704,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     renderManualQueue();
   }
   async function applyManualQueue(){
+    if(state.hubEnabled){state.manualQueueStatus='UXML_PREVIEW_AUTO_ONLY: manual queue Apply held. Turn preview off for the existing route.';renderManualQueue();return;}
     if(state.busy||state.batchRunning||!state.source||!state.plan)return;
     const entries=state.manualQueue.filter(x=>x.status==='APPROVED');
     if(!entries.length)return;
@@ -719,7 +761,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   function updateSecondApply(){
     const d=state.secondPass;
     getNodes(root,'[data-apply-second],[data-queue-second]').forEach(button=>{
-      button.disabled=state.busy||state.batchRunning||!d?.preview||!d.confirmed||d.evidence.trim().length<10;
+      button.disabled=state.hubEnabled||state.busy||state.batchRunning||!d?.preview||!d.confirmed||d.evidence.trim().length<10;
     });
   }
   function beginSecondPass(findingId){
@@ -842,9 +884,15 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     root.setAttribute('aria-busy',String(state.busy||state.batchRunning));
     renderRecords();renderActions();renderSelection();renderSecondPass();renderManualQueue();
     query(root,'[data-analyze]').disabled=!state.source||state.busy||state.batchRunning;
+    const hubToggle=query(root,'[data-uxml-toggle]');
+    if(hubToggle){hubToggle.checked=state.hubEnabled;hubToggle.disabled=state.busy||state.batchRunning;}
+    renderHubParity();
     query(root,'[data-cancel]').disabled=!(state.busy||state.batchRunning);
-    getNodes(root,'[data-auto-fix],[data-close-joint],[data-add-second-pass]').forEach(button=>button.disabled=state.busy||state.batchRunning);
-    getNodes(root,'[data-download-working],[data-download-history]').forEach(button=>button.disabled=state.busy||!state.revision);
+    getNodes(root,'[data-auto-fix],[data-close-joint],[data-add-second-pass]').forEach(button=>
+      button.disabled=state.busy||state.batchRunning||
+        (state.hubEnabled&&(state.hubParity?.status!=='EQUAL'||!button.hasAttribute('data-auto-fix'))));
+    getNodes(root,'[data-download-working],[data-download-history]').forEach(button=>
+      button.disabled=state.busy||!state.revision||!hubCanRelease());
   }
   function select(ids,add=false) {
     if(!add)state.selected.clear();
@@ -868,7 +916,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     cancelEngine();
     const generation=++state.epoch;
     state.shortBulk=null;
-    state.source=null;state.original=null;state.revision=0;state.applied=0;state.history=[];state.resolutions=[];state.shortElements=[];state.shortPreview=null;
+    state.source=null;state.original=null;state.revision=0;state.hubParity=null;state.hubRevision=null;state.applied=0;state.history=[];state.resolutions=[];state.shortElements=[];state.shortPreview=null;
     const shortPanel=query(root,'[data-short-preview]');if(shortPanel)shortPanel.textContent='';
     state.manualPorts=[];state.secondPass=null;state.manualQueue=[];
     state.manualQueueCheckpoint=null;state.manualQueueRunning=false;
@@ -911,8 +959,10 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       const result=await runEngine({sourceKind:'xml',sourceText:source.sourceText,
         sourceName:source.name,topologyPreFinalOnly:true,
         options:{outputMode:'enriched-only',analyzeTopology:true,generateTopoFix:false,
-          useTopoFixForCii:false,topologyActionIds:[]}});
+          useTopoFixForCii:false,topologyActionIds:[],
+          topologyUxmlPreview:state.hubEnabled},sourceRawSha256:source.rawSha256});
       if(generation!==state.epoch)return;
+      recordHubResult(result);
       if(result?.ok!==true||result.outputKind!=='topology-sidecars'||
           result.ciiText||result.acceptedFinalTransferred!==false||
           result.nativeCiiReleaseAuthorized!==false||result.topoFixCommitted===true||
@@ -1065,6 +1115,14 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     if(event.target.matches('[data-file]')&&event.target.files?.[0]){
       const file=event.target.files[0];event.target.value='';load(file);
     }
+    if(event.target.matches('[data-uxml-toggle]')){
+      if(state.busy||state.batchRunning){event.target.checked=state.hubEnabled;return;}
+      state.hubEnabled=event.target.checked;state.hubParity=null;
+      renderHubParity();renderActions();refresh();
+      updateStatus(state.hubEnabled?
+        'Universal XML preview ON. Select Analyze to verify the pinned reader.':
+        'Universal XML preview OFF. Direct PSI116 route available.');
+    }
     if(event.target.matches('[data-audit-category]')){state.category=event.target.value;renderActions();}
     if(event.target.matches('[data-helpers]'))canvas.setShowHelpers(event.target.checked);
     if(event.target.matches('[data-labels]'))canvas.setShowLabels(event.target.checked);
@@ -1095,6 +1153,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   return {getState:()=>({sourceSha256:state.source?.sourceSha256||null,revision:state.revision,applied:state.applied,
     occurrences:state.scene?.records.length||0,actions:state.plan?.actions.length||0,
     selected:[...state.selected],busy:state.busy,
+    hubEnabled:state.hubEnabled,hubParity:state.hubParity?.status||'OFF',
     queued:state.manualQueue.map(x=>({id:x.id,status:x.status})),queueBusy:state.manualQueueRunning}),load,analyze,
     dispose(){cancelEngine();ownedWorker?.dispose();state.epoch++;canvas.dispose();root.removeEventListener('toggle',toggled,true);root.removeEventListener('click',click);
       root.removeEventListener('change',changed);root.removeEventListener('input',input);}};

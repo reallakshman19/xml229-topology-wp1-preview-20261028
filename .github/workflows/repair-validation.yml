@@ -30,11 +30,34 @@ jobs:
           test "$(git hash-object dist/vendor/pyodide/python_stdlib.zip)" = e4c642f5824d41f36bf99aa9c761a2576620fa7c
           curl --fail --location --retry 3 "$root/Benchmarks/1885Sjson/FirstpassXML" -o tests/FirstpassXML
           echo 'feee5a5a6399207337e63bc56c8afb001fe37ab30c6a7a9283333ec60f6eea38  tests/FirstpassXML' | sha256sum -c -
+      - name: Fetch immutable XCU reader for UXML preview (seven Git blob checks)
+        run: bash tools/fetch-uxml-reader.sh dist
+      - name: Pinned XCU Python runbook from repository root and tests folder
+        shell: bash
+        env:
+          XCU_UXML_ROOT: ${{ github.workspace }}/dist/vendor/uxml
+          PYTHONPATH: ${{ github.workspace }}/converters
+        run: |
+          set -euo pipefail
+          python3 -B -m unittest discover -s tests -p test_uxml_psi116_s2.py -v
+          (cd tests && python3 -B -m unittest test_uxml_psi116_s2 -v)
+          python3 -B -m unittest discover -s tests -v
+          (cd tests && python3 -B -m unittest discover -v)
       - name: Full Chromium and Pyodide repair journey
         run: |
           npm install --no-save --ignore-scripts --package-lock=false playwright@1.52.0
           npx playwright install --with-deps chromium
           node tests/audit-browser.mjs
+      - name: Retain UXML-UI parity screenshot and browser receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: uxml-ui-parity-browser-evidence
+          path: |
+            preview-test-results/uxml-ui-parity-equal.png
+            preview-test-results.json
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Upload isolated candidate for Owner browser trial (no deployment)
         if: success()
         uses: actions/upload-artifact@v4

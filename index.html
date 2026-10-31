@@ -19,8 +19,11 @@
     <label>Original PSI116 XML <input data-file type="file" accept=".xml,application/xml,text/xml"></label>
     <button data-analyze type="button" disabled>Analyze topology</button>
     <button data-cancel type="button" disabled>Cancel view request</button>
+    <label class="uxml-toggle"><input data-uxml-toggle type="checkbox"> Universal XML route (preview)</label>
+    <strong class="uxml-parity" data-uxml-parity data-parity="OFF" role="status">UXML preview OFF · direct TopoFix</strong>
     <span data-source-meta role="status">Choose an original XML file; no stored source will be used.</span>
   </section>
+  <p class="uxml-parity-details" data-uxml-differences aria-live="polite">Enable the optional preview and Analyze to compare the two routes; this is not engineering acceptance.</p>
   <div class="topo-toolbar" role="toolbar" aria-label="Canvas navigation">
     <button data-mode="select" aria-pressed="true">Select</button>
     <button data-mode="pan" aria-pressed="false">Pan</button>
