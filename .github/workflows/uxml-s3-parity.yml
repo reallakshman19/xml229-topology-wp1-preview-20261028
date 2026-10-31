@@ -1,0 +1,73 @@
+name: UXML-S3 Pinned Workspace CAESAR Cross-Format Parity
+on:
+  pull_request:
+    paths:
+      - 'converters/psi116_topology_resolver/uxml_adapter.py'
+      - 'converters/psi116_topology_resolver/uxml_compare.py'
+      - 'tests/test_uxml_s3_caesar.py'
+      - '.github/workflows/uxml-s3-parity.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  cross-format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Fetch exact XCU 393b313aa00dc2441d311d5f55b459d0f1daf880 with twelve Git blob checks, no vendoring
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/xcu-uxml-s3"
+          upstream="https://raw.githubusercontent.com/reallakshman19/XML_Compare_Utilities/393b313aa00dc2441d311d5f55b459d0f1daf880"
+          mkdir -p "$root/uxml" "$root/utils" "$root/tools" "$root/tests/fixtures"
+          curl --fail --location --retry 3 "$upstream/package.json" -o "$root/package.json"
+          test "$(git hash-object "$root/package.json")" = "8b0cc1e976ef2cd3cd10f344b37463738d22ea3d"
+          curl --fail --location --retry 3 "$upstream/uxml/UxmlConstants.js" -o "$root/uxml/UxmlConstants.js"
+          test "$(git hash-object "$root/uxml/UxmlConstants.js")" = "457b970f9cbccd29d38cecd0842614c339108107"
+          curl --fail --location --retry 3 "$upstream/uxml/UxmlProfileDetector.js" -o "$root/uxml/UxmlProfileDetector.js"
+          test "$(git hash-object "$root/uxml/UxmlProfileDetector.js")" = "b4edfc1b47337a0ad62d2a01c0c8f2ff86844803"
+          curl --fail --location --retry 3 "$upstream/uxml/UxmlTypes.js" -o "$root/uxml/UxmlTypes.js"
+          test "$(git hash-object "$root/uxml/UxmlTypes.js")" = "5bac50ca692c483c3800ae7ec712710e7ae08572"
+          curl --fail --location --retry 3 "$upstream/uxml/UxmlValidationGate.js" -o "$root/uxml/UxmlValidationGate.js"
+          test "$(git hash-object "$root/uxml/UxmlValidationGate.js")" = "7a6070f9b77602f227a30d7e06a3e425d17c9c16"
+          curl --fail --location --retry 3 "$upstream/uxml/UxmlPsi116SchemaMapper.js" -o "$root/uxml/UxmlPsi116SchemaMapper.js"
+          test "$(git hash-object "$root/uxml/UxmlPsi116SchemaMapper.js")" = "978a63141fb94ef9cad3c8eaa637a37675a605f9"
+          curl --fail --location --retry 3 "$upstream/uxml/UxmlInputXmlSchemaMapper.js" -o "$root/uxml/UxmlInputXmlSchemaMapper.js"
+          test "$(git hash-object "$root/uxml/UxmlInputXmlSchemaMapper.js")" = "c60d870480e4087e4e38a1d9fc2215b16305f919"
+          curl --fail --location --retry 3 "$upstream/utils/line-no-metadata.js" -o "$root/utils/line-no-metadata.js"
+          test "$(git hash-object "$root/utils/line-no-metadata.js")" = "8315e966d5911ba60703ee3726166e3a3035c6df"
+          curl --fail --location --retry 3 "$upstream/tools/psi116-to-uxml.mjs" -o "$root/tools/psi116-to-uxml.mjs"
+          test "$(git hash-object "$root/tools/psi116-to-uxml.mjs")" = "7148fc20000963c5a32be27a7787705745e1d30b"
+          curl --fail --location --retry 3 "$upstream/tools/inputxml-to-uxml.mjs" -o "$root/tools/inputxml-to-uxml.mjs"
+          test "$(git hash-object "$root/tools/inputxml-to-uxml.mjs")" = "6083f4d8992160c4bd5dcbbb58248e0cf9089a4c"
+          curl --fail --location --retry 3 "$upstream/tests/fixtures/uxml-s3-synthetic.psi116.xml" -o "$root/tests/fixtures/uxml-s3-synthetic.psi116.xml"
+          test "$(git hash-object "$root/tests/fixtures/uxml-s3-synthetic.psi116.xml")" = "599bdfeba74a01ba40a0faed7ea3326f69e25e70"
+          curl --fail --location --retry 3 "$upstream/tests/fixtures/uxml-s3-synthetic.workspace.input.xml" -o "$root/tests/fixtures/uxml-s3-synthetic.workspace.input.xml"
+          test "$(git hash-object "$root/tests/fixtures/uxml-s3-synthetic.workspace.input.xml")" = "f7d3da392e0539fa7e77710075ea8cd4510c9b25"
+          echo "XCU_UXML_ROOT=$root" >> "$GITHUB_ENV"
+      - name: S3 synthetic pair cross-format, sourceRef negatives and unchanged S1
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B -m unittest discover -s tests -p test_uxml_s3_caesar.py -v
+          python3 -B -m unittest discover -s tests -p test_uxml_psi116_s1.py -v
+      - name: Print exact cross-format engineering differences, not fabricated equality
+        shell: bash
+        run: |
+          set -euo pipefail
+          x="$XCU_UXML_ROOT"
+          node "$x/tools/psi116-to-uxml.mjs" "$x/tests/fixtures/uxml-s3-synthetic.psi116.xml" > "$RUNNER_TEMP/s3-psi.uxml.json"
+          node "$x/tools/inputxml-to-uxml.mjs" "$x/tests/fixtures/uxml-s3-synthetic.workspace.input.xml" > "$RUNNER_TEMP/s3-input.uxml.json"
+          python -m converters.psi116_topology_resolver.uxml_compare             "$x/tests/fixtures/uxml-s3-synthetic.psi116.xml" "$RUNNER_TEMP/s3-psi.uxml.json"
+          set +e
+          python -m converters.psi116_topology_resolver.uxml_compare             "$RUNNER_TEMP/s3-psi.uxml.json" "$RUNNER_TEMP/s3-input.uxml.json" --cross-format > "$RUNNER_TEMP/s3-differences.txt"
+          status=$?
+          set -e
+          cat "$RUNNER_TEMP/s3-differences.txt"
+          test "$status" = "1"
+          grep -q "component_ref_no" "$RUNNER_TEMP/s3-differences.txt"
+          grep -q "CAUSE:" "$RUNNER_TEMP/s3-differences.txt"
