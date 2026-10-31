@@ -113,7 +113,7 @@ function resolution(action,finding){
  if(action.disposition==="MERGE_CARRIER_WITH_COMPONENT")
    return {kind:"evidence",text:"Evidence-only; no XML change"};
  if(action.disposition==="KEEP")
-   return {kind:"keep",text:"Preserve as-is"};
+   return {kind:"keep",text:"No action needed: kept by rule"};
  return {kind:"manual",text:"Manual fix / review"};
 }
 export function buildAudit(findings,actions){
@@ -177,8 +177,18 @@ function itemHTML(item,reviews={},sourceByKey=null){
    ?(chosen==="REVIEW_SOURCE_RECORD"&&a?.message?a.message:
      MANUAL_GUIDE[f.code]||"Inspect the original source-qualified records and component ownership. Correct the upstream engineering XML/export under human authority, then rerun the PSI116 audit.")
    :(RECOMMEND[chosen]||a?.message||"Review source geometry and ownership manually.");
+ const nextStep=fix.kind==="keep"?
+   "No action needed: kept by rule. Preserve the original record; there is no fix to apply.":
+   fix.kind==="evidence"?
+   "No XML change needed here. Inspect the source evidence and retain the original records.":
+   fix.kind==="auto"?
+   "An Auto fix is available. Inspect source witnesses, then use the existing validated-copy control.":
+   SECOND_PASS_RULES.has(f.code)?
+   "Review the intended connection. Use Add second pass only with design evidence, or correct the source model and rerun.":
+   "Nothing to apply here. Check the owner in the source model, re-export, then rerun TopoFix.";
  return '<article class="audit-item" data-finding-id="'+esc(f.finding_id)+'">'+
   '<h4 class="audit-item-title">'+esc(item.title)+'</h4>'+
+  '<p class="audit-next-step"><strong>What you can do:</strong> '+esc(nextStep)+'</p>'+
   '<div class="audit-item-top"><span class="audit-severity '+item.severity.toLowerCase()+'">'+esc(item.severity)+'</span>'+
   '<span class="audit-resolution '+fix.kind+'">'+esc(fix.text)+'</span></div>'+
   '<p class="audit-plain"><strong>What was detected:</strong> '+esc(reason)+'</p>'+

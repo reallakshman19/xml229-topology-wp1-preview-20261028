@@ -112,6 +112,18 @@ async function finishAndCheck(page,mode,kind){
  const stages=await page.evaluate(()=>window.__evidenceFixture.stages);
  assert.ok(stages.includes('TRANSACTION'),kind+': native transaction never executed');
  assert.ok(stages.includes('POST_PUBLISH_RECHECK'),kind+': new revision not re-analysed');
+ const resultPanel=page.locator('[data-trial-result]');
+ assert.equal(await resultPanel.isVisible(),true,kind+': validated revision summary absent');
+ const summary=await resultPanel.locator('[data-trial-head]').textContent();
+ assert.match(summary,/Revision 1: 1 fixes applied · \d+\/\d+ checks passed/,
+   kind+': native validation and fix count missing from overview');
+ assert.match(await resultPanel.locator('[data-what-left="review"]').textContent(),
+   /Needs your review \(\d+\)/);
+ assert.match(await resultPanel.locator('[data-what-left="preserve"]').textContent(),
+   /Preserved by rule — no action \(\d+\)/);
+ assert.match(await resultPanel.locator('[data-what-left="information"]').textContent(),
+   /Informational \/ other remaining \(\d+\)/);
+ assert.equal(await resultPanel.locator('[data-auto-fix],[data-apply-second],[data-queue-apply],[data-close-joint]').count(),0);
  const message=await page.locator('[data-evidence-proof]').textContent();
  if(mode==='PASS'){
    assert.match(message,/Connection evidence verified for working revision 1/);
@@ -176,6 +188,71 @@ test('injected Worker: approved manual queue publishes new-revision evidence, st
       assert.deepEqual(errors,[]);
     }finally{await page.close();}
   }
+});
+
+test('UI clarity: hub-only short-drop explanation, review Next/Previous and retained source selection',
+  {timeout:180000},async()=>{
+ const {page,errors}=await openInjected('PASS');
+ try{
+   await loadAndAnalyze(page,manualXML);
+   await page.locator('[data-uxml-toggle]').check();
+   const short=page.locator('[data-preview-short]');
+   assert.equal(await short.isDisabled(),true);
+   assert.match(await short.getAttribute('title'),/Runs on the direct route only/);
+   assert.match(await page.locator('[data-preview-short] + .action-unavailable-reason').textContent(),
+     /Untick Universal XML route to use it/);
+   await page.locator('[data-uxml-toggle]').uncheck();
+   await page.locator('[data-audit-category]').selectOption('all');
+   await page.locator('[data-audit-filter="manual"]').click();
+   await page.locator('[data-rules-expand]').click();
+   const cases=page.locator('.audit-case');
+   assert.ok(await cases.count()>=2,'fixture should exercise more than one manual review');
+   const first=cases.first();
+   await first.locator(':scope > summary').click();
+   assert.match(await first.locator('.audit-next-step').textContent(),/What you can do:/);
+   const next=first.locator('[data-trial-step="1"]');
+   assert.equal(await next.isEnabled(),true);
+   const label=await first.locator('[data-trial-counter]').textContent();
+   assert.match(label,/1 of \d+/);
+   await next.click();
+   const current=page.locator('.audit-case[open] [data-trial-counter]')
+     .filter({hasText:/2 of \d+/}).first();
+   assert.equal(await current.count(),1,'Next should update the group counter');
+   assert.match(await page.locator('[data-selection]').textContent(),
+     /source occurrence\(s\) selected/);
+   await current.locator('xpath=..').locator('[data-trial-step="-1"]').click();
+   assert.equal(await page.locator('.audit-case[open] [data-trial-counter]')
+      .filter({hasText:/1 of \d+/}).count()>=1,true);
+   assert.equal(await page.locator('[data-trial-result] [data-auto-fix],[data-trial-result] [data-apply-second]').count(),0);
+   assert.deepEqual(errors,[]);
+ }finally{await page.close();}
+});
+
+test('UI clarity: direct synthetic Auto-fix surfaces revision, native checks and remaining groups',
+  {timeout:180000},async()=>{
+ const {page,errors}=await openInjected('PASS');
+ try{
+   const autoXML=manualXML.replace('<Position>175 0 0</Position>',
+     '<Position>125 0 0</Position>').replace('<Position>261 0 0</Position>',
+     '<Position>211 0 0</Position>');
+   await loadAndAnalyze(page,autoXML);
+   const auto=page.locator('[data-auto-fix]').first();
+   assert.ok(await auto.count()>0,'synthetic near-miss must offer existing Auto-fix');
+   await auto.locator('xpath=ancestor::details[contains(@class,"audit-rule")]')
+     .evaluate(el=>{el.open=true;});
+   await auto.click();
+   await page.waitForFunction(()=>document.querySelector('[data-fix-result]')?.dataset?.result==='ready'&&
+     document.querySelector('[data-trial-result]')?.hidden===false,null,{timeout:120000});
+   const summary=await page.locator('[data-trial-head]').textContent();
+   assert.match(summary,/^Revision 1: 1 fixes applied · \d+\/\d+ checks passed$/);
+   const m=summary.match(/(\d+)\/(\d+) checks passed/);
+   assert.equal(m[1],m[2],'native checks must all pass, not a guessed count');
+   assert.match(await page.locator('[data-what-left="review"]').textContent(),/\(\d+\)/);
+   assert.match(await page.locator('[data-what-left="preserve"]').textContent(),/\(\d+\)/);
+   assert.equal(await page.locator('[data-trial-current]').isEnabled(),true);
+   assert.equal(await page.locator('[data-trial-result] [data-approve],[data-trial-result] [data-apply]').count(),0);
+   assert.deepEqual(errors,[]);
+ }finally{await page.close();}
 });
 test.after(async()=>{
  await browser.close();

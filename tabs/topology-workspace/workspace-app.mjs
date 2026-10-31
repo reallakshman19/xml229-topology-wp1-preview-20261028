@@ -10,6 +10,7 @@ import {createOperationsPreviewPanel} from './uxml-operations-panel.mjs';
 import {runShortBulk} from './short-bulk.mjs';
 import {secondPassHTML} from './second-pass.mjs';
 import {enqueueManualFix,runManualFixQueue} from './manual-fix-queue.mjs';
+import {trialRemaining,trialGroup,trialGroupTitles,trialValidationSummary,trialDisabledReason} from './trial-clarity.mjs';
 
 async function sha256(bytes) {
   const digest=await crypto.subtle.digest('SHA-256',bytes);
@@ -192,6 +193,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       });
       const allButton=query(root,'[data-auto-fix-all]');
       if(allButton){allButton.disabled=true;allButton.textContent='Autofix-All (0 actions)';}
+      renderTrialResult();explainDisabledActions();
       return;
     }
     const audit=buildAudit(state.findings,plan.actions||[]);
@@ -200,6 +202,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       category:state.category,reviews:Object.fromEntries(state.gapReviews),
       sourceByKey:state.scene?.byKey,openRules:state.openRules.get(state.filter)||null,openCases:state.openCases});
     panel.innerHTML=visible.html;
+    renderReviewNavigation(audit);
     const receiptButton=query(root,'[data-download-gap-review]');
     if(receiptButton)receiptButton.disabled=!state.gapReviews.size;
     const current=filterCounts(audit,{search:state.search,category:state.category});
@@ -215,6 +218,104 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
         (state.hubEnabled&&state.hubParity?.status!=='EQUAL');
       batchButton.textContent='Autofix-All ('+allowed.length+' actions)';
     }
+    renderTrialResult();explainDisabledActions();
+  }
+  /** Presentation-only snapshot, no fix or admission modifications. */
+  function renderTrialResult(){
+    const panel=query(root,'[data-trial-result]');
+    if(!panel)return;
+    panel.hidden=!state.source||state.revision===0||
+      state.fix?.sourceSha256!==state.source?.sourceSha256;
+    if(panel.hidden)return;
+    const checks=trialValidationSummary(state.history,state.fix);
+    query(panel,'[data-trial-head]').textContent='Revision '+state.revision+
+      ': '+state.applied+' fixes applied · '+checks;
+    query(panel,'[data-trial-checks]').textContent=
+      'Validated working copy only. These checks do not certify engineering connectivity.';
+    const audit=buildAudit(state.findings,state.plan?.actions||[]);
+    const groups=trialRemaining(audit);
+    getNodes(panel,'[data-what-left]').forEach(button=>{
+      const kind=button.dataset.whatLeft;
+      button.textContent=trialGroupTitles[kind]+' ('+groups[kind].length+')';
+      button.disabled=groups[kind].length===0;
+      button.setAttribute('aria-pressed',String(
+        (kind==='review'&&state.filter==='manual')||
+        (kind==='preserve'&&state.filter==='keep')));
+    });
+    const busy=state.busy||state.batchRunning;
+    query(panel,'[data-trial-current]').disabled=busy||!hubCanRelease();
+    query(panel,'[data-trial-history]').disabled=busy||!hubCanRelease();
+    query(panel,'[data-trial-evidence]').disabled=busy||!analysisProofCurrent();
+  }
+  function renderReviewNavigation(audit){
+    const groups=trialRemaining(audit);
+    getNodes(root,'[data-finding-id]').forEach(article=>{
+      const findingId=article.dataset.findingId;
+      const item=audit.items.find(row=>row.finding.finding_id===findingId);
+      if(!item)return;
+      const group=trialGroup(item),rows=groups[group];
+      const index=rows.findIndex(row=>row.finding.finding_id===findingId);
+      if(index<0)return;
+      const nav=document.createElement('nav');nav.className='audit-review-nav';
+      nav.dataset.trialNav=group;
+      const label=document.createElement('strong');
+      label.textContent=trialGroupTitles[group]+' · '+(index+1)+' of '+rows.length;
+      label.dataset.trialCounter='';
+      nav.appendChild(label);
+      for(const [direction,labelText,edge] of [
+        [-1,'Previous',index===0],[1,'Next',index===rows.length-1]]){
+        const button=document.createElement('button');
+        button.type='button';button.dataset.trialStep=String(direction);
+        button.dataset.trialId=findingId;button.dataset.trialGroup=group;
+        button.textContent=labelText;button.disabled=edge;
+        nav.appendChild(button);
+      }
+      // Append only navigation. The original engine/action controls stay intact.
+      const guidance=article.querySelector('.audit-next-step');
+      if(guidance)guidance.insertAdjacentElement('afterend',nav);
+    });
+  }
+  function explainDisabledActions(){
+    for(const button of getNodes(root,'button')){
+      const following=button.nextElementSibling;
+      if(following?.matches('.action-unavailable-reason'))following.remove();
+      if(button.disabled){
+        const reason=trialDisabledReason(button,state,
+          {proofCurrent:analysisProofCurrent(),hubCanRelease:hubCanRelease()});
+        button.title=reason;
+        const small=document.createElement('small');
+        small.className='action-unavailable-reason';
+        small.textContent=reason;
+        button.insertAdjacentElement('afterend',small);
+      }else if(button.title&&button.title.startsWith('Runs on the direct route only.')){
+        button.removeAttribute('title');
+      }
+    }
+  }
+  function visitTrialFinding(findingId){
+    const audit=buildAudit(state.findings,state.plan?.actions||[]);
+    const item=audit.items.find(row=>row.finding.finding_id===findingId);
+    if(!item)return;
+    const group=trialGroup(item);
+    state.filter=group==='review'?'manual':'all';
+    state.category='all';state.search='';
+    query(root,'[data-search]').value='';
+    query(root,'[data-audit-category]').value='all';
+    const set=state.openRules.get(state.filter)||new Set();
+    set.add(item.finding.code);state.openRules.set(state.filter,set);
+    state.openCases.add(findingId);
+    renderRecords();renderActions();
+    const target=getNodes(root,'[data-finding-id]')
+      .find(row=>row.dataset.findingId===findingId);
+    if(target){
+      target.closest('.audit-rule')?.setAttribute('open','');
+      target.closest('.audit-case')?.setAttribute('open','');
+      target.scrollIntoView({block:'nearest'});
+    }
+    const ids=(item.finding.node_keys||[])
+      .map(key=>state.scene?.byKey.get(key)?.id).filter(Boolean);
+    if(ids.length){select(ids);canvas.focus(ids);}
+    explainDisabledActions();
   }
   function setFixStatus(message,kind='info',actionId=''){
     const panel=query(root,'[data-fix-result]');
@@ -1017,6 +1118,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   function refresh() {
     root.setAttribute('aria-busy',String(state.busy||state.batchRunning));
     renderRecords();renderActions();renderSelection();renderSecondPass();renderManualQueue();opsPanel.render();
+    renderTrialResult();
     query(root,'[data-analyze]').disabled=!state.source||state.busy||state.batchRunning;
     const hubToggle=query(root,'[data-uxml-toggle]');
     if(hubToggle){hubToggle.checked=state.hubEnabled;hubToggle.disabled=state.busy||state.batchRunning;}
@@ -1027,6 +1129,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
         (state.hubEnabled&&(state.hubParity?.status!=='EQUAL'||!button.hasAttribute('data-auto-fix'))));
     getNodes(root,'[data-download-working],[data-download-history]').forEach(button=>
       button.disabled=state.busy||!state.revision||!hubCanRelease());
+    explainDisabledActions();
   }
   function select(ids,add=false) {
     if(!add)state.selected.clear();
@@ -1193,6 +1296,21 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     else if(target.hasAttribute('data-audit-filter')){
       state.filter=target.dataset.auditFilter;renderActions();
     }
+    else if(target.hasAttribute('data-what-left')){
+      const groups=trialRemaining(buildAudit(state.findings,state.plan?.actions||[]));
+      const first=groups[target.dataset.whatLeft]?.[0];
+      if(first)visitTrialFinding(first.finding.finding_id);
+    }
+    else if(target.hasAttribute('data-trial-step')){
+      const groups=trialRemaining(buildAudit(state.findings,state.plan?.actions||[]));
+      const rows=groups[target.dataset.trialGroup]||[];
+      const index=rows.findIndex(row=>row.finding.finding_id===target.dataset.trialId);
+      const next=rows[index+Number(target.dataset.trialStep)];
+      if(index>=0&&next)visitTrialFinding(next.finding.finding_id);
+    }
+    else if(target.hasAttribute('data-trial-current'))downloadCurrent();
+    else if(target.hasAttribute('data-trial-history'))downloadCurrent(true);
+    else if(target.hasAttribute('data-trial-evidence'))downloadResolutions();
     else if(target.hasAttribute('data-download-batch-report'))downloadBatchReport();
     else if(target.hasAttribute('data-download-working'))downloadCurrent();
     else if(target.hasAttribute('data-download-history'))downloadCurrent(true);

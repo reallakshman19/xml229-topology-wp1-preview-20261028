@@ -67,3 +67,20 @@ footer{font-size:12px;color:#94a3b8;margin-top:14px}
 .uxml-op-changes li{margin:.24rem 0;overflow-wrap:anywhere}
 .uxml-ops-note{font-size:.85rem;color:var(--muted,#4d5968)}
 .uxml-op-badge{font-size:.78rem;font-weight:600;border:1px solid #6f8996;border-radius:.3rem;padding:.12rem .4rem;margin-right:.4rem}
+
+/* UXML-TRIAL-CLARITY: explanation only; never changes admission gates. */
+.trial-result{margin:0 0 12px;padding:13px 16px;border-radius:8px;border:1px solid #38bdf8;background:#102438}
+.trial-result h2{font-size:17px;margin-bottom:5px}.trial-result h3{font-size:14px;margin:12px 0 6px}
+.trial-result p{font-size:12px;line-height:1.5;margin:5px 0;color:#d0e5f2}
+.trial-result-downloads,.trial-left{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.trial-left button{background:#164e63;border-color:#67e8f9}
+.trial-left button[aria-pressed="true"]{outline:2px solid #fbbf24;outline-offset:2px}
+.trial-note{opacity:.88}
+.audit-next-step{font-size:13px;line-height:1.45;margin:5px 0 9px;border-left:3px solid #67e8f9;padding:8px 10px;background:#112b3e;color:#ecfeff}
+.audit-review-nav{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 0;margin:6px 0;border-top:1px solid #475569}
+.audit-review-nav strong{font-size:12px;color:#cbd5e1}
+.audit-review-nav button{font-size:12px;padding:5px 8px}
+.audit-review-nav button:disabled{opacity:.55}
+.audit-case[open]>.audit-item{border-left:2px solid #67e8f9;padding-left:8px}
+.action-unavailable-reason{font-size:11px;color:#fcd34d;display:inline-block;max-width:330px;line-height:1.35;margin:3px 5px;vertical-align:middle;overflow-wrap:anywhere}
+.audit-controls .action-unavailable-reason,.trial-result-downloads .action-unavailable-reason{display:block}
