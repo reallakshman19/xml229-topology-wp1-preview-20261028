@@ -79,10 +79,12 @@ class UxmlPsi116Equivalence(unittest.TestCase):
         cls.available = bool(os.environ.get("XCU_UXML_ROOT")) and (
             cls.root / "tools" / "psi116-to-uxml.mjs").is_file()
 
-    def to_uxml(self, source: str, tempdir: Path, name: str = "synthetic"):
+    def to_uxml(self, source: str | bytes, tempdir: Path, name: str = "synthetic"):
         file = tempdir / (name + ".xml")
         output = tempdir / (name + ".uxml.json")
-        file.write_bytes(source.encode("utf-8"))
+        # Byte custody is primary: never text-open or normalize line endings
+        # for BOM/CRLF variants before either the reader or direct Python parser.
+        file.write_bytes(source if isinstance(source, bytes) else source.encode("utf-8"))
         proc = subprocess.run([
             "node", str(self.root / "tools" / "psi116-to-uxml.mjs"), str(file)
         ], cwd=self.root, capture_output=True, text=True, timeout=45)
@@ -109,6 +111,60 @@ class UxmlPsi116Equivalence(unittest.TestCase):
                     adapted = document_from_uxml(uxml, source_name=str(file))
                     self.assertEqual(tuple(node.key for b in direct.branches for node in b.nodes),
                                      tuple(node.key for b in adapted.branches for node in b.nodes))
+
+    def test_byte_exact_plain_bom_crlf_and_bom_crlf_with_multiline_name(self):
+        if not self.available:
+            self.skipTest("Only pinned XCU reader environment runs byte-level cross-repo test")
+        base = verified_synthetic(gap_case(True)).replace("\r\n", "\n")
+        # Both a literal attribute CRLF and a NodeName CRLF exercise XML 1.0
+        # normalization; the source files remain distinct byte sequences.
+        base = base.replace("<NodeNumber>120</NodeNumber>",
+                            "<NodeNumber>120</NodeNumber>"
+                            "<NodeName>L1\nL2</NodeName>", 1)
+        base = base.replace("<Node>", '<Node audit="A\nB">', 1)
+        plain = base.encode("utf-8")
+        crlf = base.replace("\n", "\r\n").encode("utf-8")
+        samples = (
+            ("plain", plain),
+            ("bom", b"\xef\xbb\xbf" + plain),
+            ("crlf", crlf),
+            ("bom_crlf", b"\xef\xbb\xbf" + crlf),
+        )
+        with tempfile.TemporaryDirectory(prefix="topofix-uxml-bytes-") as temp:
+            for name, original_bytes in samples:
+                with self.subTest(name=name):
+                    file, _, uxml = self.to_uxml(original_bytes, Path(temp), name)
+                    self.assertEqual(file.read_bytes(), original_bytes)
+                    self.assertEqual(uxml["sources"][0]["sourceText"].encode("utf-8"), original_bytes)
+                    self.assertEqual(uxml["sources"][0]["hash"], sha256(original_bytes).hexdigest())
+                    direct = read_psi116_xml(file)
+                    self.assertEqual(direct.branches[0].nodes[0].node_name, "L1\nL2")
+                    adapted = document_from_uxml(uxml, source_name=str(file))
+                    self.assertEqual(adapted.branches[0].nodes[0].node_name, "L1\nL2")
+                    self.assertEqual(compare_psi116_uxml(file, uxml), [],
+                                     f"direct and UXML must agree for {name} bytes")
+
+    def test_python_strict_numbers_match_direct_source_parser(self):
+        if not self.available:
+            self.skipTest("Only pinned XCU reader environment runs numeric parity")
+        base = verified_synthetic(gap_case(True))
+        cases = (
+            ("underscored", "1_2_0", "6_0.2_5"),
+            ("hex_rejected", "0x10", "0x10"),
+            ("unicode_digits", "١_٢_٠", "٦.٠٢"),
+            ("large_exact", "9007199254740993123456", "6.02"),
+            ("nonfinite", "120", "Infinity"),
+        )
+        with tempfile.TemporaryDirectory(prefix="topofix-uxml-numbers-") as temp:
+            for name, number, wall in cases:
+                with self.subTest(name=name):
+                    xml = base.replace("<NodeNumber>120</NodeNumber>",
+                        "<NodeNumber>" + number + "</NodeNumber>", 1)
+                    xml = xml.replace("<WallThickness>6.02</WallThickness>",
+                        "<WallThickness>" + wall + "</WallThickness>", 1)
+                    file, _, doc = self.to_uxml(xml.encode("utf-8"), Path(temp), name)
+                    self.assertEqual(compare_psi116_uxml(file, doc), [],
+                                     f"Python int/float parsing parity: {name}")
 
     def test_clos_witnesses_survive_lossless_source_node_transfer(self):
         if not self.available:
