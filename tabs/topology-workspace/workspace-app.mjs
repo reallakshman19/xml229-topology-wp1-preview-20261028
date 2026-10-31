@@ -5,6 +5,8 @@ import {createTopologyCanvas} from './projected-canvas.mjs';
 import {buildAudit,renderAuditHTML,renderAuditSummary,filterCounts} from './audit-view.mjs';
 import {eligibleActions,previewBatchPlan,explicitlyRejectedActionIds} from './batch-plan.mjs';
 import {runValidatedPasses} from './batch-runner.mjs';
+import {assertOperationsPreview} from './uxml-operations-view.mjs';
+import {createOperationsPreviewPanel} from './uxml-operations-panel.mjs';
 import {runShortBulk} from './short-bulk.mjs';
 import {secondPassHTML} from './second-pass.mjs';
 import {enqueueManualFix,runManualFixQueue} from './manual-fix-queue.mjs';
@@ -47,7 +49,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   runEngine ||= ownedWorker.run;
   cancelEngine ||= ownedWorker?()=>ownedWorker.cancel():()=>{};
   const state={epoch:0,source:null,original:null,revision:0,applied:0,history:[],resolutions:[],shortElements:[],shortPreview:null,scene:null,plan:null,findings:[],result:null,
-    selected:new Set(),search:'',filter:'all',category:'all',hubEnabled:false,hubParity:null,hubRevision:null,analysisProof:null,manualPorts:[],secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false,shortBulk:null,manualQueue:[],manualQueueRunning:false,manualQueueCheckpoint:null,manualQueueStatus:''};
+    selected:new Set(),search:'',filter:'all',category:'all',hubEnabled:false,hubParity:null,hubRevision:null,analysisProof:null,opsPreview:null,manualPorts:[],secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false,shortBulk:null,manualQueue:[],manualQueueRunning:false,manualQueueCheckpoint:null,manualQueueStatus:''};
   // The queue lives alongside Second Pass, without changing the engineering audit.
   const queuePanel=document.createElement('section');
   queuePanel.dataset.manualQueue='';
@@ -84,8 +86,46 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     state.hubParity=parity&&['EQUAL','DIFFERENT','UNAVAILABLE'].includes(parity.status)?
       {status:parity.status,differences:Array.isArray(parity.differences)?parity.differences:[]}:
       {status:'DIFFERENT',differences:['/handshake: MISSING_UXML_PARITY_RECEIPT']};
+    if(state.hubParity.status==='EQUAL'&&result?.topologyOperationsPreview){
+      try{
+        state.opsPreview=assertOperationsPreview(result.topologyOperationsPreview,
+          state.source?.rawSha256);
+      }catch(error){
+        state.opsPreview=null;
+        state.hubParity={status:'DIFFERENT',
+          differences:['/operationsPreview: '+String(error?.message||error)]};
+      }
+    }else if(state.hubParity.status!=='EQUAL'){
+      state.opsPreview=null;
+    }else if(result?.topologySummary?.generateTopoFix!==true){
+      // A parity badge without its complete read-only operation disclosure
+      // must not silently claim that proposals were previewed.
+      state.opsPreview=null;
+      state.hubParity={status:'DIFFERENT',
+        differences:['/operationsPreview: MISSING_CANONICAL_S2_OPERATIONS_PREVIEW']};
+    }
     renderHubParity();
+    opsPanel.render();
   }
+  const opsPanel=createOperationsPreviewPanel(root,{
+    snapshot:()=>({hubEnabled:state.hubEnabled,parity:state.hubParity,
+      preview:state.opsPreview,proof:analysisProofCurrent(),
+      busy:state.busy||state.batchRunning,
+      reviewOnlyCount:state.plan?
+        buildAudit(state.findings,state.plan.actions||[]).counts.manual:0}),
+    onLocate:(keys,opId)=>{
+      const ids=keys.map(key=>state.scene?.byKey.get(key)?.id).filter(Boolean);
+      if(!ids.length){displayMessage('No exact source occurrence; location not guessed.');return;}
+      select(ids);canvas.focus(ids);
+      displayMessage('Operations preview: '+ids.length+
+        ' exact original source occurrence(s) highlighted for '+opId+'.');
+      query(root,'[data-canvas]')?.scrollIntoView({block:'center'});
+    },
+    onReview:()=>{
+      state.filter='manual';renderActions();
+      query(root,'[data-audit-filter="manual"]')?.scrollIntoView({block:'center'});
+    },
+  });
   function sourceMeta(){
     query(root,'[data-source-meta]').textContent=state.source.name+' · working revision '+state.revision+
       ' · '+state.scene.records.length+' occurrences · SHA256 '+state.source.sourceSha256;
@@ -892,7 +932,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   }
   function refresh() {
     root.setAttribute('aria-busy',String(state.busy||state.batchRunning));
-    renderRecords();renderActions();renderSelection();renderSecondPass();renderManualQueue();
+    renderRecords();renderActions();renderSelection();renderSecondPass();renderManualQueue();opsPanel.render();
     query(root,'[data-analyze]').disabled=!state.source||state.busy||state.batchRunning;
     const hubToggle=query(root,'[data-uxml-toggle]');
     if(hubToggle){hubToggle.checked=state.hubEnabled;hubToggle.disabled=state.busy||state.batchRunning;}
@@ -926,7 +966,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     cancelEngine();
     const generation=++state.epoch;
     state.shortBulk=null;
-    state.source=null;state.original=null;state.revision=0;state.hubParity=null;state.hubRevision=null;state.analysisProof=null;state.applied=0;state.history=[];state.resolutions=[];state.shortElements=[];state.shortPreview=null;
+    state.source=null;state.original=null;state.revision=0;state.hubParity=null;state.hubRevision=null;state.analysisProof=null;state.opsPreview=null;state.applied=0;state.history=[];state.resolutions=[];state.shortElements=[];state.shortPreview=null;
     const shortPanel=query(root,'[data-short-preview]');if(shortPanel)shortPanel.textContent='';
     state.manualPorts=[];state.secondPass=null;state.manualQueue=[];
     state.manualQueueCheckpoint=null;state.manualQueueRunning=false;
@@ -963,7 +1003,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   async function analyze() {
     if(!state.source||state.busy)return;
     const generation=state.epoch,source=state.source;state.busy=true;
-    state.plan=null;state.findings=[];state.batch=null;state.manualPorts=[];state.secondPass=null;state.analysisProof=null;
+    state.plan=null;state.findings=[];state.batch=null;state.manualPorts=[];state.secondPass=null;state.analysisProof=null;state.opsPreview=null;
     query(root,'[data-batch-confirm]').textContent='';setFixStatus('');refresh();updateStatus('Running authoritative PSI116 topology analysis…');
     try {
       const result=await runEngine({sourceKind:'xml',sourceText:source.sourceText,
@@ -1129,7 +1169,8 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     }
     if(event.target.matches('[data-uxml-toggle]')){
       if(state.busy||state.batchRunning){event.target.checked=state.hubEnabled;return;}
-      state.hubEnabled=event.target.checked;state.hubParity=null;state.analysisProof=null;
+      state.hubEnabled=event.target.checked;state.hubParity=null;state.analysisProof=null;state.opsPreview=null;
+      opsPanel.reset();
       renderHubParity();renderActions();refresh();
       updateStatus(state.hubEnabled?
         'Universal XML preview ON. Select Analyze to verify the pinned reader.':
@@ -1167,7 +1208,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     selected:[...state.selected],busy:state.busy,
     hubEnabled:state.hubEnabled,hubParity:state.hubParity?.status||'OFF',
     queued:state.manualQueue.map(x=>({id:x.id,status:x.status})),queueBusy:state.manualQueueRunning}),load,analyze,
-    dispose(){cancelEngine();ownedWorker?.dispose();state.epoch++;canvas.dispose();root.removeEventListener('toggle',toggled,true);root.removeEventListener('click',click);
+    dispose(){cancelEngine();ownedWorker?.dispose();state.epoch++;opsPanel.dispose();canvas.dispose();root.removeEventListener('toggle',toggled,true);root.removeEventListener('click',click);
       root.removeEventListener('change',changed);root.removeEventListener('input',input);}};
 }
 const root=document.querySelector('#xml229-topology-workspace');
