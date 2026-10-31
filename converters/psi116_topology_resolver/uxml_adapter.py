@@ -643,12 +643,16 @@ def resolve_inputxml_run_from_uxml(uxml: dict, run_id: str,
     document = document_from_uxml(uxml, source_name=source_name)
     _need((uxml.get("sources") or [{}])[0].get("format") == "INPUT_XML",
           "INPUT_XML_RUN_RESOLUTION_FORMAT_REQUIRED")
-    branches = [branch for branch in document.branches if branch.name == run_id]
-    _need(len(branches) == 1, "INPUT_XML_RUN_ID_NOT_FOUND:" + str(run_id))
-    branch = branches[0]
-    rows = tuple(replace(node, branch_index=0, source_index=i)
-                 for i, node in enumerate(branch.nodes))
-    subset = (BranchRecord(0, run_id, rows),)
+    branches = [branch for branch in document.branches
+                if branch.nodes and all(r.inputxml_run_id == run_id for r in branch.nodes)]
+    _need(bool(branches), "INPUT_XML_RUN_ID_NOT_FOUND:" + str(run_id))
+    # Retain ALL route branches inside one connected run (including a tee
+    # spur) while excluding every other run's unknown local frame.
+    subset = tuple(
+        BranchRecord(i, branch.name,
+          tuple(replace(row, branch_index=i, source_index=k)
+                for k, row in enumerate(branch.nodes)))
+        for i, branch in enumerate(branches))
     occurrences = _build_occurrences(subset)
     spans = _build_spans(subset, occurrences)
     local_document = Psi116Document(
