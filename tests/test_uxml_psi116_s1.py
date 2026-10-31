@@ -166,6 +166,36 @@ class UxmlPsi116Equivalence(unittest.TestCase):
                     self.assertEqual(compare_psi116_uxml(file, doc), [],
                                      f"Python int/float parsing parity: {name}")
 
+    def test_python_str_strip_in_field_feff_and_unicode_whitespace(self):
+        if not self.available:
+            self.skipTest("Only pinned XCU reader environment runs Python strip parity")
+        base = verified_synthetic(pipe_flange(0))
+        variants = (
+            ("feff_preserved", "\ufeff5", "\ufeff5", None),
+            ("unicode_whitespace", "\u0085\u00a05\u00a0\u0085",
+             "\u0085\u00a0NAME\u00a0\u0085", 5),
+        )
+        with tempfile.TemporaryDirectory(prefix="topofix-uxml-python-strip-") as tmp:
+            for label, number, name, expected in variants:
+                with self.subTest(label=label):
+                    xml = base.replace(
+                        "<NodeNumber>10</NodeNumber>",
+                        "<NodeNumber>" + number + "</NodeNumber>"
+                        "<NodeName>" + name + "</NodeName>", 1)
+                    file, _, uxml = self.to_uxml(xml.encode("utf8"), Path(tmp), label)
+                    direct = read_psi116_xml(file).branches[0].nodes[0]
+                    adapted = document_from_uxml(uxml, source_name=str(file)).branches[0].nodes[0]
+                    self.assertEqual(direct.node_number, expected)
+                    self.assertEqual(adapted.node_number, expected)
+                    self.assertEqual(direct.node_name, name.strip())
+                    self.assertEqual(adapted.node_name, name.strip())
+                    self.assertEqual(compare_psi116_uxml(file, uxml), [],
+                                     "source record and all findings must be identical")
+                    if label == "feff_preserved":
+                        self.assertEqual(direct.node_name, "\ufeff5")
+                        self.assertEqual(uxml["components"][0]["sourceRefs"][0]["recordKey"],
+                                         "B0:Nnone:S0")
+
     def test_clos_witnesses_survive_lossless_source_node_transfer(self):
         if not self.available:
             self.skipTest("Only pinned XCU reader environment runs cross-repo native test")
