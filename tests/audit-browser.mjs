@@ -642,7 +642,11 @@ try{
    await badPage.waitForFunction(()=>document.querySelector('[data-occ-summary]')?.textContent?.includes('4 of 4'));
    await badPage.locator('[data-uxml-toggle]').check();
    await badPage.locator('[data-analyze]').click();
-   await badPage.waitForFunction(()=>document.querySelector('[data-uxml-parity]')?.dataset?.parity==='UNAVAILABLE',null,{timeout:120000});
+   await badPage.waitForFunction(()=>['EQUAL','DIFFERENT','UNAVAILABLE'].includes(
+     document.querySelector('[data-uxml-parity]')?.dataset?.parity),null,{timeout:120000});
+   const rejected=await badPage.locator('[data-uxml-parity]').getAttribute('data-parity');
+   if(rejected!=='UNAVAILABLE')
+     throw Error('UXML_TAMPER_MUTANT_NOT_REFUSED: verified blob was executed, parity='+rejected);
    const detail=await badPage.locator('[data-uxml-differences]').textContent();
    if(!detail.includes('UXML_READER_BLOB_HASH_MISMATCH')||
      !detail.includes('UxmlPsi116SchemaMapper.js')||
