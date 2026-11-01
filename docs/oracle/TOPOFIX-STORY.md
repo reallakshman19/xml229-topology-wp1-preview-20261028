@@ -147,3 +147,4 @@ Next after current: coder-a §3.3 preview on ops OR next Owner pick; coder-b S3b
 - 1 Nov 06:08 · Owner trial #24 real file: preview of 89 selected short drops BLOCKED (SELECTED_OPS_MISMATCH); cause: one refused item fails the whole per-item preview and the real reason is swallowed. Stand-in sent coder-a2 task UXML-SHORT-PREVIEW-PARTIAL (per-item ready/refused, real codes, deselect refused).
 - 1 Nov 06:11 · Owner picked bulk-apply speed for coder-b2. Sent UXML-BULK-SPEED (measure first; keep per-item transaction, EQUAL parity, revision; base #24 @c4a53e31; bulk path only, away from coder-a2 preview code).
 - 1 Nov 06:12 · Wrote TOPOFIX-ORACLE-HANDOVER.md (spec-level handover) and refreshed STATUS block.
+- 1 Nov 06:18 · Owner asked: draft PR with all Oracle files. Opened docs PR (docs/oracle/, scrubbed of private data) on TopoFix.
