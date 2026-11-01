@@ -12,6 +12,9 @@ self.onmessage=async ({data})=>{
  const {id,job,type}=data||{};
  if(type!=='RUN'||!Number.isSafeInteger(id))return;
  try{
+  const speed=job?.options?.topologyBulkSpeedProfile===true;
+  const started=speed?performance.now():0;
+  const phases={};
   if(job?.sourceKind!=='xml'||job.topologyPreFinalOnly!==true||
     job.xml229NativeFinalPacket||job.stagedJsonText||
     job.options?.useTopoFixForCii===true||
@@ -22,11 +25,17 @@ self.onmessage=async ({data})=>{
   let payload=job;
   if(job.options?.topologyUxmlPreview===true){
     try{
+      const hashStarted=speed?performance.now():0;
       const sha=await sourceHash(job.sourceText);
+      if(speed)phases.workerSourceHashMs=performance.now()-hashStarted;
       if(sha!==job.sourceRawSha256)throw Error('UXML_SOURCE_BYTE_SHA_MISMATCH');
       // Revalidate every load, and allow retries after any failed fetch/import.
+      const readerStarted=speed?performance.now():0;
       const reader=await loadPinnedPsi116Reader();
+      if(speed)phases.hubReaderLoadMs=performance.now()-readerStarted;
+      const mapStarted=speed?performance.now():0;
       const uxmlDocument=reader.read(job.sourceText,sha);
+      if(speed)phases.hubUxmlReadMs=performance.now()-mapStarted;
       payload={...job,uxmlDocument};
     }catch(error){
       // A failed hub reader cannot authorize a mutating job, even when called
@@ -45,8 +54,15 @@ self.onmessage=async ({data})=>{
       return;
     }
   }
+  const engineStarted=speed?performance.now():0;
   const result=await runXmlCii2019StandaloneEngine(payload);
-  self.postMessage({type:'RESULT',id,result});
+  if(speed){
+    phases.enginePyodideMs=performance.now()-engineStarted;
+    phases.workerTotalMs=performance.now()-started;
+  }
+  self.postMessage({type:'RESULT',id,result:speed?{
+    ...result,topologyBulkTiming:{...phases,...(result.topologyBulkTiming||{})}
+  }:result});
  }catch(error){
   self.postMessage({type:'ERROR',id,message:error?.message||String(error)});
  }
