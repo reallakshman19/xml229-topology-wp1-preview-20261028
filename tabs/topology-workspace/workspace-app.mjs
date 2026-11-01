@@ -753,9 +753,15 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
           throw Error('UXML_SHORT_PREVIEW_PARITY_'+
             (result?.topologyUxmlParity?.status||'UNAVAILABLE'));
         if(!result.topologyOperationsPreview||
-           result.topologyOperationsPreview.error)
-          throw Error(String(result.topologyOperationsPreview?.error||
-            'UXML_SHORT_PREVIEW_CHUNK_MISSING'));
+           result.topologyOperationsPreview.error){
+          // Preserve the precise global builder code in BOTH views.
+          // It is a disclosure failure, never hub parity DIFFERENT or Apply.
+          state.opsPreview=null;
+          state.opsPreviewError=String(result.topologyOperationsPreview?.error||
+            'UXML_SHORT_PREVIEW_CHUNK_MISSING');
+          opsPanel.render();
+          throw Error(state.opsPreviewError);
+        }
         chunks.push({ids:part.map(x=>x.id),preview:result.topologyOperationsPreview});
         firstResult||=result;
         progress(Math.min(offset+part.length,ids.length));
