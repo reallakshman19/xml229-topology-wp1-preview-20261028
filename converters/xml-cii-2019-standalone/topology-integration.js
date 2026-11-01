@@ -75,8 +75,9 @@ if hub_doc is not None:
         hub_parity = {"status": "DIFFERENT",
                       "differences": ["/uxmlReader: "+type(exc).__name__+": "+str(exc)]}
 _speed_marks['pyHubParityMs'] = (_speed_time.perf_counter() - _speed_started) * 1000 - _speed_marks['pyResolveMs']
-# This is an inspection projection only. export_edit_ops remains the one
-# authority for which operations exist; no transaction is executed here.
+# Read-only inspection: export_edit_ops remains the canonical authority.
+# Any native short transaction runs only on disposable private copies for
+# witness generation; Apply revalidates against the full original source.
 if hub_doc is not None and hub_parity["status"] == "EQUAL" and not job_generate_topofix:
     try:
         from psi116_topology_resolver.uxml_operations_preview import build_operation_preview
