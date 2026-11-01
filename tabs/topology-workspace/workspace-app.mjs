@@ -755,9 +755,16 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       job.options.topologyShortPreviewRequests=requests;
       const result=await runEngine(job,{onProgress:progress});
       if(!current())return;
-      if(result?.ok!==true||result?.topologyUxmlParity?.status!=='EQUAL')
+      if(result?.ok!==true)
+        throw Error('UXML_SHORT_PREVIEW_WORKER_FAILED');
+      if(result?.topologyUxmlParity?.status!=='EQUAL'){
+        // A changed reader/source/parity must revoke the entire hub route,
+        // not merely the short-selection Apply flag. Preserve original
+        // DIFFERENT/UNAVAILABLE authority on the workspace and download gate.
+        recordHubResult(result,source.rawSha256);
         throw Error('UXML_SHORT_PREVIEW_PARITY_'+
           (result?.topologyUxmlParity?.status||'UNAVAILABLE'));
+      }
       if(!result.topologyOperationsPreview||
          result.topologyOperationsPreview.error){
         state.opsPreview=null;
