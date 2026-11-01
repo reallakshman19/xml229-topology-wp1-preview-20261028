@@ -79,6 +79,8 @@ export function createTopologyWorkerClient({
     // Keep the already-verified Worker for the immediate post-bulk read-only
     // evidence check. Its normal idle recycle resumes after that job.
   }
+  run.beginBulkSession=beginBulkSession;
+  run.endBulkSession=endBulkSession;
   return {
     run,beginBulkSession,endBulkSession,
     cancel(){reset('TOPOLOGY_WORKER_CANCELLED: last validated revision retained.');},
