@@ -864,6 +864,16 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     updateStatus('Selected short-element batch finished. '+done+
       ' validated; '+skipped+' not eligible on reanalysis. Engineering review remains required.');
     if(outcome.latest&&done)await refreshPublishedEvidence(generation,state.revision,state.source);
+    if(state.hubEnabled&&String(outcome.stopMessage||'').startsWith('UXML_SHORT_PARITY_')){
+      // Do not leave a previous EQUAL badge or downloadable checkpoint after
+      // a newly observed hub mismatch. The prior validated copy is retained
+      // privately, but re-verification is required before any release.
+      state.hubParity={status:'DIFFERENT',differences:[outcome.stopMessage]};
+      state.hubRevision=null;state.opsPreview=null;state.shortHubPreview=null;
+      clearEvidenceProof('EVIDENCE_RECHECK_PARITY_NOT_EQUAL');
+      setFixStatus(message,'rejected','drop');
+      renderHubParity();refresh();
+    }
   }
   async function dropShortElements(){
     if(state.hubEnabled&&(!shortHubPreviewCurrent()||
