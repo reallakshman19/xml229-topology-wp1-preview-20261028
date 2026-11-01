@@ -90,6 +90,8 @@ test('336 generated PSI116 occurrences: real Worker/Pyodide one short-drop with 
                              committed:result.topoFixCommitted});
     return result;
    };
+   runEngine.beginBulkSession=()=>client.beginBulkSession();
+   runEngine.endBulkSession=()=>client.endBulkSession();
    window.__bulkSpeedProbe={timings,client,
     workspace:mountTopologyWorkspace(root,{runEngine,cancelEngine:()=>client.cancel()})};
    await window.__bulkSpeedProbe.workspace.load(new File([xml],'generated-bulk.xml',{type:'text/xml'}));
