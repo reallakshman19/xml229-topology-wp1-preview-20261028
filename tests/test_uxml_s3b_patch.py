@@ -2,6 +2,10 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from contextlib import redirect_stdout
+from io import StringIO
+from unittest.mock import patch
+import xml.etree.ElementTree as ET
 from dataclasses import asdict
 import json
 import os
@@ -14,10 +18,11 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "converters"))
-from psi116_topology_resolver.transaction import TransactionPolicy
+from psi116_topology_resolver.transaction import TransactionPolicy, ValidationCheck
 from psi116_topology_resolver.uxml_adapter import (
     resolve_from_uxml, resolve_inputxml_run_from_uxml,
 )
+from psi116_topology_resolver import uxml_patch_inputxml as bridge
 from psi116_topology_resolver.uxml_patch_inputxml import InputXmlPatchError, patch_inputxml
 
 
@@ -191,6 +196,18 @@ class InputXmlS3BPatch(unittest.TestCase):
             variants.append(("disable-blocking",hub,altered,original,
                              "UXML_POLICY_WIDENING_REFUSED"))
             altered=deepcopy(payload)
+            altered["ops"][0]["params"]=[{"operation":"ALIAS_NODE",
+                                         "sourceNode":999,"canonicalNode":20}]
+            variants.append(("wrong-known-proposed-params",hub,altered,original,
+                             "INPUT_XML_OP_PARAMS_NOT_SOURCE_AUTHORIZED"))
+            altered=deepcopy(payload)
+            expected=set(altered["ops"][0]["targets"])
+            valid_other=next(c["sourceRefs"][0]["recordKey"] for c in hub["components"]
+                             if c["sourceRefs"][0]["recordKey"] not in expected)
+            altered["ops"][0]["targets"]=[valid_other]
+            variants.append(("valid-but-unauthorized-record",hub,altered,original,
+                             "INPUT_XML_OP_TARGETS_NOT_SOURCE_AUTHORIZED"))
+            altered=deepcopy(payload)
             altered["ops"][0]["kind"]="REVIEW_CONNECTION"
             variants.append(("review-only",hub,altered,original,
                              "INPUT_XML_REVIEW_ONLY_OR_UNSUPPORTED_ACTION"))
@@ -246,6 +263,161 @@ class InputXmlS3BPatch(unittest.TestCase):
             self.assertFalse(out.exists())
             self.assertFalse(validation.exists())
             self.assertEqual(original.read_bytes(),old)
+
+    def test_unselected_descendant_and_loss_contract_old_node_refuse_no_write(self):
+        """Reviewer probes: untouched RESTRAINT CNODE, vendor NODE/NODE1,
+        and unknown source-only numeric value must veto the entire transaction.
+        """
+        variants=(
+            ("restraint-cnode",
+             '<RESTRAINT NODE="20.000000" CNODE="40.000000" TYPE="17.000000"/>',
+             "INPUT_XML_STRANDED_DESCENDANT_NODE_REFERENCE"),
+            ("unknown-node",'<VENDOR_FOO NODE="40.000000"/>',
+             "INPUT_XML_STRANDED_DESCENDANT_NODE_REFERENCE"),
+            ("unknown-node1",'<VENDOR_FOO NODE1="40.000000"/>',
+             "INPUT_XML_STRANDED_DESCENDANT_NODE_REFERENCE"),
+            ("unknown-cnode",'<VENDOR_FOO CNODE="40.000000"/>',
+             "INPUT_XML_STRANDED_DESCENDANT_NODE_REFERENCE"),
+            ("raw-loss",None,"INPUT_XML_STRANDED_LOSS_CONTRACT_NODE_VALUE"),
+        )
+        for name,child,reason in variants:
+            with self.subTest(name=name):
+                with tempfile.TemporaryDirectory(prefix="uxml-s3b-ref-") as td:
+                    base=Path(td)
+                    source=self.synthetic_source()
+                    elements=re.findall(r"<PIPINGELEMENT\b.*?</PIPINGELEMENT>",
+                                        source,re.S)
+                    first=elements[0]
+                    if child is not None:
+                        modified=first.replace("</PIPINGELEMENT>",
+                                               child+"\n</PIPINGELEMENT>")
+                    else:
+                        # An unknown attribute is lossContract raw data, even
+                        # though no descendant has a named NODE attribute.
+                        modified=first.replace(' NAME="PIPE-0"',
+                                               ' VENDOR_WITNESS="40.000000" NAME="PIPE-0"')
+                    self.assertNotEqual(first,modified)
+                    source=source.replace(first,modified,1)
+                    original,hub,payload=self.fixture(base,source)
+                    immutable=original.read_bytes()
+                    output_dir=base/"attempt"
+                    output_dir.mkdir()
+                    response,out,validation=self.run_cli(original,hub,payload,output_dir)
+                    self.assertEqual(response.returncode,1,response.stdout+response.stderr)
+                    self.assertIn(reason,response.stdout)
+                    self.assertFalse(out.exists())
+                    self.assertFalse(validation.exists())
+                    self.assertEqual(original.read_bytes(),immutable)
+
+    def test_planned_node_collision_refused_before_candidate_write(self):
+        """Make a known-approved renumber collide on its last PIPINGELEMENT."""
+        with tempfile.TemporaryDirectory(prefix="uxml-s3b-collision-") as td:
+            base=Path(td)
+            original,hub,payload=self.fixture(base)
+            real=bridge._get_actions
+            def collision(uxml,ops,result):
+                policy,actions,writes=real(uxml,ops,result)
+                return policy,actions,writes+[(4,"TO_NODE",50,20)]
+            with patch.object(bridge,"_get_actions",side_effect=collision):
+                with self.assertRaisesRegex(
+                    InputXmlPatchError,"INPUT_XML_RENUMBER_SELF_LOOP_REFUSED:E4"):
+                    bridge.patch_inputxml(original,hub,payload,self.xcu)
+            self.assertEqual(len(list(base.glob("fixed*"))),0)
+            # Also exercise the exact planner in isolation: do not rely on
+            # a subsequent geometry parse to reject a self-loop.
+            row=ET.Element("PIPINGELEMENT",{"FROM_NODE":"20.000000",
+                                           "TO_NODE":"40.000000"})
+            with self.assertRaisesRegex(
+                InputXmlPatchError,"INPUT_XML_RENUMBER_SELF_LOOP_REFUSED:E0"):
+                bridge._refuse_self_loop_after_alias([row],[(0,"TO_NODE",40,20)])
+
+    def test_missing_old_source_occurrence_is_rejected_even_if_op_targets_match(self):
+        with tempfile.TemporaryDirectory(prefix="uxml-s3b-occurrence-") as td:
+            original,hub,payload=self.fixture(Path(td))
+            result=resolve_from_uxml(hub)
+            tampered=deepcopy(hub)
+            # A third occurrence of the absorbed node outside selected source
+            # records must be detected by the all-record occurrence gate.
+            tampered["components"][0]["rawAttributes"]["inputXml"][
+                "sourceAttributes"]["FROM_NODE"]="40.000000"
+            with self.assertRaisesRegex(
+                InputXmlPatchError,"INPUT_XML_ALIAS_UNACCOUNTED_SOURCE_OCCURRENCE"):
+                bridge._get_actions(tampered,payload,result)
+
+    def test_original_byte_attribute_locator_rejects_lexical_record_drift(self):
+        with tempfile.TemporaryDirectory(prefix="uxml-s3b-lexical-") as td:
+            original,hub,payload=self.fixture(Path(td))
+            raw=original.read_bytes()
+            rows,_=bridge._caesar_original_rows(raw.decode("utf8"))
+            altered=raw.replace(b'TO_NODE="50.000000"',b'TO_NODE="51.000000"')
+            self.assertNotEqual(raw,altered)
+            with self.assertRaisesRegex(
+                InputXmlPatchError,"INPUT_XML_BYTE_ATTRIBUTE_SOURCE_MISMATCH"):
+                bridge.byte_record_spans(altered,rows)
+
+    def test_post_patch_attribute_drift_refused_before_output(self):
+        with tempfile.TemporaryDirectory(prefix="uxml-s3b-attr-") as td:
+            original,hub,payload=self.fixture(Path(td))
+            real=bridge._caesar_original_rows
+            calls=[0]
+            def change_second_read(source_text):
+                calls[0]+=1
+                rows,namespace=real(source_text)
+                if calls[0]==2:
+                    rows[0].set("NAME","MUTATED_NOT_FROM_INPUTXML")
+                return rows,namespace
+            with patch.object(bridge,"_caesar_original_rows",
+                              side_effect=change_second_read):
+                with self.assertRaisesRegex(
+                    InputXmlPatchError,"INPUT_XML_OTHER_SOURCE_ATTRIBUTE_CHANGED"):
+                    patch_inputxml(original,hub,payload,self.xcu)
+            self.assertEqual(calls[0],2)
+
+    def test_forced_native_validation_block_prevents_both_cli_outputs(self):
+        """A native validation fail must NEVER write even a partial sidecar."""
+        with tempfile.TemporaryDirectory(prefix="uxml-s3b-native-") as td:
+            base=Path(td)
+            original,hub,payload=self.fixture(base)
+            source=original.read_bytes()
+            hubfile=base/"hub.json"
+            opsfile=base/"ops.json"
+            out=base/"result.xml"
+            report=base/"validation.json"
+            hubfile.write_text(json.dumps(hub))
+            opsfile.write_text(json.dumps(payload))
+            cli=[str(original),str(opsfile),"--uxml",str(hubfile),
+                 "--xcu-root",str(self.xcu),"--output",str(out),
+                 "--validation",str(report)]
+            forced=ValidationCheck("FORCED_NATIVE_VALIDATION_FAILURE",False,True,
+                                   "Mutation guard must block all output.")
+            buffer=StringIO()
+            with patch.object(bridge,"_validate_transaction",
+                              return_value=(forced,)):
+                with redirect_stdout(buffer):
+                    rc=bridge.main(cli)
+            self.assertEqual(rc,1,buffer.getvalue())
+            self.assertIn("INPUT_XML_POST_PATCH_VALIDATION_FAILED:"
+                          "FORCED_NATIVE_VALIDATION_FAILURE",buffer.getvalue())
+            self.assertFalse(out.exists())
+            self.assertFalse(report.exists())
+            self.assertEqual(original.read_bytes(),source)
+
+    def test_pin_reread_report_and_explicit_restraint_counts(self):
+        with tempfile.TemporaryDirectory(prefix="uxml-s3b-report-") as td:
+            base=Path(td)
+            original,hub,payload=self.fixture(base)
+            patched,report=patch_inputxml(original,hub,payload,self.xcu)
+            checks={c["code"]:c for c in report["checks"]}
+            self.assertTrue(checks["PINNED_UXML_REREAD_AND_FINDINGS"]["passed"])
+            self.assertEqual(
+                checks["PINNED_UXML_REREAD_AND_FINDINGS"]["after"],
+                report["patchedSha256"])
+            restraint=checks["RESTRAINT_COUNT_PRESERVED_EXACT"]
+            self.assertTrue(restraint["passed"])
+            self.assertEqual(restraint["before"],restraint["after"])
+            self.assertIsInstance(restraint["before"],int)
+            self.assertEqual(report["summary"]["checkCount"],len(report["checks"]))
+            self.assertEqual(report["summary"]["blockingFailureCount"],0)
 
     def test_modified_pinned_reader_blob_refused_before_any_output(self):
         with tempfile.TemporaryDirectory(prefix="uxml-s3b-reader-pin-") as td:
