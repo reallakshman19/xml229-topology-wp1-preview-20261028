@@ -10,7 +10,7 @@ import {createOperationsPreviewPanel} from './uxml-operations-panel.mjs';
 import {runShortBulk} from './short-bulk.mjs';
 import {secondPassHTML} from './second-pass.mjs';
 import {enqueueManualFix,runManualFixQueue} from './manual-fix-queue.mjs';
-import {trialRemaining,trialGroup,trialGroupTitles,trialValidationSummary,trialDisabledReason} from './trial-clarity.mjs';
+import {trialRemaining,trialGroup,trialGroupTitles,trialGroupFilters,trialValidationSummary,trialDisabledReason} from './trial-clarity.mjs';
 
 async function sha256(bytes) {
   const digest=await crypto.subtle.digest('SHA-256',bytes);
@@ -238,9 +238,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       const kind=button.dataset.whatLeft;
       button.textContent=trialGroupTitles[kind]+' ('+groups[kind].length+')';
       button.disabled=groups[kind].length===0;
-      button.setAttribute('aria-pressed',String(
-        (kind==='review'&&state.filter==='manual')||
-        (kind==='preserve'&&state.filter==='keep')));
+      button.setAttribute('aria-pressed',String(state.filter===trialGroupFilters[kind]));
     });
     const busy=state.busy||state.batchRunning;
     query(panel,'[data-trial-current]').disabled=busy||!hubCanRelease();
@@ -277,18 +275,26 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   }
   function explainDisabledActions(){
     for(const button of getNodes(root,'button')){
+      // Titles and inline reasons created here are owned and removed together.
+      const tagged=button.hasAttribute('data-reason-set');
       const following=button.nextElementSibling;
-      if(following?.matches('.action-unavailable-reason'))following.remove();
+      if(following?.matches('.action-unavailable-reason')&&
+         following.hasAttribute('data-generated-reason'))following.remove();
+      if(tagged){
+        button.removeAttribute('title');
+        button.removeAttribute('data-reason-set');
+      }
       if(button.disabled){
         const reason=trialDisabledReason(button,state,
           {proofCurrent:analysisProofCurrent(),hubCanRelease:hubCanRelease()});
+        if(!reason)continue;
         button.title=reason;
+        button.setAttribute('data-reason-set','');
         const small=document.createElement('small');
         small.className='action-unavailable-reason';
+        small.setAttribute('data-generated-reason','');
         small.textContent=reason;
         button.insertAdjacentElement('afterend',small);
-      }else if(button.title&&button.title.startsWith('Runs on the direct route only.')){
-        button.removeAttribute('title');
       }
     }
   }
@@ -297,7 +303,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     const item=audit.items.find(row=>row.finding.finding_id===findingId);
     if(!item)return;
     const group=trialGroup(item);
-    state.filter=group==='review'?'manual':'all';
+    state.filter=trialGroupFilters[group];
     state.category='all';state.search='';
     query(root,'[data-search]').value='';
     query(root,'[data-audit-category]').value='all';
@@ -705,6 +711,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
         '>Apply all '+p.selected.size+' selected &amp; close</button>':
         '<p>No measurable two-port elements at ≤6 mm.</p>')+
       '<p>One source-bound transaction and recheck per element. Cancel at any point; only validated revisions are retained.</p>';
+    explainDisabledActions();
   }
   function previewShortElements(){
     if(!state.source||!state.plan||state.busy||state.batchRunning)return;
@@ -857,6 +864,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       '>Clear queue</button></div>'+
       '<p data-queue-status role="status">'+esc(state.manualQueueStatus||
       'Queued repairs are preview-only until Apply. Full source evidence remains available.')+'</p>';
+    explainDisabledActions();
   }
   function queueSecondPass(){
     const d=state.secondPass;
@@ -992,12 +1000,14 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     const panel=query(root,'[data-second-pass]');if(!panel)return;
     panel.hidden=!state.secondPass;
     panel.innerHTML=secondPassHTML(state.secondPass?{...state.secondPass,busy:state.busy||state.batchRunning}:null,state.scene,state.manualPorts);
+    explainDisabledActions();
   }
   function updateSecondApply(){
     const d=state.secondPass;
     getNodes(root,'[data-apply-second],[data-queue-second]').forEach(button=>{
       button.disabled=state.hubEnabled||state.busy||state.batchRunning||!d?.preview||!d.confirmed||d.evidence.trim().length<10;
     });
+    explainDisabledActions();
   }
   function beginSecondPass(findingId){
     if(state.busy||state.batchRunning)return;
@@ -1352,6 +1362,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
         if(status)status.textContent=p.selected.size+' selected · page '+(p.page+1);
         const run=query(root,'[data-run-short-drop]');
         if(run){run.disabled=!p.selected.size;run.textContent='Apply all '+p.selected.size+' selected & close';}
+        explainDisabledActions();
       }
     }
     const d=state.secondPass;
