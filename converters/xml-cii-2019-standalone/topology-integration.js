@@ -122,7 +122,7 @@ if job_generate_topofix:
         # This is the complete S2 Auto-only patch route: UXML -> edit ops ->
         # sourceRefs -> ORIGINAL PSI116 patched by native transaction.py.
         # Direct transaction is a private comparator, never the hub download.
-        from psi116_topology_resolver.uxml_edit_ops import export_edit_ops, apply_edit_ops
+        from psi116_topology_resolver.uxml_edit_ops import export_edit_ops, apply_edit_ops, compare_hub_patch
         try:
             if json.loads(job_joint_repairs_json):
                 raise ValueError("UXML_MANUAL_REPAIR_NOT_AUTHORIZED")
@@ -140,13 +140,7 @@ if job_generate_topofix:
             patched = apply_edit_ops(Path(job_topology_input_path), hub_doc, ops, config=cfg)
             if patched is None:
                 raise ValueError("UXML_PATCH_NO_OPERATIONS")
-            differences = []
-            compare_hub_values("/transaction", direct_transaction.transaction_payload(),
-                  patched.transaction_payload(), differences)
-            compare_hub_values("/validation", direct_transaction.validation_payload(),
-                  patched.validation_payload(), differences)
-            if patched.fixed_xml != direct_transaction.fixed_xml:
-                differences.append("/fixedXml: PATCH_BYTES_DIFFER_FROM_DIRECT")
+            differences = compare_hub_patch(direct_transaction, patched)
             if differences:
                 hub_parity = {"status": "DIFFERENT", "differences": differences}
             else:
