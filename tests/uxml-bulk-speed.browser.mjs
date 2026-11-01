@@ -97,8 +97,15 @@ test('336 generated PSI116 occurrences: real Worker/Pyodide one short-drop with 
   const analyzeStarted=performance.now();
   await page.evaluate(()=>window.__bulkSpeedProbe.workspace.analyze());
   ticks.initialAnalysisMs=performance.now()-analyzeStarted;
-  await page.waitForFunction(()=>
-   window.__bulkSpeedProbe.workspace.getState().hubParity==='EQUAL',{timeout:120000});
+  const initialState=await page.evaluate(()=>({
+   state:window.__bulkSpeedProbe.workspace.getState(),
+   status:document.querySelector('[data-status]')?.textContent,
+   progress:document.querySelector('[data-progress]')?.textContent,
+   parity:document.querySelector('[data-uxml-parity]')?.textContent,
+  }));
+  console.info('UXML_BULK_SYNTHETIC_INITIAL_STATE '+JSON.stringify(initialState));
+  assert.equal(initialState.state.hubParity,'EQUAL',
+    'Generated 336-occurrence fixture must establish exact source/UXML parity');
   await page.locator('[data-preview-short]').click();
   await page.locator('[data-select-gaskets]').click();
   assert.equal(await page.locator('[data-short-index]:checked').count(),1);
@@ -106,11 +113,11 @@ test('336 generated PSI116 occurrences: real Worker/Pyodide one short-drop with 
   assert.equal(await preview.isEnabled(),true);
   await preview.click();
   await page.waitForFunction(()=>document.querySelector('[data-run-short-drop]')?.disabled===false,
-                              {timeout:120000});
+                              undefined,{timeout:120000});
   const started=performance.now();
   await page.locator('[data-run-short-drop]').click();
   await page.waitForFunction(()=>window.__bulkSpeedProbe.workspace.getState().revision===1&&
-    Number.isFinite(window.__bulkSpeedUiRefreshMs),{timeout:180000});
+    Number.isFinite(window.__bulkSpeedUiRefreshMs),undefined,{timeout:180000});
   const elapsed=performance.now()-started;
   const observed=await page.evaluate(()=>({
    timings:window.__bulkSpeedProbe.timings,
