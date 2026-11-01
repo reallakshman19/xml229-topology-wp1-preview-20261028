@@ -755,8 +755,11 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       job.options.topologyShortPreviewRequests=requests;
       const result=await runEngine(job,{onProgress:progress});
       if(!current())return;
-      if(result?.ok!==true)
+      if(result?.ok!==true){
+        // A failed read-only job cannot retain prior EQUAL hub authority.
+        recordHubResult(result,source.rawSha256);
         throw Error('UXML_SHORT_PREVIEW_WORKER_FAILED');
+      }
       if(result?.topologyUxmlParity?.status!=='EQUAL'){
         // A changed reader/source/parity must revoke the entire hub route,
         // not merely the short-selection Apply flag. Preserve original
