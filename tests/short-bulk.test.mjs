@@ -1,15 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {runShortBulk} from '../tabs/topology-workspace/short-bulk.mjs';
+import {runShortBulk,namedHubOwnerRefusal} from '../tabs/topology-workspace/short-bulk.mjs';
 
-function driver(n,{cancelAt=Infinity,failAt=Infinity,hubEnabled=false,differentAt=Infinity}={}){
+function driver(n,{cancelAt=Infinity,failAt=Infinity,hubEnabled=false,differentAt=Infinity,
+  refusalAt=Infinity,forgedOpAt=Infinity}={}){
   const selectedIds=Array.from({length:n},(_,i)=>'SHORT:'+i);
   const source={name:'original.xml',sourceText:'xml|h0',sourceSha256:'h0'};
   const initial=selectedIds.map(id=>({id,eligible:true,sourceSha256:'h0',nodeKeys:[id+':S1',id+':S2']}));
-  let count=0,active=true,checkpoints=0,progress=0,equalChecks=0,leaseStarts=0,leaseEnds=0;
+  let count=0,revision=0,active=true,checkpoints=0,progress=0,equalChecks=0,leaseStarts=0,leaseEnds=0;
   const revisions=[];
   const hash=async xml=>xml.startsWith('xml|')?xml.split('|').at(-1):'full-lineage-sha';
-  const oldRawSha=k=>k===1?'h0':'h'+(k-1);
   async function runEngine(job){
     count++;
     assert.equal(job.options.topologyShortElementRequests.length,1,'one atomic owner');
@@ -19,11 +19,17 @@ function driver(n,{cancelAt=Infinity,failAt=Infinity,hubEnabled=false,differentA
     assert.equal(job.options.topologyBulkSession,hubEnabled);
     assert.equal(job.options.topologyBulkSpeedProfile,hubEnabled);
 
-    assert.equal(job.sourceRawSha256,oldRawSha(count));
-    assert.equal(job.sourceText,'xml|h'+(count-1));
+    assert.equal(job.sourceRawSha256,'h'+revision);
+    assert.equal(job.sourceText,'xml|h'+revision);
     if(count===failAt)return {ok:false,error:'SHORT_ELEMENT_RECONNECTION_NOT_QUALIFIED'};
     if(hubEnabled)equalChecks++;
-    const old='h'+(count-1),next='h'+count,id=job.options.topologyActionIds[0];
+    const old='h'+revision,next='h'+(revision+1),id=job.options.topologyActionIds[0];
+    if(count===refusalAt)return {ok:true,outputKind:'topology-sidecars',
+      acceptedFinalTransferred:false,nativeCiiReleaseAuthorized:false,
+      topoFixCommitted:false,topoFixXmlText:'',
+      topologyUxmlParity:{status:'DIFFERENT',
+        differences:['/patchBack: UxmlPatchError: UXML_LOSS_CONTRACT_FIELD_TOUCH:'+id]}};
+    revision++;
     const remaining=selectedIds.slice(count).map(id=>({
       id,eligible:true,sourceSha256:next,nodeKeys:[id+':S1',id+':S2'],
     }));
@@ -36,8 +42,15 @@ function driver(n,{cancelAt=Infinity,failAt=Infinity,hubEnabled=false,differentA
     const lineage={sourceXmlSha256:old,fixedXmlSha256:next,state:'PRE_FINAL_ONLY',
       sourceXmlMutated:false,counts:{removedSelectedShortElementOccurrences:2},
       sourceOccurrenceMap:Array.from({length:1654},(_,i)=>({sourceNodeOrdinal:i}))};
+    const request=job.options.topologyShortElementRequests[0];
+    const canonical={opId:'UXML-OP-'+id,kind:'DROP_SHORT_ELEMENT',
+      sourceActionId:id,fileSha256:old,
+      targets:[id+':S1',id+':S2'],
+      params:[{request:{id,sourceSha256:old,nodeKeys:[...request.nodeKeys]}}],
+      removedWithRecord:[{recordKey:id+':S1',field:'Weight'}]};
     return {ok:true,outputKind:'topology-sidecars',acceptedFinalTransferred:false,
       nativeCiiReleaseAuthorized:false,ciiText:null,enrichedText:'',topoFixCommitted:true,
+      topologyUxmlAppliedEditOps:count===forgedOpAt?null:[canonical],
       topologyUxmlParity:{status:count===differentAt?'DIFFERENT':'EQUAL',
         differences:count===differentAt?['/synthetic: perturbed UXML']:[]},
       topoFixXmlText:'xml|'+next,topoFixTransactionText:JSON.stringify(txn),
@@ -139,4 +152,41 @@ test('hub mismatch at item 2 stops immediately, retaining only revision 1 for re
  assert.deepEqual(r.pendingIds,['SHORT:2']);
  assert.equal(d.leaseStarts,1);
  assert.equal(d.leaseEnds,1,'failed batch releases its warm lease');
+});
+
+test('hub Apply skips one exact canonical loss refusal, continues on unchanged source',async()=>{
+  const d=driver(3,{hubEnabled:true,refusalAt:2});
+  const r=await d.run();
+  assert.equal(r.stopReason,'COMPLETE');
+  assert.equal(r.applied.length,2);
+  assert.equal(r.skipped.length,1);
+  assert.deepEqual(r.skipped[0],{id:'SHORT:1',
+    reason:'UXML_LOSS_CONTRACT_FIELD_TOUCH:SHORT:1',sourceSha256:'h1'});
+  assert.equal(r.latest.source.sourceSha256,'h2');
+  assert.equal(d.checkpoints,2,'no write or validated checkpoint for refused owner');
+  assert.equal(r.applied[0].canonicalEditOps[0].removedWithRecord[0].field,'Weight');
+  assert.equal(r.applied[1].canonicalEditOps[0].sourceActionId,'SHORT:2');
+});
+test('missing canonical authority receipt fails closed before even one hub write',async()=>{
+  const d=driver(2,{hubEnabled:true,forgedOpAt:1});
+  const r=await d.run();
+  assert.equal(r.stopReason,'TRANSACTION_FAILED');
+  assert.match(r.stopMessage,/UXML_SHORT_APPLY_CANONICAL_OP_RECEIPT_MISSING_OR_DRIFT/);
+  assert.equal(r.applied.length,0);
+  assert.equal(r.latest,null);
+});
+test('only source-bound UxmlPatchError veto is a skippable refusal; parity drift holds',()=>{
+  const base={ok:true,topoFixCommitted:false,topoFixXmlText:'',
+    acceptedFinalTransferred:false,nativeCiiReleaseAuthorized:false,
+    topologyUxmlParity:{status:'DIFFERENT',
+      differences:['/patchBack: UxmlPatchError: UXML_CLOS_WRITE_HELD:B0:N1']}};
+  assert.equal(namedHubOwnerRefusal(base),'UXML_CLOS_WRITE_HELD:B0:N1');
+  for(const mutant of [
+    {...base,topologyUxmlParity:{status:'DIFFERENT',differences:['/uxmlReader: BAD']}},
+    {...base,topologyUxmlParity:{status:'DIFFERENT',differences:['/patchBack: ValueError: UXML_CLOS_WRITE_HELD']}},
+    {...base,topoFixCommitted:true},
+    {...base,topoFixXmlText:'forged corrected output'},
+    {...base,topologyUxmlParity:{status:'DIFFERENT',differences:[
+      '/patchBack: UxmlPatchError: UXML_CLOS_WRITE_HELD:B0:N1','/findings: DIFFERENT']}},
+  ])assert.equal(namedHubOwnerRefusal(mutant),null);
 });
