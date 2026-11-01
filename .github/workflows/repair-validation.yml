@@ -54,6 +54,11 @@ jobs:
             echo 'SYNTHETIC_SHORT_PREVIEW_SCALE_SKIP_REFUSED' >&2
             exit 1
           fi
+          UXML_INTERCONNECTED_BENCHMARK=1 python3 -B -m unittest discover -s tests -p test_uxml_short_preview_interconnected.py -v 2>&1 | tee /tmp/topofix-interconnected-benchmark.log
+          if grep -Fq 'skipped' /tmp/topofix-interconnected-benchmark.log; then
+            echo 'INTERCONNECTED_SYNTHETIC_BENCHMARK_SKIP_REFUSED' >&2
+            exit 1
+          fi
       - name: Full Chromium and Pyodide repair journey
         run: |
           npm install --no-save --ignore-scripts --package-lock=false playwright@1.52.0
