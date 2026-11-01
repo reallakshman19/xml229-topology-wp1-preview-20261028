@@ -34,8 +34,9 @@
     <h3>What is left</h3>
     <nav class="trial-left" aria-label="Remaining findings by next action">
       <button type="button" data-what-left="review">Needs your review (0)</button>
-      <button type="button" data-what-left="preserve">Preserved by rule — no action (0)</button>
-      <button type="button" data-what-left="information">Informational / other remaining (0)</button>
+      <button type="button" data-what-left="auto">Auto fixes available (0)</button>
+      <button type="button" data-what-left="preserve">No action needed: kept by rule (0)</button>
+      <button type="button" data-what-left="information">Informational / evidence-only (0)</button>
     </nav>
     <p class="trial-note">These are current findings, not automatically certified connections. Use the group buttons to inspect source records; no new Apply or Approve action is added.</p>
   </section>
@@ -110,6 +111,8 @@
           <button data-audit-filter="warning" data-audit-label="Warnings" aria-pressed="false">Warnings (0)</button>
           <button data-audit-filter="auto" data-audit-label="Auto fix" aria-pressed="false">Auto fix (0)</button>
           <button data-audit-filter="manual" data-audit-label="Manual fix · By rule" aria-pressed="false">Manual fix · By rule (0)</button>
+          <button data-audit-filter="keep" data-audit-label="Kept by rule" aria-pressed="false">Kept by rule (0)</button>
+          <button data-audit-filter="information" data-audit-label="Informational / evidence-only" aria-pressed="false">Informational / evidence-only (0)</button>
           <button data-audit-filter="evidence" data-audit-label="No XML change" aria-pressed="false">No XML change (0)</button>
         </div>
         <div class="audit-bulk"><button type="button" data-auto-fix-all disabled>Autofix-All (0 actions)</button>
