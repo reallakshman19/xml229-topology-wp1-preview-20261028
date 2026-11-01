@@ -76,7 +76,8 @@ if hub_doc is not None and hub_parity["status"] == "EQUAL" and not job_generate_
     try:
         from psi116_topology_resolver.uxml_operations_preview import build_operation_preview
         ops_preview = build_operation_preview(
-            hub_doc, source_name=str(job_topology_input_path), config=cfg)
+            hub_doc, source_name=str(job_topology_input_path), config=cfg,
+            short_requests=json.loads(job_short_preview_json))
     except Exception as exc:
         # Presentation failure is NEVER topology or patch-back parity failure.
         # Preserve the verified hub route and its existing Auto-fix admission.
@@ -123,9 +124,16 @@ if job_generate_topofix:
         # Direct transaction is a private comparator, never the hub download.
         from psi116_topology_resolver.uxml_edit_ops import export_edit_ops, apply_edit_ops
         try:
-            if json.loads(job_joint_repairs_json) or json.loads(job_short_elements_json):
-                raise ValueError("UXML_PREVIEW_AUTO_ONLY: manual and short-element repair held")
-            selection = TransactionPolicy(selected_action_ids=tuple(job_topology_action_ids))
+            if json.loads(job_joint_repairs_json):
+                raise ValueError("UXML_MANUAL_REPAIR_NOT_AUTHORIZED")
+            selected_shorts = tuple(json.loads(job_short_elements_json))
+            if len(selected_shorts) > 1 or (selected_shorts and
+                    (len(job_topology_action_ids) != 1 or
+                     job_topology_action_ids[0] != selected_shorts[0].get("id"))):
+                raise ValueError("UXML_SHORT_EXACT_ONE_REQUEST_REQUIRED")
+            selection = TransactionPolicy(
+                selected_action_ids=tuple(job_topology_action_ids),
+                short_element_requests=selected_shorts)
             ops = export_edit_ops(hub_doc, policy=selection, source_name=str(job_topology_input_path))
             if sorted(op["sourceActionId"] for op in ops["ops"]) != sorted(job_topology_action_ids):
                 raise ValueError("UXML_SELECTED_ACTION_IDS_NOT_ALL_MUTATING")
@@ -314,6 +322,7 @@ export async function runPsi116TopologyStage(pyodide, job, inputPath, jobDir, st
   pyodide.globals.set('job_joint_repairs_json', JSON.stringify(options.topologyJointRepairs || []));
   pyodide.globals.set('job_connection_preview_json', JSON.stringify(options.topologyConnectionPreview || null));
   pyodide.globals.set('job_short_elements_json', JSON.stringify(options.topologyShortElementRequests || []));
+  pyodide.globals.set('job_short_preview_json', JSON.stringify(options.topologyShortPreviewRequests || []));
   await pyodide.runPythonAsync(TOPOLOGY_SNIPPET);
 
   const status = JSON.parse(readOptional(pyodide, paths.status) || '{}');
