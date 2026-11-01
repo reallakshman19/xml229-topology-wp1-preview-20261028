@@ -53,7 +53,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   cancelEngine ||= ownedWorker?()=>ownedWorker.cancel():()=>{};
   const state={epoch:0,source:null,original:null,revision:0,applied:0,history:[],resolutions:[],shortElements:[],shortPreview:null,scene:null,plan:null,findings:[],result:null,
     selected:new Set(),search:'',filter:'all',category:'all',hubEnabled:false,hubParity:null,hubRevision:null,analysisProof:null,evidenceProofReason:'EVIDENCE_ANALYSIS_REQUIRED',opsPreview:null,opsPreviewError:null,shortHubPreview:null,shortHubPreviewError:null,
-     shortHubReport:null,shortHubProgress:null,activeJob:null,previewToken:0,manualPorts:[],secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false,shortBulk:null,manualQueue:[],manualQueueRunning:false,manualQueueCheckpoint:null,manualQueueStatus:''};
+     shortHubReport:null,shortHubProgress:null,activeJob:null,previewToken:0,activePreviewToken:null,manualPorts:[],secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false,shortBulk:null,manualQueue:[],manualQueueRunning:false,manualQueueCheckpoint:null,manualQueueStatus:''};
   // The queue lives alongside Second Pass, without changing the engineering audit.
   const queuePanel=document.createElement('section');
   queuePanel.dataset.manualQueue='';
@@ -743,7 +743,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       updateStatus(message);
       renderShortPreview();
     };
-    state.busy=true;state.activeJob='preview';
+    state.busy=true;state.activeJob='preview';state.activePreviewToken=previewToken;
     state.shortHubPreview=null;state.shortHubPreviewError=null;
     state.shortHubReport=null;
     progress(0,ids.length);refresh();
@@ -803,7 +803,8 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       updateStatus(state.shortHubPreviewError);
     }finally{
       if(previewToken===state.previewToken&&generation===state.epoch){
-        state.busy=false;state.activeJob=null;state.shortHubProgress=null;
+        state.busy=false;state.activeJob=null;state.activePreviewToken=null;
+        state.shortHubProgress=null;
         renderShortPreview();refresh();
       }
     }
@@ -1348,6 +1349,10 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       (hits.length>50?'… More than 50 hits; use text search.':'');
   }
   async function load(file) {
+    // Retire stale progress and Cancel dispatch before the old finally can run.
+    ++state.previewToken;
+    state.activePreviewToken=null;state.activeJob=null;
+    state.shortHubProgress=null;state.shortHubReport=null;
     cancelEngine();
     const generation=++state.epoch;
     state.shortBulk=null;
@@ -1489,12 +1494,15 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     }
     else if(target.hasAttribute('data-run-short-drop'))dropShortElements();
     else if(target.hasAttribute('data-analyze'))analyze();
-    else if(target.hasAttribute('data-cancel')&&state.activeJob==='preview'){
-      // Hard-terminate the active Worker and invalidate all late chunk results.
+    else if(target.hasAttribute('data-cancel')&&state.activeJob==='preview'&&
+            state.activePreviewToken===state.previewToken&&state.busy&&
+            state.shortHubProgress!==null){
+      // Hard-terminate the active Worker; reject late RESULT/PROGRESS.
       // Keep current source, selected owners and analysis proof for retry.
       ++state.previewToken;
       cancelEngine();
-      state.activeJob=null;state.busy=false;state.shortHubProgress=null;
+      state.activeJob=null;state.activePreviewToken=null;
+      state.busy=false;state.shortHubProgress=null;
       invalidateShortHubPreview();
       state.shortHubPreviewError='UXML_SHORT_PREVIEW_CANCELLED: selection retained; re-preview before Apply.';
       renderShortPreview();refresh();
@@ -1639,7 +1647,12 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     selected:[...state.selected],busy:state.busy,
     hubEnabled:state.hubEnabled,hubParity:state.hubParity?.status||'OFF',
     queued:state.manualQueue.map(x=>({id:x.id,status:x.status})),queueBusy:state.manualQueueRunning}),load,analyze,
-    dispose(){cancelEngine();ownedWorker?.dispose();state.epoch++;opsPanel.dispose();canvas.dispose();root.removeEventListener('toggle',toggled,true);root.removeEventListener('click',click);
+    dispose(){
+      ++state.previewToken;
+      state.activePreviewToken=null;state.activeJob=null;
+      state.shortHubProgress=null;state.shortHubReport=null;
+      cancelEngine();ownedWorker?.dispose();state.epoch++;
+      opsPanel.dispose();canvas.dispose();root.removeEventListener('toggle',toggled,true);root.removeEventListener('click',click);
       root.removeEventListener('change',changed);root.removeEventListener('input',input);}};
 }
 const root=document.querySelector('#xml229-topology-workspace');
