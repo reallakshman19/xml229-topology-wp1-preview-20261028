@@ -83,6 +83,12 @@ async function openInjected(mode){
    let committed=false;
    const stages=[];
    const runEngine=async job=>{
+     if(mode==='DELAY_ANALYSIS'&&!job.options?.generateTopoFix){
+       await new Promise(resolve=>{
+         window.__evidenceFixture.releaseAnalysis=resolve;
+         window.__evidenceFixture.analysisHeld=true;
+       });
+     }
      const result=await client.run(job);
      stages.push(job.options?.generateTopoFix?'TRANSACTION':
        committed?'POST_PUBLISH_RECHECK':'READ_ONLY_ANALYSIS');
@@ -163,6 +169,10 @@ async function finishAndCheck(page,mode,kind){
    assert.equal(receipt.xmlChangedByResolution,false);
  }else{
    assert.equal(await page.locator('[data-download-resolutions]').isDisabled(),true);
+   assert.match(await page.locator('[data-download-resolutions]').getAttribute('title'),
+     /EVIDENCE_RECHECK_SOURCE_DRIFT/);
+   assert.match(await page.locator('[data-download-resolutions] + .action-unavailable-reason').textContent(),
+     /EVIDENCE_RECHECK_SOURCE_DRIFT/);
    assert.match(message,/Connection evidence unavailable: EVIDENCE_RECHECK_SOURCE_DRIFT/);
    assert.equal(await page.locator('[data-download-working]').isEnabled(),true,
      'a failed read-only evidence recheck must not roll back validated XML');
@@ -177,8 +187,16 @@ test('injected Worker: short-element bulk publishes new-revision evidence, stale
     try{
       await loadAndAnalyze(page,shortXML);
       await page.locator('[data-preview-short]').click();
+      const shortApply=page.locator('[data-run-short-drop]');
+      assert.equal(await shortApply.isDisabled(),true);
+      assert.match(await shortApply.getAttribute('title'),/Select at least one eligible short element/);
+      assert.equal(await page.locator('[data-run-short-drop] + .action-unavailable-reason').count(),1);
       await page.locator('[data-select-gaskets]').click();
       assert.equal(await page.locator('[data-short-index]:checked').count(),1);
+      assert.equal(await shortApply.isEnabled(),true);
+      assert.equal(await shortApply.getAttribute('title'),null);
+      assert.equal(await shortApply.getAttribute('data-reason-set'),null);
+      assert.equal(await page.locator('[data-run-short-drop] + .action-unavailable-reason').count(),0);
       await page.locator('[data-run-short-drop]').click();
       await finishAndCheck(page,mode,'SHORT_BULK');
       assert.deepEqual(errors,[]);
@@ -199,6 +217,15 @@ test('injected Worker: approved manual queue publishes new-revision evidence, st
         .filter({hasText:'Node 20 · SOURCE'}).first();
       await summary.click();
       await summary.locator('..').locator('[data-add-second-pass]').click();
+      for(const selector of ['[data-apply-second]','[data-queue-second]']){
+        const button=page.locator(selector);
+        assert.equal(await button.isDisabled(),true);
+        assert.match(await button.getAttribute('title'),/Select an exact source pair/);
+        assert.equal(await page.locator(selector+' + .action-unavailable-reason').count(),1);
+      }
+      const queueApply=page.locator('[data-queue-apply]');
+      assert.equal(await queueApply.isDisabled(),true);
+      assert.match(await queueApply.getAttribute('title'),/Select an exact source pair/);
       await page.locator('[data-second-peer]').selectOption('B1:N30:S0');
       await page.locator('[data-preview-second]').click();
       await page.waitForFunction(()=>
@@ -206,8 +233,18 @@ test('injected Worker: approved manual queue publishes new-revision evidence, st
         null,{timeout:120000});
       await page.locator('[data-second-evidence]').fill('SYNTHETIC-DRAWING-REFRESH approves this exact port pair');
       await page.locator('[data-second-confirm]').check();
+      for(const selector of ['[data-apply-second]','[data-queue-second]']){
+        const button=page.locator(selector);
+        assert.equal(await button.isEnabled(),true);
+        assert.equal(await button.getAttribute('title'),null);
+        assert.equal(await button.getAttribute('data-reason-set'),null);
+        assert.equal(await page.locator(selector+' + .action-unavailable-reason').count(),0);
+      }
       await page.locator('[data-queue-second]').click();
       assert.match(await page.locator('[data-manual-queue]').textContent(),/1 approved/);
+      assert.equal(await queueApply.isEnabled(),true);
+      assert.equal(await queueApply.getAttribute('title'),null);
+      assert.equal(await page.locator('[data-queue-apply] + .action-unavailable-reason').count(),0);
       await page.locator('[data-queue-apply]').click();
       await finishAndCheck(page,mode,'MANUAL_QUEUE');
       assert.deepEqual(errors,[]);
