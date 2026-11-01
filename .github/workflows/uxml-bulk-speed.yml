@@ -7,6 +7,7 @@ on:
       - 'tabs/topology-workspace/topology-worker-client.mjs'
       - 'converters/xml-cii-2019-standalone/topology-integration.js'
       - 'tests/uxml-bulk-speed.browser.mjs'
+      - 'tests/uxml-bulk-three.browser.mjs'
       - 'tests/short-bulk.test.mjs'
       - 'docs/CODER-CHECKPOINT-BULK-SPEED.md'
       - '.github/workflows/uxml-bulk-speed.yml'
@@ -42,3 +43,5 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Benchmark original-byte source-bound bulk one real Worker item
         run: node --test tests/uxml-bulk-speed.browser.mjs
+      - name: Three actual serial hub transactions and item-two no-download refusal
+        run: node --test tests/uxml-bulk-three.browser.mjs
