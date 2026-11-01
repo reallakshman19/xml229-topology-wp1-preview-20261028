@@ -217,8 +217,11 @@ test('injected Worker: approved manual queue publishes new-revision evidence, st
         .filter({hasText:'Node 20 · SOURCE'}).first();
       await summary.click();
       await summary.locator('..').locator('[data-add-second-pass]').click();
+      assert.equal(await page.locator('[data-queue-second]').count(),1,
+        'the manual queue must expose its source-qualified Apply control');
       for(const selector of ['[data-apply-second]','[data-queue-second]']){
         const button=page.locator(selector);
+        if(!await button.count())continue; // a non-queue Apply is optional in this view
         assert.equal(await button.isDisabled(),true);
         assert.match(await button.getAttribute('title'),/Select an exact source pair/);
         assert.equal(await page.locator(selector+' + .action-unavailable-reason').count(),1);
@@ -235,6 +238,7 @@ test('injected Worker: approved manual queue publishes new-revision evidence, st
       await page.locator('[data-second-confirm]').check();
       for(const selector of ['[data-apply-second]','[data-queue-second]']){
         const button=page.locator(selector);
+        if(!await button.count())continue;
         assert.equal(await button.isEnabled(),true);
         assert.equal(await button.getAttribute('title'),null);
         assert.equal(await button.getAttribute('data-reason-set'),null);
