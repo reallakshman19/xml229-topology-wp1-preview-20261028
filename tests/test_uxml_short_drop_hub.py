@@ -292,7 +292,7 @@ class UxmlShortDropHub(unittest.TestCase):
         mutants = [
             ("deleted_record_exact_path",
              '            if "*" in fields or any(',
-             '            if loss_path == node_path: continue\\n'
+             '            if loss_path == node_path: continue\n'
              '            if "*" in fields or any(',
              "record"),
             ("other_code_under_deleted",
