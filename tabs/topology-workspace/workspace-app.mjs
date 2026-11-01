@@ -1202,13 +1202,10 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   }
   async function load(file) {
     // Retire stale progress and Cancel dispatch before the old finally can run.
-    ++state.previewToken;
-    state.activePreviewToken=null;state.activeJob=null;
-    state.shortHubProgress=null;state.shortHubReport=null;
+    state.activeJob=null;
     cancelEngine();
     const generation=++state.epoch;
     state.shortBulk=null;
-    state.shortHubPreview=null;state.shortHubPreviewError=null;
     state.source=null;state.original=null;state.revision=0;state.hubParity=null;state.hubRevision=null;clearEvidenceProof('EVIDENCE_ANALYSIS_REQUIRED');state.opsPreview=null;state.opsPreviewError=null;state.applied=0;state.history=[];state.resolutions=[];state.shortElements=[];state.shortPreview=null;
     const shortPanel=query(root,'[data-short-preview]');if(shortPanel)shortPanel.textContent='';
     state.manualPorts=[];state.secondPass=null;state.manualQueue=[];
@@ -1310,33 +1307,10 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       rules.forEach(r=>r.open=open);
     }
     else if(target.hasAttribute('data-preview-short'))previewShortElements();
-    else if(target.hasAttribute('data-short-hub-preview'))previewSelectedUxmlShortOps();
-    else if(target.hasAttribute('data-short-refused-locate')){
-      const row=state.shortElements.find(x=>x.id===target.dataset.shortRefusedLocate);
-      const ids=(row?.nodeKeys||[]).map(key=>state.scene?.byKey.get(key)?.id)
-        .filter(Boolean);
-      if(ids.length){
-        select(ids);canvas.focus(ids);
-        displayMessage('Refused short-element owner: '+row.id+
-          ' · '+ids.length+' exact original occurrence(s) highlighted.');
-        query(root,'[data-canvas]')?.scrollIntoView({block:'center'});
-      }else displayMessage('No exact source occurrence is available; location not guessed.');
-    }
-    else if(target.hasAttribute('data-short-deselect-refused')){
-      const report=state.shortHubReport,p=state.shortPreview;
-      if(!report||!p||report.ids!==shortSelectionKey()||
-         report.sha!==state.source?.sourceSha256||
-         report.epoch!==state.epoch||report.revision!==state.revision||
-         !state.hubEnabled)return;
-      const removed=report.refused.filter(x=>p.selected.delete(x.id)).length;
-      invalidateShortHubPreview();renderShortPreview();
-      updateStatus(removed+' refused owner(s) deselected. '+
-        'Re-preview the remaining exact selection before Apply.');
-    }
     else if(target.hasAttribute('data-select-gaskets')){
       const p=state.shortPreview;if(!p)return;
       for(const r of state.shortElements)if(r.eligible&&r.componentType==='GASK')p.selected.add(r.id);
-      invalidateShortHubPreview();renderShortPreview();
+      renderShortPreview();
     }
     else if(target.hasAttribute('data-short-prev')){
       if(state.shortPreview){state.shortPreview.page--;renderShortPreview();}
@@ -1346,21 +1320,6 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     }
     else if(target.hasAttribute('data-run-short-drop'))dropShortElements();
     else if(target.hasAttribute('data-analyze'))analyze();
-    else if(target.hasAttribute('data-cancel')&&state.activeJob==='preview'&&
-            state.activePreviewToken===state.previewToken&&state.busy&&
-            state.shortHubProgress!==null){
-      // Hard-terminate the active Worker; reject late RESULT/PROGRESS.
-      // Keep current source, selected owners and analysis proof for retry.
-      ++state.previewToken;
-      cancelEngine();
-      state.activeJob=null;state.activePreviewToken=null;
-      state.busy=false;state.shortHubProgress=null;
-      invalidateShortHubPreview();
-      state.shortHubPreviewError='UXML_SHORT_PREVIEW_CANCELLED: selection retained; re-preview before Apply.';
-      renderShortPreview();refresh();
-      query(root,'[data-progress]').textContent='CANCELLED · read-only preview; no XML changed.';
-      updateStatus(state.shortHubPreviewError);
-    }
     else if(target.hasAttribute('data-cancel')&&state.manualQueueRunning){
       const saved=state.manualQueueCheckpoint;
       cancelEngine();state.epoch++;state.busy=false;
@@ -1375,6 +1334,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       // checkpoint. Do not invoke a second engine run or leave a half-applied UI.
       const saved=state.shortBulk;
       cancelEngine();state.epoch++;state.busy=false;state.batchRunning=false;
+      state.activeJob=null;
       state.shortBulk=null;
       await publishShortBulk({...saved,stopReason:'CANCELLED',stopMessage:'User cancelled active batch'},state.epoch);
       refresh();
@@ -1442,7 +1402,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       const p=state.shortPreview,r=state.shortElements[Number(event.target.dataset.shortIndex)];
       if(p&&r?.eligible&&p.epoch===state.epoch&&p.sha===state.source?.sourceSha256){
         if(event.target.checked)p.selected.add(r.id);else p.selected.delete(r.id);
-        invalidateShortHubPreview();renderShortPreview();
+        renderShortPreview();
       }
     }
     const d=state.secondPass;
@@ -1458,8 +1418,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     if(event.target.matches('[data-uxml-toggle]')){
       if(state.busy||state.batchRunning){event.target.checked=state.hubEnabled;return;}
       state.hubEnabled=event.target.checked;state.hubParity=null;clearEvidenceProof('EVIDENCE_ANALYSIS_REQUIRED');state.opsPreview=null;state.opsPreviewError=null;
-      state.shortHubPreview=null;state.shortHubPreviewError=null;
-      state.shortHubReport=null;state.shortPreview=null;
+      state.shortPreview=null;
       query(root,'[data-short-preview]').textContent='';
       opsPanel.reset();
       renderHubParity();renderActions();refresh();
@@ -1500,9 +1459,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     hubEnabled:state.hubEnabled,hubParity:state.hubParity?.status||'OFF',
     queued:state.manualQueue.map(x=>({id:x.id,status:x.status})),queueBusy:state.manualQueueRunning}),load,analyze,
     dispose(){
-      ++state.previewToken;
-      state.activePreviewToken=null;state.activeJob=null;
-      state.shortHubProgress=null;state.shortHubReport=null;
+      state.activeJob=null;
       cancelEngine();ownedWorker?.dispose();state.epoch++;
       opsPanel.dispose();canvas.dispose();root.removeEventListener('toggle',toggled,true);root.removeEventListener('click',click);
       root.removeEventListener('change',changed);root.removeEventListener('input',input);}};
