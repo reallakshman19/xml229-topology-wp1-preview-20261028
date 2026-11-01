@@ -114,7 +114,7 @@ async function exercise(mismatchAt=Infinity){
     .filter({hasText:'Drop selected short component'}).count(),3);
   const second=page.locator('[data-short-index]:checked').nth(1);
   const secondIndex=await second.getAttribute('data-short-index');
-  assert.match(secondIndex,/^\\d+$/);
+  assert.ok(Number.isInteger(Number(secondIndex)) && Number(secondIndex)>=0);
   await second.uncheck();
   assert.equal(await page.locator('[data-run-short-drop]').isDisabled(),true,
     'changing selection must revoke previously admitted Apply');
