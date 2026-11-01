@@ -145,5 +145,5 @@ class InterconnectedBaseline(unittest.TestCase):
             print(f"INTERCONNECTED_SYNTHETIC_READY={len(accepted)}")
             print(f"INTERCONNECTED_SYNTHETIC_REFUSED={len(refused)}")
             print(f"INTERCONNECTED_BASELINE_SECONDS={baseline_seconds:.5f}")
-            print(f"INTERCONNECTED_PREVIEW_SECONDS={optimized_seconds:.5f}")
-            print(f"INTERCONNECTED_PREVIEW_SPEEDUP={baseline_seconds/optimized_seconds:.2f}x")
+            print(f"INTERCONNECTED_SINGLE_SESSION_SECONDS={optimized_seconds:.5f}")
+            print(f"INTERCONNECTED_TIMING_RATIO={baseline_seconds/optimized_seconds:.2f}x")
