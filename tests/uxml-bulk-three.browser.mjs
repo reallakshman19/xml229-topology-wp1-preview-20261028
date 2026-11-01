@@ -113,12 +113,14 @@ async function exercise(mismatchAt=Infinity){
   assert.equal(await page.locator('[data-ops-rows] [data-op-id]')
     .filter({hasText:'Drop selected short component'}).count(),3);
   const second=page.locator('[data-short-index]:checked').nth(1);
+  const secondIndex=await second.getAttribute('data-short-index');
+  assert.match(secondIndex,/^\\d+$/);
   await second.uncheck();
   assert.equal(await page.locator('[data-run-short-drop]').isDisabled(),true,
     'changing selection must revoke previously admitted Apply');
   assert.match(await page.locator('[data-run-short-drop]').getAttribute('title'),
     /Preview the selected UXML short-drop operations/);
-  await second.check();
+  await page.locator('[data-short-index="'+secondIndex+'"]').check();
   assert.equal(await page.locator('[data-run-short-drop]').isDisabled(),true,
     'returning to the previous set does not resurrect a stale preview');
   await page.locator('[data-short-hub-preview]').click();
