@@ -19,7 +19,7 @@ const row=(id,n,kind='DROP_SHORT_ELEMENT')=>({
 const baseline=row('AUTO',9,'SAFE_DROP_PIPE_GEOMETRY');
 const short=(id,n)=>row(id,n);
 function chunk(ids,accepted,refused=[],nonshort=[baseline]){
-  const ops=[...nonshort,...accepted.map((id,i)=>short(id,Number(id.split(':').at(-1))))];
+  const ops=[...nonshort.map(x=>structuredClone(x)),...accepted.map(id=>short(id,Number(id.split(':').at(-1))))];
   const edited=new Set(ops.flatMap(r=>r.changes.map(c=>c.recordKey)));
   const byKind=Object.fromEntries([...new Set(ops.map(r=>r.kind))].sort()
     .map(kind=>[kind,ops.filter(r=>r.kind===kind).length]));
