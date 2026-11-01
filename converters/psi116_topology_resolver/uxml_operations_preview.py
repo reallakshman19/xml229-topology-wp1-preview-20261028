@@ -14,12 +14,13 @@ from typing import Any
 import xml.etree.ElementTree as ET
 
 from .models import ResolverConfig
-from .transaction import TransactionPolicy, apply_topofix_transaction
+from .transaction import TransactionPolicy
 from .uxml_adapter import resolve_from_uxml
 from .resolver import resolve_psi116
 from .short_elements import short_elements
 from .uxml_edit_ops import (export_edit_ops, UxmlPatchError,
-                            _source_sha, _source_refs_by_key, _source_record_paths)
+                            _source_sha, _source_refs_by_key, _source_record_paths,
+                            _preview_short_native_transaction)
 
 SCHEMA = "uxml-operations-preview/v1"
 NAMES = {
@@ -240,7 +241,7 @@ class _ShortPreviewSourceScope:
             if scoped is None or any(scoped[k] != row[k] for k in authority_fields):
                 return None
             request = {k: scoped[k] for k in ("id", "sourceSha256", "nodeKeys")}
-            native = apply_topofix_transaction(
+            native = _preview_short_native_transaction(
                 before, policy=TransactionPolicy(
                     selected_action_ids=(scoped["id"],),
                     short_element_requests=(request,)), config=self.config)
