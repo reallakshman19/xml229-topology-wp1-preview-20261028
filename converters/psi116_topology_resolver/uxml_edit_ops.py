@@ -261,6 +261,92 @@ def _loss_veto(uxml: Mapping[str, Any], result: ResolutionResult,
                         raise UxmlPatchError("UXML_LOSS_CONTRACT_FIELD_TOUCH:" + key + ":" + path)
 
 
+def _short_canonical_operation(uxml: dict, result: ResolutionResult,
+                               policy: TransactionPolicy,
+                               config: ResolverConfig) -> dict:
+    """Exactly one explicit owner; native copy-only transaction supplies effects."""
+    _require(not policy.joint_repairs and not policy.apply_all_safe and
+             len(policy.short_element_requests) == len(policy.selected_action_ids) == 1,
+             "UXML_SHORT_EXACT_ONE_REQUEST_REQUIRED")
+    request = policy.short_element_requests[0]
+    _require(isinstance(request, dict) and
+             set(request) == {"id", "sourceSha256", "nodeKeys"} and
+             isinstance(request.get("id"), str) and
+             isinstance(request.get("nodeKeys"), (list, tuple)),
+             "UXML_SHORT_REQUEST_SCHEMA_INVALID")
+    sha = _source_sha(uxml)
+    _require(request["sourceSha256"] == sha and
+             policy.selected_action_ids == (request["id"],),
+             "UXML_SHORT_REQUEST_SOURCE_OR_SELECTION_DRIFT")
+    row = next((r for r in short_elements(result.document, config)
+                if r["id"] == request["id"]), None)
+    _require(row is not None and row["eligible"] and
+             list(request["nodeKeys"]) == row["nodeKeys"] and
+             row["sourceSha256"] == sha, "UXML_SHORT_NOT_ELIGIBLE_OR_WITNESS_DRIFT")
+    # Only the existing native short_element routine can remove and reclose
+    # an owner. This is a disposable in-memory clone, never an output write.
+    try:
+        transaction = apply_topofix_transaction(result, policy=policy, config=config)
+    except (ValueError, KeyError) as exc:
+        raise UxmlPatchError("UXML_SHORT_NATIVE_REFUSED:" + type(exc).__name__) from exc
+    _require(transaction.committed and transaction.fixed_xml is not None,
+             "UXML_SHORT_NATIVE_TRANSACTION_REJECTED")
+    edits = []
+    for change in transaction.operations:
+        _require(change.action_id == request["id"] and
+                 change.operation in {"REMOVE_SELECTED_SHORT_ELEMENT_RECORD", "CLOSE_COMPONENT_PORT"},
+                 "UXML_SHORT_UNEXPECTED_MUTATION_KIND")
+        if change.operation == "REMOVE_SELECTED_SHORT_ELEMENT_RECORD":
+            _require(change.source_node_key in row["nodeKeys"],
+                     "UXML_SHORT_OWNER_DELETE_TARGET_MISMATCH")
+            edits.append({"recordKey": change.source_node_key,
+                          "field": "Source record", "before": "Present", "after": "Removed"})
+        else:
+            _require(isinstance(change.before, dict) and isinstance(change.after, dict) and
+                     set(change.before) == set(change.after) == {"NodeNumber", "Position"},
+                     "UXML_SHORT_PORT_FIELDS_INVALID")
+            for field in ("NodeNumber", "Position"):
+                if change.before[field] != change.after[field]:
+                    edits.append({"recordKey": change.source_node_key, "field": field,
+                                  "before": change.before[field], "after": change.after[field]})
+    _require({e["recordKey"] for e in edits if e["field"] == "Source record"} ==
+             set(row["nodeKeys"]), "UXML_SHORT_DELETE_SET_MISMATCH")
+    edits.sort(key=lambda e: (e["recordKey"], e["field"]))
+    targets = sorted({e["recordKey"] for e in edits})
+    refs = _source_refs_by_key(uxml, sha)
+    _require(bool(targets) and all(key in refs for key in targets),
+             "UXML_SHORT_SOURCE_REF_NOT_FOUND")
+    records = {n.key: n for branch in result.document.branches for n in branch.nodes}
+    paths = _source_record_paths(result.document.source_text, result)
+    losses = uxml.get("lossContract")
+    _require(isinstance(losses, list), "UXML_LOSS_CONTRACT_MISSING")
+    touched = {key: set() for key in targets}
+    for edit in edits:
+        touched[edit["recordKey"]].add("*" if edit["field"] == "Source record"
+                                        else edit["field"])
+    for key, fields in touched.items():
+        _require(key in records and key in paths,
+                 "UXML_SHORT_ORIGINAL_RECORD_NOT_FOUND:" + key)
+        _require(records[key].connection_type != "CLOS", "UXML_CLOS_WRITE_HELD:" + key)
+        for loss in losses:
+            _require(isinstance(loss, dict) and isinstance(loss.get("details"), dict) and
+                     isinstance(loss["details"].get("sourcePath"), str),
+                     "UXML_LOSS_CONTRACT_INVALID")
+            loss_path, node_path = loss["details"]["sourcePath"], paths[key]
+            if loss_path != node_path and not loss_path.startswith(node_path + "/"):
+                continue
+            if "*" in fields or any(loss_path.startswith(node_path + "/" + field + "[")
+                                    for field in fields):
+                raise UxmlPatchError("UXML_LOSS_CONTRACT_FIELD_TOUCH:" + key)
+    return {"opId": "UXML-OP-" + request["id"], "kind": "DROP_SHORT_ELEMENT",
+            "sourceActionId": request["id"], "fileSha256": sha, "targets": targets,
+            "params": [{"request": {"id": row["id"], "sourceSha256": sha,
+                                    "nodeKeys": list(row["nodeKeys"])},
+                        "leftKey": row["leftKey"], "rightKey": row["rightKey"],
+                        "lengthBasis": row["lengthBasis"], "lengthMm": row["lengthMm"],
+                        "edits": edits}]}
+
+
 def export_edit_ops(
     uxml: dict, *, policy: TransactionPolicy | None = None,
     source_name: str = "<memory>", config: ResolverConfig | None = None,
