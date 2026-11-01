@@ -345,7 +345,8 @@ def _short_canonical_operation(uxml: dict, result: ResolutionResult,
                 segment = loss_path[len(node_path) + 1:].split("/", 1)[0]
                 field = segment.split("[", 1)[0]
                 _require(bool(field) and segment.startswith(field + "[") and
-                         segment.endswith("]") and segment[len(field) + 1:-1].isdigit(),
+                         segment.endswith("]") and segment[len(field) + 1:-1].isascii() and
+                         segment[len(field) + 1:-1].isdigit(),
                          "UXML_LOSS_CONTRACT_FIELD_TOUCH:" + key)
                 removed_with_record.append({"recordKey": key, "field": field})
                 continue
