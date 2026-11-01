@@ -42,6 +42,8 @@ def synthetic_owners(count=89):
 
 class UxmlShortPreviewScale(unittest.TestCase):
     def setUp(self):
+        if os.environ.get("UXML_SCALE_BENCHMARK") != "1":
+            self.skipTest("Run explicitly with UXML_SCALE_BENCHMARK=1 to prevent repeated 89-owner timings")
         self.reader = os.environ.get("XCU_UXML_ROOT")
         if not self.reader or not (Path(self.reader) / "tools" / "psi116-to-uxml.mjs").is_file():
             self.skipTest("Pinned XCU_UXML_ROOT required for source-bound speed trial")
