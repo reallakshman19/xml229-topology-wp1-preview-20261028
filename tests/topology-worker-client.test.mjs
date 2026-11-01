@@ -108,3 +108,32 @@ test('bulk cancellation terminates Worker and cannot publish a stale revision',a
  assert.equal((await post).revision,0);
  c.dispose();
 });
+
+test('one preview job streams only validated progress, keeps job pending and can cancel/restart',async()=>{
+  const c=createTopologyWorkerClient({WorkerCtor:FakeWorker,jobTimeoutMs:1000});
+  const job={...validJob,options:{...validJob.options,
+    topologyShortPreviewRequests:Array.from({length:9},(_,i)=>({id:'SHORT:'+i}))}};
+  const observed=[];
+  const p=c.run(job,{onProgress:(done,total)=>observed.push([done,total])});
+  const worker=FakeWorker.instances.at(-1),id=worker.sent.at(-1).id;
+  worker.emit('message',{type:'PROGRESS',id,completed:4,total:9});
+  worker.emit('message',{type:'PROGRESS',id,completed:4,total:9});
+  worker.emit('message',{type:'PROGRESS',id,completed:10,total:9});
+  worker.emit('message',{type:'PROGRESS',id,completed:8,total:8});
+  worker.emit('message',{type:'PROGRESS',id,completed:8,total:9});
+  assert.deepEqual(observed,[[4,9],[8,9]],
+    'no duplicate, overshoot or wrong-selection progress is forwarded');
+  assert.equal(worker.terminated,false);
+  c.cancel();
+  await assert.rejects(p,/CANCELLED/);
+  assert.equal(worker.terminated,true);
+  worker.emit('message',{type:'RESULT',id,result:{ok:true,forged:true}});
+  const recovered=c.run(job,{onProgress:(done,total)=>observed.push([done,total])});
+  const fresh=FakeWorker.instances.at(-1);
+  assert.notEqual(fresh,worker);
+  fresh.emit('message',{type:'PROGRESS',id:fresh.sent.at(-1).id,completed:9,total:9});
+  fresh.emit('message',{type:'RESULT',id:fresh.sent.at(-1).id,result:{ok:true,refreshed:true}});
+  assert.deepEqual(await recovered,{ok:true,refreshed:true});
+  assert.deepEqual(observed,[[4,9],[8,9],[9,9]]);
+  c.dispose();
+});
