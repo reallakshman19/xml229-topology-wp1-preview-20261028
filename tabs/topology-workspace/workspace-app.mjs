@@ -50,7 +50,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   runEngine ||= ownedWorker.run;
   cancelEngine ||= ownedWorker?()=>ownedWorker.cancel():()=>{};
   const state={epoch:0,source:null,original:null,revision:0,applied:0,history:[],resolutions:[],shortElements:[],shortPreview:null,scene:null,plan:null,findings:[],result:null,
-    selected:new Set(),search:'',filter:'all',category:'all',hubEnabled:false,hubParity:null,hubRevision:null,analysisProof:null,evidenceProofReason:'EVIDENCE_ANALYSIS_REQUIRED',opsPreview:null,opsPreviewError:null,manualPorts:[],secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false,shortBulk:null,manualQueue:[],manualQueueRunning:false,manualQueueCheckpoint:null,manualQueueStatus:''};
+    selected:new Set(),search:'',filter:'all',category:'all',hubEnabled:false,hubParity:null,hubRevision:null,analysisProof:null,evidenceProofReason:'EVIDENCE_ANALYSIS_REQUIRED',opsPreview:null,opsPreviewError:null,shortHubPreview:null,shortHubPreviewError:null,manualPorts:[],secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false,shortBulk:null,manualQueue:[],manualQueueRunning:false,manualQueueCheckpoint:null,manualQueueStatus:''};
   // The queue lives alongside Second Pass, without changing the engineering audit.
   const queuePanel=document.createElement('section');
   queuePanel.dataset.manualQueue='';
@@ -167,7 +167,8 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   }
   function renderActions() {
     const shortButton=query(root,'[data-preview-short]');
-    if(shortButton)shortButton.disabled=!state.plan||state.busy||state.batchRunning||state.hubEnabled;
+    if(shortButton)shortButton.disabled=!state.plan||state.busy||state.batchRunning||
+      (state.hubEnabled&&(state.hubParity?.status!=='EQUAL'||!analysisProofCurrent()));
     const plan=state.plan;
     const summary=query(root,'[data-plan-summary]');
     const panel=query(root,'[data-issues]');
@@ -692,6 +693,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     const start=p.page*SHORT_PREVIEW_PAGE_SIZE;
     const visible=rows.slice(start,start+SHORT_PREVIEW_PAGE_SIZE);
     const eligible=rows.filter(r=>r.eligible).length;
+    const hubReady=!state.hubEnabled||shortHubPreviewCurrent();
     panel.innerHTML='<h3>Drop elements ≤6 mm, then close</h3>'+
       '<p role="status">PREVIEW ONLY · '+total+' measured candidates · '+eligible+
       ' eligible under source checks · working XML unchanged. Select source owners, then explicitly Apply.</p>'+
@@ -707,7 +709,12 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
         '</small></li>').join('')+'</ul>'+
       '<div class="short-preview-pagination"><button data-short-prev '+(!p.page?'disabled':'')+'>Previous</button>'+
       '<button data-short-next '+(p.page>=pages-1?'disabled':'')+'>Next</button></div>'+
-      (total?'<button data-run-short-drop '+(!p.selected.size?'disabled':'')+
+      (state.hubEnabled?'<button data-short-hub-preview '+(!p.selected.size||state.busy?'disabled':'')+
+        '>Preview selected UXML edit operations ('+p.selected.size+')</button>'+
+        '<p data-short-hub-status role="status">'+esc(state.shortHubPreviewError||
+          (hubReady?'UXML operation preview verified for exact current selection.':
+            'Select source owners, then preview exact UXML edit operations before Apply.'))+'</p>':'')+
+      (total?'<button data-run-short-drop '+(!p.selected.size||!hubReady?'disabled':'')+
         '>Apply all '+p.selected.size+' selected &amp; close</button>':
         '<p>No measurable two-port elements at ≤6 mm.</p>')+
       '<p>One source-bound transaction and recheck per element. Cancel at any point; only validated revisions are retained.</p>';
@@ -716,6 +723,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   function previewShortElements(){
     if(!state.source||!state.plan||state.busy||state.batchRunning)return;
     state.shortPreview={sha:state.source.sourceSha256,epoch:state.epoch,page:0,selected:new Set()};
+    state.shortHubPreview=null;state.shortHubPreviewError=null;
     renderShortPreview();
     query(root,'[data-short-preview]').scrollIntoView({block:'nearest'});
   }
@@ -748,8 +756,11 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       }
       state.revision+=applied.length;
       state.applied+=applied.length;
+      state.hubRevision=state.hubEnabled?state.revision:null;
+      state.shortHubPreview=null;state.shortHubPreviewError=null;
       clearEvidenceProof('EVIDENCE_RECHECK_PENDING');
       state.fix={sourceSha256:state.source.sourceSha256,receiptKey:'drop',
+        hubRoute:state.hubEnabled,
         actionIds:applied.map(p=>p.id),xml:state.source.sourceText,
         name:(previous.name.replace(/\\.xml$/i,'')||'input')+'.bulk-'+applied.length+'.validated.topofix.xml',
         report:{schema:'xml229-short-element-bulk/v2',
@@ -787,7 +798,11 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     if(outcome.latest&&done)await refreshPublishedEvidence(generation,state.revision,state.source);
   }
   async function dropShortElements(){
-    if(state.hubEnabled){setFixStatus('UXML_PREVIEW_AUTO_ONLY: short-element changes held. Turn preview off for the existing direct route.','rejected');return;}
+    if(state.hubEnabled&&(!shortHubPreviewCurrent()||
+       state.hubParity?.status!=='EQUAL'||!analysisProofCurrent())){
+      setFixStatus('UXML_SHORT_PREVIEW_OR_PARITY_REQUIRED: preview selected edits and verify EQUAL before Apply.','rejected');
+      return;
+    }
     const p=state.shortPreview;
     if(state.busy||state.batchRunning||!p||p.epoch!==state.epoch||
        p.sha!==state.source?.sourceSha256)return;
@@ -814,6 +829,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     try{
       const outcome=await runShortBulk({
         source,shortElements:state.shortElements,selectedIds:ids,runEngine,
+        hubEnabled:state.hubEnabled,
         isCurrent:()=>generation===state.epoch,
         onCheckpoint:checkpoint=>{if(generation===state.epoch)state.shortBulk=checkpoint;},
         onProgress:step=>{
@@ -1163,6 +1179,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     cancelEngine();
     const generation=++state.epoch;
     state.shortBulk=null;
+    state.shortHubPreview=null;state.shortHubPreviewError=null;
     state.source=null;state.original=null;state.revision=0;state.hubParity=null;state.hubRevision=null;clearEvidenceProof('EVIDENCE_ANALYSIS_REQUIRED');state.opsPreview=null;state.opsPreviewError=null;state.applied=0;state.history=[];state.resolutions=[];state.shortElements=[];state.shortPreview=null;
     const shortPanel=query(root,'[data-short-preview]');if(shortPanel)shortPanel.textContent='';
     state.manualPorts=[];state.secondPass=null;state.manualQueue=[];
