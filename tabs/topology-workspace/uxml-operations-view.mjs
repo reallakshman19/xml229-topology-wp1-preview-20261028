@@ -25,7 +25,15 @@ export function assertOperationsPreview(preview,sourceSha256){
        row.sourceRecords.some(x=>x.format!=='PSI116'||typeof x.recordKey!=='string')||
        !Array.isArray(row.changes)||!row.changes.length||
        row.changes.some(x=>typeof x.recordKey!=='string'||
-         typeof x.field!=='string'||!row.sourceRecords.some(r=>r.recordKey===x.recordKey)))
+         typeof x.field!=='string'||!row.sourceRecords.some(r=>r.recordKey===x.recordKey))||
+       (row.kind==='DROP_SHORT_ELEMENT'&&
+         (!Array.isArray(row.removedWithRecord)||
+          row.removedWithRecord.some(x=>!x||typeof x.recordKey!=='string'||
+            typeof x.field!=='string'||!x.field||
+            !row.changes.some(c=>c.recordKey===x.recordKey&&
+              c.field==='Source record'&&c.after==='Removed'))||
+          new Set(row.removedWithRecord.map(x=>x.recordKey+'\u0000'+x.field))
+            .size!==row.removedWithRecord.length)))
       throw Error('UXML_OPS_PREVIEW_ROW_INVALID');
     seen.add(row.opId);
     counts[row.kind]=(counts[row.kind]||0)+1;
@@ -71,6 +79,9 @@ export function visibleOperationExport(preview,reviewOnlyCount=0,filter={}){
       changes:row.changes.map(c=>({
         recordKey:c.recordKey,field:c.field,before:c.before,after:c.after,
       })),
+      removedWithRecord:(row.removedWithRecord||[]).map(x=>({
+        recordKey:x.recordKey,field:x.field,
+      })),
       policyReason:row.policyReason,
     })),
   };
@@ -84,13 +95,14 @@ function csvCell(value){
 export function operationsCSV(preview,reviewOnlyCount=0,filter={}){
   const published=visibleOperationExport(preview,reviewOnlyCount,filter);
   const header=['Operation ID','Kind','UXML IDs','Original source records',
-    'Before → after fields','Auto eligibility reason'];
+    'Before → after fields','Removed with deleted element','Auto eligibility reason'];
   const rows=published.operations.map(row=>[
     row.opId,row.kindName,row.uxmlIds.join('; '),
     row.sourceRecords.map(r=>r.format+':'+r.recordKey+
       (r.changed?' (changes)':' (witness)')).join('; '),
     row.changes.map(c=>c.recordKey+'.'+c.field+': '+
       text(c.before)+' → '+text(c.after)).join('; '),
+    row.removedWithRecord.map(c=>c.recordKey+'.'+c.field).join('; '),
     row.policyReason,
   ]);
   return [header,...rows].map(line=>line.map(csvCell).join(',')).join('\n')+'\n';
