@@ -76,15 +76,16 @@ if hub_doc is not None:
                       "differences": ["/uxmlReader: "+type(exc).__name__+": "+str(exc)]}
 _speed_marks['pyHubParityMs'] = (_speed_time.perf_counter() - _speed_started) * 1000 - _speed_marks['pyResolveMs']
 # Read-only inspection: export_edit_ops remains the canonical authority.
-# Any native short transaction runs only on disposable private copies for
-# witness generation; Apply revalidates against the full original source.
+# Every selected short operation uses the unchanged full-source native path.
+# The one Worker job owns the entire selection, so reader/parity runs once.
+# Only advisory progress crosses back to the UI; Apply runs separately.
 if hub_doc is not None and hub_parity["status"] == "EQUAL" and not job_generate_topofix:
     try:
         from psi116_topology_resolver.uxml_operations_preview import build_operation_preview
         ops_preview = build_operation_preview(
             hub_doc, source_name=str(job_topology_input_path), config=cfg,
             short_requests=json.loads(job_short_preview_json),
-            _resolved=adapted)
+            progress=job_short_preview_progress)
     except Exception as exc:
         # Presentation failure is NEVER topology or patch-back parity failure.
         # Preserve the verified hub route and its existing Auto-fix admission.
@@ -333,6 +334,11 @@ export async function runPsi116TopologyStage(pyodide, job, inputPath, jobDir, st
   pyodide.globals.set('job_connection_preview_json', JSON.stringify(options.topologyConnectionPreview || null));
   pyodide.globals.set('job_short_elements_json', JSON.stringify(options.topologyShortElementRequests || []));
   pyodide.globals.set('job_short_preview_json', JSON.stringify(options.topologyShortPreviewRequests || []));
+  // Callback is available only inside this Worker while the read-only job is
+  // running. It never changes Python policy, source bytes, or final receipts.
+  pyodide.globals.set('job_short_preview_progress',
+    typeof job.topologyPreviewProgress==='function'
+      ? job.topologyPreviewProgress : ()=>{});
   pyodide.globals.set('job_bulk_speed_profile', speed);
   const pythonStart=performance.now();
   await pyodide.runPythonAsync(TOPOLOGY_SNIPPET);
