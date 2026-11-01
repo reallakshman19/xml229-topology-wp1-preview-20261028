@@ -7,7 +7,7 @@ import {eligibleActions,previewBatchPlan,explicitlyRejectedActionIds} from './ba
 import {runValidatedPasses} from './batch-runner.mjs';
 import {assertOperationsPreview} from './uxml-operations-view.mjs';
 import {assessShortPreview} from './short-preview-model.mjs';
-import {mergeShortHubPreviewChunks,SHORT_HUB_PREVIEW_CHUNK_SIZE} from './short-preview-chunks.mjs';
+import {mergeShortHubPreviewChunks,SHORT_HUB_PREVIEW_PROGRESS_INTERVAL} from './short-preview-chunks.mjs';
 import {createOperationsPreviewPanel} from './uxml-operations-panel.mjs';
 import {runShortBulk} from './short-bulk.mjs';
 import {secondPassHTML} from './second-pass.mjs';
@@ -729,7 +729,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       if(!current()||total!==ids.length||!Number.isSafeInteger(completed)||
          completed<0||completed>total)return;
       const elapsed=Math.max(0,(performance.now()-started)/1000);
-      const etaSeconds=completed>=Math.min(SHORT_HUB_PREVIEW_CHUNK_SIZE,total)&&
+      const etaSeconds=completed>=Math.min(SHORT_HUB_PREVIEW_PROGRESS_INTERVAL,total)&&
         completed<total ? Math.ceil(elapsed*(total-completed)/completed):null;
       state.shortHubProgress={completed,total,etaSeconds};
       const estimate=etaSeconds===null?
