@@ -720,15 +720,25 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       renderShortPreview();return;
     }
     const generation=state.epoch,revision=state.revision;
-    const previewToken=++state.previewToken;
+    const previewToken=++state.previewToken,started=performance.now();
     const current=()=>previewToken===state.previewToken&&
       generation===state.epoch&&state.source===source&&
       revision===state.revision&&state.hubEnabled&&
       idKey===shortSelectionKey();
-    const progress=completed=>{
-      state.shortHubProgress={completed,total:ids.length};
-      const message='Previewing '+completed+' of '+ids.length+
-        ' short elements · read-only, no XML changes. Cancel is available.';
+    const progress=(completed,total)=>{
+      if(!current()||total!==ids.length||!Number.isSafeInteger(completed)||
+         completed<0||completed>total)return;
+      const elapsed=Math.max(0,(performance.now()-started)/1000);
+      const etaSeconds=completed>=Math.min(SHORT_HUB_PREVIEW_CHUNK_SIZE,total)&&
+        completed<total ? Math.ceil(elapsed*(total-completed)/completed):null;
+      state.shortHubProgress={completed,total,etaSeconds};
+      const estimate=etaSeconds===null?
+        (completed===0?' · estimating after first group':''):
+        ' · Estimated time remaining: ~'+
+          (etaSeconds>=60?Math.ceil(etaSeconds/60)+' min':
+            Math.max(1,etaSeconds)+' sec')+' (approximate)';
+      const message='Previewing '+completed+' of '+total+
+        ' short elements'+estimate+' · read-only, Cancel available.';
       query(root,'[data-progress]').textContent=message;
       updateStatus(message);
       renderShortPreview();
@@ -736,39 +746,31 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     state.busy=true;state.activeJob='preview';
     state.shortHubPreview=null;state.shortHubPreviewError=null;
     state.shortHubReport=null;
-    progress(0);refresh();
+    progress(0,ids.length);refresh();
     try{
-      // Each bounded job is cancellable by Worker termination. No partial
-      // preview grants Apply; publish only after all chunks pass exact custody.
-      const chunks=[];
-      let firstResult=null;
-      for(let offset=0;offset<requests.length;offset+=SHORT_HUB_PREVIEW_CHUNK_SIZE){
-        if(!current())return;
-        const part=requests.slice(offset,offset+SHORT_HUB_PREVIEW_CHUNK_SIZE);
-        const job=readOnlyAnalysisJob(source);
-        job.options.topologyShortPreviewRequests=part;
-        const result=await runEngine(job);
-        if(!current())return;
-        if(result?.ok!==true||result?.topologyUxmlParity?.status!=='EQUAL')
-          throw Error('UXML_SHORT_PREVIEW_PARITY_'+
-            (result?.topologyUxmlParity?.status||'UNAVAILABLE'));
-        if(!result.topologyOperationsPreview||
-           result.topologyOperationsPreview.error){
-          // Preserve the precise global builder code in BOTH views.
-          // It is a disclosure failure, never hub parity DIFFERENT or Apply.
-          state.opsPreview=null;
-          state.opsPreviewError=String(result.topologyOperationsPreview?.error||
-            'UXML_SHORT_PREVIEW_CHUNK_MISSING');
-          opsPanel.render();
-          throw Error(state.opsPreviewError);
-        }
-        chunks.push({ids:part.map(x=>x.id),preview:result.topologyOperationsPreview});
-        firstResult||=result;
-        progress(Math.min(offset+part.length,ids.length));
-      }
+      // ONE read-only Worker job: pinned reader, full-source Python analysis,
+      // EQUAL parity and all native per-owner checks run once per selection.
+      // Progress carries counts ONLY; no partial edit ops may authorize Apply.
+      const job=readOnlyAnalysisJob(source);
+      job.options.topologyShortPreviewRequests=requests;
+      const result=await runEngine(job,{onProgress:progress});
       if(!current())return;
-      const merged=mergeShortHubPreviewChunks(chunks,ids);
-      recordHubResult({...firstResult,topologyOperationsPreview:merged},source.rawSha256);
+      if(result?.ok!==true||result?.topologyUxmlParity?.status!=='EQUAL')
+        throw Error('UXML_SHORT_PREVIEW_PARITY_'+
+          (result?.topologyUxmlParity?.status||'UNAVAILABLE'));
+      if(!result.topologyOperationsPreview||
+         result.topologyOperationsPreview.error){
+        state.opsPreview=null;
+        state.opsPreviewError=String(result.topologyOperationsPreview?.error||
+          'UXML_SHORT_PREVIEW_MISSING');
+        opsPanel.render();
+        throw Error(state.opsPreviewError);
+      }
+      // Retain the same fail-closed merger and its drift/mutation falsifiers,
+      // now with exactly one entire-selection response instead of 23 analyses.
+      const merged=mergeShortHubPreviewChunks(
+        [{ids,preview:result.topologyOperationsPreview}],ids);
+      recordHubResult({...result,topologyOperationsPreview:merged},source.rawSha256);
       if(state.hubParity?.status!=='EQUAL')
         throw Error('UXML_SHORT_PREVIEW_PARITY_'+state.hubParity?.status+': '+
           (state.hubParity?.differences||[]).join(' | '));
@@ -848,7 +850,13 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
         '>Preview selected UXML edit operations ('+p.selected.size+')</button>'+
         '<p data-short-hub-status role="status">'+esc(state.shortHubProgress?
            'Previewing '+state.shortHubProgress.completed+' of '+state.shortHubProgress.total+
-             ' short elements · Cancel available; no Apply before completion.':
+             ' short elements'+(state.shortHubProgress.etaSeconds===null?
+             (state.shortHubProgress.completed===0?' · estimating after first group':''):
+             ' · Estimated time remaining: ~'+
+             (state.shortHubProgress.etaSeconds>=60?
+               Math.ceil(state.shortHubProgress.etaSeconds/60)+' min':
+               Math.max(1,state.shortHubProgress.etaSeconds)+' sec')+' (approximate)')+
+             ' · Cancel available; no Apply before completion.':
            state.shortHubPreviewError||
           (reported?report.readyCount+' ready / '+report.refusedCount+
              ' refused'+(hubReady?' · UXML operation preview verified for exact current selection.':
