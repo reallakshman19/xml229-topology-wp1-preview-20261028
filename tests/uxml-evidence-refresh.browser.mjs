@@ -217,6 +217,11 @@ test('injected Worker: approved manual queue publishes new-revision evidence, st
         .filter({hasText:'Node 20 · SOURCE'}).first();
       await summary.click();
       await summary.locator('..').locator('[data-add-second-pass]').click();
+      await page.locator('[data-second-peer]').selectOption('B1:N30:S0');
+      await page.locator('[data-preview-second]').click();
+      await page.waitForFunction(()=>
+        document.querySelector('[data-second-status]')?.textContent?.includes('PREVIEW ONLY'),
+        null,{timeout:120000});
       assert.equal(await page.locator('[data-queue-second]').count(),1,
         'the manual queue must expose its source-qualified Apply control');
       for(const selector of ['[data-apply-second]','[data-queue-second]']){
@@ -229,11 +234,6 @@ test('injected Worker: approved manual queue publishes new-revision evidence, st
       const queueApply=page.locator('[data-queue-apply]');
       assert.equal(await queueApply.isDisabled(),true);
       assert.match(await queueApply.getAttribute('title'),/Select an exact source pair/);
-      await page.locator('[data-second-peer]').selectOption('B1:N30:S0');
-      await page.locator('[data-preview-second]').click();
-      await page.waitForFunction(()=>
-        document.querySelector('[data-second-status]')?.textContent?.includes('PREVIEW ONLY'),
-        null,{timeout:120000});
       await page.locator('[data-second-evidence]').fill('SYNTHETIC-DRAWING-REFRESH approves this exact port pair');
       await page.locator('[data-second-confirm]').check();
       for(const selector of ['[data-apply-second]','[data-queue-second]']){
