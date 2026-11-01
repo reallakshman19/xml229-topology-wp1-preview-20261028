@@ -54,3 +54,20 @@ test('disabled action shows exact hub/direct reason without modifying disabled p
   assert.match(why,/Universal XML parity must be EQUAL before short-element changes/);
   assert.equal(button.disabled,true);
 });
+
+test('while short hub preview runs every disabled control names the active preview',()=>{
+  const state={busy:true,activeJob:'preview',batchRunning:false,plan:{},hubEnabled:true};
+  for(const name of ['short-hub-preview','preview-short','auto-fix-all',
+                      'analyze','download-working','trial-current','trial-evidence']){
+    const button={disabled:true,hasAttribute:x=>x==='data-'+name};
+    assert.equal(trialDisabledReason(button,state),
+      'Finish or cancel the active preview first.',name);
+  }
+  const cancel={disabled:false,hasAttribute:x=>x==='data-cancel'};
+  assert.equal(trialDisabledReason(cancel,state),'');
+  state.activeJob=null;
+  const button={disabled:true,hasAttribute:x=>x==='data-preview-short'};
+  assert.equal(trialDisabledReason(button,state),
+    'Finish or cancel the active validation first.',
+    'other in-flight validation retains its original wording');
+});
