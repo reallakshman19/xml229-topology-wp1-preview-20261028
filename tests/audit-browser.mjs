@@ -418,16 +418,16 @@ try{
  await scalePage.locator('[data-select-short]').click();
  if(await scalePage.locator('[data-short-index]').count()!==24||
     !(await scalePage.locator('[data-short-preview]').textContent()).includes('130 measured candidates'))
-   throw Error('Scale preview must render only one page of 24 out of 130');
+   throw Error('Scale selection must render only one page of 24 out of 130');
  await scalePage.locator('[data-select-gaskets]').click();
- if(!(await scalePage.locator('[data-run-short-drop]').textContent()).includes('Apply all 130 selected'))
-   throw Error('Selection must expose the bounded eight-owner batch size');
+ if(!(await scalePage.locator('[data-run-short-drop]').textContent()).includes('Apply 130 selected'))
+   throw Error('Selection must expose the full direct-Apply intent for all 130 owners');
  await scalePage.locator('[data-short-next]').click();
  if(await scalePage.locator('[data-short-index]:checked').count()!==24||
     !(await scalePage.locator('[data-short-selection-count]').textContent()).includes('130 selected'))
-   throw Error('Selection was lost across short-preview pages');
+   throw Error('Selection was lost across short-selection pages');
  if((await scalePage.locator('[data-progress]').textContent()).includes('APPLIED'))
-   throw Error('A preview or selection mutated working XML');
+   throw Error('Source selection alone mutated working XML');
  result.shortPreviewScale='PASS: 130 rows, 24/page, selection across pages, full-selection bulk intent, no mutation';
  await scalePage.close();
  // Manual Fix is a collapsed rule/case queue. >25 mm repairs require a separate preview and approval.
