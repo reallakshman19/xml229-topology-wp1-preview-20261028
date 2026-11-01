@@ -35,6 +35,8 @@ export function trialDisabledReason(button,state,{proofCurrent=false,hubCanRelea
   if(!button?.disabled)return '';
   const has=name=>button.hasAttribute('data-'+name);
   const busy=state.busy||state.batchRunning;
+  if(busy&&state.activeJob==='preview'&&!has('cancel'))
+    return 'Finish or cancel the active preview first.';
   if(has('preview-short')||has('run-short-drop')||has('select-gaskets')||
      has('short-hub-preview')){
     if(!state.plan)return 'Analyze the current XML to identify eligible short elements.';
