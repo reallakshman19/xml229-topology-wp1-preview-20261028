@@ -305,9 +305,9 @@ def patch_inputxml(original: Path, uxml: dict, payload: dict,
     data = original.read_bytes()
     # Independently regenerate from actual original bytes: never let a
     # caller remove lossContract warnings or forge a UXML permission.
+    rows, refs = exact_original_refs(uxml, data)
     canonical = pinned_reader(original, xcu_root)
     need(canonical == uxml, "INPUT_XML_UXML_NOT_FROM_PINNED_ORIGINAL")
-    rows, refs = exact_original_refs(uxml, data)
     result = resolve_from_uxml(uxml, config, source_name=str(original))
     need(result.document.source_text.encode("utf-8") == data,
          "INPUT_XML_ORIGINAL_BYTES_MISMATCH")
