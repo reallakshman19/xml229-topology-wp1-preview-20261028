@@ -23,6 +23,23 @@
     <strong class="uxml-parity" data-uxml-parity data-parity="OFF" role="status">UXML preview OFF · direct TopoFix</strong>
     <span data-source-meta role="status">Choose an original XML file; no stored source will be used.</span>
   </section>
+  <section class="trial-result" data-trial-result hidden aria-label="Latest validated revision and remaining source review">
+    <h2 data-trial-head>Validated working revision</h2>
+    <p data-trial-checks role="status">Native validation receipt pending.</p>
+    <div class="trial-result-downloads">
+      <button type="button" data-trial-current disabled>Download validated XML</button>
+      <button type="button" data-trial-history disabled>Download repair history</button>
+      <button type="button" data-trial-evidence disabled>Download connection evidence</button>
+    </div>
+    <h3>What is left</h3>
+    <nav class="trial-left" aria-label="Remaining findings by next action">
+      <button type="button" data-what-left="review">Needs your review (0)</button>
+      <button type="button" data-what-left="auto">Auto fixes available (0)</button>
+      <button type="button" data-what-left="preserve">No action needed: kept by rule (0)</button>
+      <button type="button" data-what-left="information">Informational / evidence-only (0)</button>
+    </nav>
+    <p class="trial-note">These are current findings, not automatically certified connections. Use the group buttons to inspect source records; no new Apply or Approve action is added.</p>
+  </section>
   <p class="uxml-parity-details" data-uxml-differences aria-live="polite">Enable the optional preview and Analyze to compare the two routes; this is not engineering acceptance.</p>
   <section class="uxml-ops-panel" data-ops-panel hidden aria-label="Operations preview">
     <h2>Operations preview <small>Read-only · no action is applied or approved here</small></h2>
@@ -94,6 +111,8 @@
           <button data-audit-filter="warning" data-audit-label="Warnings" aria-pressed="false">Warnings (0)</button>
           <button data-audit-filter="auto" data-audit-label="Auto fix" aria-pressed="false">Auto fix (0)</button>
           <button data-audit-filter="manual" data-audit-label="Manual fix · By rule" aria-pressed="false">Manual fix · By rule (0)</button>
+          <button data-audit-filter="keep" data-audit-label="Kept by rule" aria-pressed="false">Kept by rule (0)</button>
+          <button data-audit-filter="information" data-audit-label="Informational / evidence-only" aria-pressed="false">Informational / evidence-only (0)</button>
           <button data-audit-filter="evidence" data-audit-label="No XML change" aria-pressed="false">No XML change (0)</button>
         </div>
         <div class="audit-bulk"><button type="button" data-auto-fix-all disabled>Autofix-All (0 actions)</button>

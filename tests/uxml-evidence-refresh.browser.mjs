@@ -57,6 +57,20 @@ async function openInjected(mode){
    assert.notEqual(html,original,'default worker mount must be suppressed');
    await route.fulfill({response,body:html});
  });
+ // Only in the synthetic REVISION_RACE browser test, intercept the served
+ // workspace module and expose a test-only closure accessor. The product JS
+ // committed to the repository has no revision-mutation test hook.
+ if(mode==='REVISION_RACE'){
+   await page.route('**/tabs/topology-workspace/workspace-app.mjs',async route=>{
+     const response=await route.fetch();
+     const original=await response.text();
+     const marker='  function sourceMeta(){';
+     assert.equal(original.split(marker).length,2,
+       'private state accessor inserted only in test-delivered module bytes');
+     await route.fulfill({response,body:original.replace(marker,
+       '  window.__syntheticRevisionRaceBump=()=>++state.revision;\n'+marker)});
+   });
+ }
  await page.goto(url);
  await page.evaluate(async mode=>{
    const root=document.querySelector('#xml229-topology-workspace');
@@ -69,10 +83,25 @@ async function openInjected(mode){
    let committed=false;
    const stages=[];
    const runEngine=async job=>{
+     if(mode==='DELAY_ANALYSIS'&&!job.options?.generateTopoFix){
+       await new Promise(resolve=>{
+         window.__evidenceFixture.releaseAnalysis=resolve;
+         window.__evidenceFixture.analysisHeld=true;
+       });
+     }
      const result=await client.run(job);
      stages.push(job.options?.generateTopoFix?'TRANSACTION':
        committed?'POST_PUBLISH_RECHECK':'READ_ONLY_ANALYSIS');
      if(job.options?.generateTopoFix&&result?.topoFixCommitted===true)committed=true;
+     if(committed&&!job.options?.generateTopoFix&&mode==='REVISION_RACE'){
+       // The real Worker has already returned a valid read-only recheck.
+       // Hold the wrapper's result until the browser advances the simulated
+       // working revision; the product must reject that now-stale result.
+       await new Promise(resolve=>{
+         window.__evidenceFixture.releaseRace=resolve;
+         window.__evidenceFixture.raceStarted=true;
+       });
+     }
      if(committed&&!job.options?.generateTopoFix&&mode==='STALE'){
        // Stale plan is a synthetic mutation *only of the returned read-only
        // result*, never the validated transaction or source XML.
@@ -112,6 +141,20 @@ async function finishAndCheck(page,mode,kind){
  const stages=await page.evaluate(()=>window.__evidenceFixture.stages);
  assert.ok(stages.includes('TRANSACTION'),kind+': native transaction never executed');
  assert.ok(stages.includes('POST_PUBLISH_RECHECK'),kind+': new revision not re-analysed');
+ const resultPanel=page.locator('[data-trial-result]');
+ assert.equal(await resultPanel.isVisible(),true,kind+': validated revision summary absent');
+ const summary=await resultPanel.locator('[data-trial-head]').textContent();
+ assert.match(summary,/Revision 1: 1 fixes applied · \d+\/\d+ checks passed/,
+   kind+': native validation and fix count missing from overview');
+ assert.match(await resultPanel.locator('[data-what-left="review"]').textContent(),
+   /Needs your review \(\d+\)/);
+ assert.match(await resultPanel.locator('[data-what-left="auto"]').textContent(),
+    /Auto fixes available \(\d+\)/);
+  assert.match(await resultPanel.locator('[data-what-left="preserve"]').textContent(),
+    /No action needed: kept by rule \(\d+\)/);
+  assert.match(await resultPanel.locator('[data-what-left="information"]').textContent(),
+    /Informational \/ evidence-only \(\d+\)/);
+  assert.equal(await resultPanel.locator('[data-auto-fix],[data-apply-second],[data-queue-apply],[data-close-joint]').count(),0);
  const message=await page.locator('[data-evidence-proof]').textContent();
  if(mode==='PASS'){
    assert.match(message,/Connection evidence verified for working revision 1/);
@@ -126,6 +169,10 @@ async function finishAndCheck(page,mode,kind){
    assert.equal(receipt.xmlChangedByResolution,false);
  }else{
    assert.equal(await page.locator('[data-download-resolutions]').isDisabled(),true);
+   assert.match(await page.locator('[data-download-resolutions]').getAttribute('title'),
+     /EVIDENCE_RECHECK_SOURCE_DRIFT/);
+   assert.match(await page.locator('[data-download-resolutions] + .action-unavailable-reason').textContent(),
+     /EVIDENCE_RECHECK_SOURCE_DRIFT/);
    assert.match(message,/Connection evidence unavailable: EVIDENCE_RECHECK_SOURCE_DRIFT/);
    assert.equal(await page.locator('[data-download-working]').isEnabled(),true,
      'a failed read-only evidence recheck must not roll back validated XML');
@@ -140,8 +187,16 @@ test('injected Worker: short-element bulk publishes new-revision evidence, stale
     try{
       await loadAndAnalyze(page,shortXML);
       await page.locator('[data-preview-short]').click();
+      const shortApply=page.locator('[data-run-short-drop]');
+      assert.equal(await shortApply.isDisabled(),true);
+      assert.match(await shortApply.getAttribute('title'),/Select at least one eligible short element/);
+      assert.equal(await page.locator('[data-run-short-drop] + .action-unavailable-reason').count(),1);
       await page.locator('[data-select-gaskets]').click();
       assert.equal(await page.locator('[data-short-index]:checked').count(),1);
+      assert.equal(await shortApply.isEnabled(),true);
+      assert.equal(await shortApply.getAttribute('title'),null);
+      assert.equal(await shortApply.getAttribute('data-reason-set'),null);
+      assert.equal(await page.locator('[data-run-short-drop] + .action-unavailable-reason').count(),0);
       await page.locator('[data-run-short-drop]').click();
       await finishAndCheck(page,mode,'SHORT_BULK');
       assert.deepEqual(errors,[]);
@@ -167,16 +222,218 @@ test('injected Worker: approved manual queue publishes new-revision evidence, st
       await page.waitForFunction(()=>
         document.querySelector('[data-second-status]')?.textContent?.includes('PREVIEW ONLY'),
         null,{timeout:120000});
+      assert.equal(await page.locator('[data-queue-second]').count(),1,
+        'the manual queue must expose its source-qualified Apply control');
+      for(const selector of ['[data-apply-second]','[data-queue-second]']){
+        const button=page.locator(selector);
+        if(!await button.count())continue; // a non-queue Apply is optional in this view
+        assert.equal(await button.isDisabled(),true);
+        assert.match(await button.getAttribute('title'),/Select an exact source pair/);
+        assert.equal(await page.locator(selector+' + .action-unavailable-reason').count(),1);
+      }
+      const queueApply=page.locator('[data-queue-apply]');
+      assert.equal(await queueApply.isDisabled(),true);
+      assert.match(await queueApply.getAttribute('title'),/Select an exact source pair/);
       await page.locator('[data-second-evidence]').fill('SYNTHETIC-DRAWING-REFRESH approves this exact port pair');
       await page.locator('[data-second-confirm]').check();
+      for(const selector of ['[data-apply-second]','[data-queue-second]']){
+        const button=page.locator(selector);
+        if(!await button.count())continue;
+        assert.equal(await button.isEnabled(),true);
+        assert.equal(await button.getAttribute('title'),null);
+        assert.equal(await button.getAttribute('data-reason-set'),null);
+        assert.equal(await page.locator(selector+' + .action-unavailable-reason').count(),0);
+      }
       await page.locator('[data-queue-second]').click();
       assert.match(await page.locator('[data-manual-queue]').textContent(),/1 approved/);
+      assert.equal(await queueApply.isEnabled(),true);
+      assert.equal(await queueApply.getAttribute('title'),null);
+      assert.equal(await page.locator('[data-queue-apply] + .action-unavailable-reason').count(),0);
       await page.locator('[data-queue-apply]').click();
       await finishAndCheck(page,mode,'MANUAL_QUEUE');
       assert.deepEqual(errors,[]);
     }finally{await page.close();}
   }
 });
+
+test('revision-race negative: in-flight read-only recheck cannot enable evidence for a newer working revision',
+  {timeout:180000},async()=>{
+ const {page,errors}=await openInjected('REVISION_RACE');
+ try{
+   await loadAndAnalyze(page,shortXML);
+   await page.locator('[data-preview-short]').click();
+   await page.locator('[data-select-gaskets]').click();
+   assert.equal(await page.locator('[data-short-index]:checked').count(),1);
+   await page.locator('[data-run-short-drop]').click();
+   await page.waitForFunction(()=>window.__evidenceFixture?.raceStarted===true,
+     null,{timeout:120000});
+   const bumped=await page.evaluate(()=>window.__syntheticRevisionRaceBump());
+   assert.equal(bumped,2,'test must advance private state.revision from 1 while recheck is in flight');
+   await page.evaluate(()=>window.__evidenceFixture.releaseRace());
+   await page.waitForFunction(()=>document.querySelector('main')?.getAttribute('aria-busy')==='false'&&
+     document.querySelector('[data-evidence-proof]')?.textContent
+       ?.includes('EVIDENCE_RECHECK_STALE_REVISION'),null,{timeout:30000});
+   const state=await page.evaluate(()=>window.__evidenceFixture.workspace.getState());
+   assert.equal(state.revision,2);
+   assert.equal(await page.locator('[data-download-resolutions]').isDisabled(),true);
+   assert.equal(await page.locator('[data-trial-evidence]').isDisabled(),true);
+   assert.match(await page.locator('[data-evidence-proof]').textContent(),
+     /Connection evidence unavailable: EVIDENCE_RECHECK_STALE_REVISION/);
+   assert.equal(await page.locator('[data-download-working]').isEnabled(),true,
+     'do not delete the already validated corrected XML on a stale read-only recheck');
+   assert.deepEqual(errors,[]);
+ }finally{await page.close();}
+});
+
+test('UI clarity: hub-only short-drop explanation, review Next/Previous and retained source selection',
+  {timeout:180000},async()=>{
+ const {page,errors}=await openInjected('PASS');
+ try{
+   await loadAndAnalyze(page,manualXML);
+   const directDownload=page.locator('[data-download-working]');
+   assert.equal(await directDownload.isDisabled(),true);
+   assert.match(await directDownload.getAttribute('title'),/No validated corrected revision exists/);
+   assert.equal(await page.locator('[data-download-working] + .action-unavailable-reason').count(),1);
+   await page.locator('[data-uxml-toggle]').check();
+   const all=page.locator('[data-auto-fix-all]');
+   assert.equal(await all.isDisabled(),true);
+   assert.match(await all.getAttribute('title'),/Universal XML parity must be EQUAL/);
+   assert.equal(await page.locator('[data-auto-fix-all] + .action-unavailable-reason').count(),1);
+   const queueApply=page.locator('[data-queue-apply]');
+   assert.equal(await queueApply.isDisabled(),true);
+   assert.match(await queueApply.getAttribute('title'),/Runs on the direct route only/);
+   const evidence=page.locator('[data-download-resolutions]');
+   assert.equal(await evidence.isDisabled(),true);
+   assert.match(await evidence.getAttribute('title'),/EVIDENCE_ANALYSIS_REQUIRED/);
+   assert.equal(await page.locator('[data-download-resolutions] + .action-unavailable-reason').count(),1);
+   const short=page.locator('[data-preview-short]');
+   assert.equal(await short.isDisabled(),true);
+   assert.match(await short.getAttribute('title'),/Runs on the direct route only/);
+   assert.match(await page.locator('[data-preview-short] + .action-unavailable-reason').textContent(),
+     /Untick Universal XML route to use it/);
+   await page.locator('[data-uxml-toggle]').uncheck();
+   assert.equal(await short.isEnabled(),true);
+   assert.equal(await short.getAttribute('title'),null);
+   assert.equal(await short.getAttribute('data-reason-set'),null);
+   assert.equal(await page.locator('[data-preview-short] + .action-unavailable-reason').count(),0);
+   await page.locator('[data-audit-category]').selectOption('all');
+   await page.locator('[data-audit-filter="manual"]').click();
+   await page.locator('[data-rules-expand]').click();
+   const cases=page.locator('.audit-case');
+   assert.ok(await cases.count()>=2,'fixture should exercise more than one manual review');
+   const first=cases.first();
+   await first.locator(':scope > summary').click();
+   assert.match(await first.locator('.audit-next-step').textContent(),/What you can do:/);
+   const next=first.locator('[data-trial-step="1"]');
+   assert.equal(await next.isEnabled(),true);
+   const label=await first.locator('[data-trial-counter]').textContent();
+   assert.match(label,/1 of \d+/);
+   await next.click();
+   const current=page.locator('.audit-case[open] [data-trial-counter]')
+     .filter({hasText:/2 of \d+/}).first();
+   assert.equal(await current.count(),1,'Next should update the group counter');
+   assert.match(await page.locator('[data-selection]').textContent(),
+     /source occurrence\(s\) selected/);
+   await current.locator('xpath=..').locator('[data-trial-step="-1"]').click();
+   assert.equal(await page.locator('.audit-case[open] [data-trial-counter]')
+      .filter({hasText:/1 of \d+/}).count()>=1,true);
+   assert.equal(await page.locator('[data-trial-result] [data-auto-fix],[data-trial-result] [data-apply-second]').count(),0);
+   assert.deepEqual(errors,[]);
+ }finally{await page.close();}
+});
+
+test('UI clarity: direct synthetic Auto-fix surfaces revision, native checks and remaining groups',
+  {timeout:180000},async()=>{
+ const {page,errors}=await openInjected('PASS');
+ try{
+   const autoXML=manualXML.replace('<Position>175 0 0</Position>',
+     '<Position>125 0 0</Position>').replace('<Position>261 0 0</Position>',
+     '<Position>211 0 0</Position>');
+   await loadAndAnalyze(page,autoXML);
+   const autofixAll=page.locator('[data-auto-fix-all]');
+   assert.equal(await autofixAll.isEnabled(),true);
+   await page.locator('[data-uxml-toggle]').check();
+   assert.equal(await autofixAll.isDisabled(),true);
+   assert.match(await autofixAll.getAttribute('title'),/Universal XML parity must be EQUAL/);
+   await page.locator('[data-uxml-toggle]').uncheck();
+   assert.equal(await autofixAll.isEnabled(),true);
+   assert.equal(await autofixAll.getAttribute('title'),null);
+   assert.equal(await autofixAll.getAttribute('data-reason-set'),null);
+   assert.equal(await page.locator('[data-auto-fix-all] + .action-unavailable-reason').count(),0);
+   const auto=page.locator('[data-auto-fix]').first();
+   assert.ok(await auto.count()>0,'synthetic near-miss must offer existing Auto-fix');
+   await auto.locator('xpath=ancestor::details[contains(@class,"audit-rule")]')
+     .evaluate(el=>{el.open=true;});
+   await auto.click();
+   await page.waitForFunction(()=>document.querySelector('[data-fix-result]')?.dataset?.result==='ready'&&
+     document.querySelector('[data-trial-result]')?.hidden===false,null,{timeout:120000});
+   const summary=await page.locator('[data-trial-head]').textContent();
+   assert.match(summary,/^Revision 1: 1 fixes applied · \d+\/\d+ checks passed$/);
+   const m=summary.match(/(\d+)\/(\d+) checks passed/);
+   assert.equal(m[1],m[2],'native checks must all pass, not a guessed count');
+   // Compare overview counts with independently rendered resolver dispositions,
+    // not with trialGroup() (a group-assignment mutant must fail).
+    const cards=await page.locator('[data-finding-id]').evaluateAll(els=>els.map(el=>({
+      id:el.dataset.findingId,
+      kind:['manual','auto','keep','evidence'].find(k=>
+        el.querySelector('.audit-resolution')?.classList.contains(k))||'other',
+    })));
+    assert.ok(cards.length>0,'post-fix synthetic findings must be present');
+    const groupByKind={manual:'review',auto:'auto',keep:'preserve',
+      evidence:'information',other:'information'};
+    const expected={review:[],auto:[],preserve:[],information:[]};
+    for(const card of cards)expected[groupByKind[card.kind]].push(card.id);
+    const labels={review:'Needs your review',auto:'Auto fixes available',
+      preserve:'No action needed: kept by rule',information:'Informational / evidence-only'};
+    const filters={review:'manual',auto:'auto',preserve:'keep',information:'information'};
+    for(const kind of Object.keys(expected)){
+      const button=page.locator('[data-what-left="'+kind+'"]');
+      assert.equal(await button.textContent(),labels[kind]+' ('+expected[kind].length+')',
+        kind+': exact post-fix count from independently classified finding cards');
+      assert.equal(await button.isDisabled(),expected[kind].length===0);
+      if(!expected[kind].length)continue;
+      await button.click();
+      assert.equal(await page.locator('[data-audit-filter="'+filters[kind]+'"]').getAttribute('aria-pressed'),
+        'true',kind+': group must activate its exact filter');
+      assert.equal(await button.getAttribute('aria-pressed'),'true');
+      const shown=await page.locator('[data-finding-id]').evaluateAll(
+        els=>els.map(el=>el.dataset.findingId));
+      assert.deepEqual(shown.sort(),[...expected[kind]].sort(),
+        kind+': group must show only its own source findings');
+    }
+    assert.equal(await page.locator('[data-trial-current]').isEnabled(),true);
+   assert.equal(await page.locator('[data-trial-result] [data-approve],[data-trial-result] [data-apply]').count(),0);
+   assert.deepEqual(errors,[]);
+ }finally{await page.close();}
+});
+test('UI clarity: disabled Cancel reason disappears on actual analysis start',
+ {timeout:180000},async()=>{
+ const {page,errors}=await openInjected('DELAY_ANALYSIS');
+ try{
+   await page.locator('[data-file]').setInputFiles({
+     name:'synthetic-delayed-analysis.xml',mimeType:'application/xml',
+     buffer:Buffer.from(manualXML,'utf8')
+   });
+   await page.waitForFunction(()=>document.querySelector('[data-occ-summary]')
+     ?.textContent?.includes('4 of 4'));
+   const cancel=page.locator('[data-cancel]');
+   assert.equal(await cancel.isDisabled(),true);
+   assert.equal(await cancel.getAttribute('title'),'No active operation to cancel.');
+   await page.locator('[data-analyze]').click();
+   await page.waitForFunction(()=>window.__evidenceFixture?.analysisHeld===true);
+   assert.equal(await cancel.isEnabled(),true);
+   assert.equal(await cancel.getAttribute('title'),null);
+   assert.equal(await cancel.getAttribute('data-reason-set'),null);
+   assert.equal(await page.locator('[data-cancel] + .action-unavailable-reason').count(),0);
+   await page.evaluate(()=>window.__evidenceFixture.releaseAnalysis());
+   await page.waitForFunction(()=>document.querySelector('[data-status]')
+     ?.textContent?.includes('Authoritative topology analysis complete.'),null,{timeout:120000});
+   assert.equal(await cancel.isDisabled(),true);
+   assert.equal(await cancel.getAttribute('title'),'No active operation to cancel.');
+   assert.deepEqual(errors,[]);
+ }finally{await page.close();}
+});
+
 test.after(async()=>{
  await browser.close();
  await new Promise(done=>server.close(done));

@@ -1,4 +1,5 @@
 /** Human-readable PSI116 rule audit. Presentation only: all severities and witnesses come from findings. */
+import {trialGroup} from './trial-clarity.mjs';
 const RULES=Object.freeze({
  CONNECTION_DECLARATION_CONFLICT:["Connection declarations conflict","Source-linked records disagree about a junction owner or closed termination. Reconcile the branch declaration with the actual physical owner before changing the connection."],
  PORT_CONNECTION_WITHIN_TOLERANCE:["Connection within 25 mm tolerance","Compatible physical ports have a unique counterpart within the inclusive project tolerance. Auto fix closes the interface and preserves finite component geometry."],
@@ -113,7 +114,7 @@ function resolution(action,finding){
  if(action.disposition==="MERGE_CARRIER_WITH_COMPONENT")
    return {kind:"evidence",text:"Evidence-only; no XML change"};
  if(action.disposition==="KEEP")
-   return {kind:"keep",text:"Preserve as-is"};
+   return {kind:"keep",text:"No action needed: kept by rule"};
  return {kind:"manual",text:"Manual fix / review"};
 }
 export function buildAudit(findings,actions){
@@ -177,8 +178,18 @@ function itemHTML(item,reviews={},sourceByKey=null){
    ?(chosen==="REVIEW_SOURCE_RECORD"&&a?.message?a.message:
      MANUAL_GUIDE[f.code]||"Inspect the original source-qualified records and component ownership. Correct the upstream engineering XML/export under human authority, then rerun the PSI116 audit.")
    :(RECOMMEND[chosen]||a?.message||"Review source geometry and ownership manually.");
+ const nextStep=fix.kind==="keep"?
+   "No action needed: kept by rule. Preserve the original record; there is no fix to apply.":
+   fix.kind==="evidence"?
+   "No XML change needed here. Inspect the source evidence and retain the original records.":
+   fix.kind==="auto"?
+   "An Auto fix is available. Inspect source witnesses, then use the existing validated-copy control.":
+   SECOND_PASS_RULES.has(f.code)?
+   "Review the intended connection. Use Add second pass only with design evidence, or correct the source model and rerun.":
+   "Nothing to apply here. Check the owner in the source model, re-export, then rerun TopoFix.";
  return '<article class="audit-item" data-finding-id="'+esc(f.finding_id)+'">'+
   '<h4 class="audit-item-title">'+esc(item.title)+'</h4>'+
+  '<p class="audit-next-step"><strong>What you can do:</strong> '+esc(nextStep)+'</p>'+
   '<div class="audit-item-top"><span class="audit-severity '+item.severity.toLowerCase()+'">'+esc(item.severity)+'</span>'+
   '<span class="audit-resolution '+fix.kind+'">'+esc(fix.text)+'</span></div>'+
   '<p class="audit-plain"><strong>What was detected:</strong> '+esc(reason)+'</p>'+
@@ -234,7 +245,8 @@ export function renderAuditHTML(audit,{search="",filter="all",category="all",rev
   i.action?.action_id,i.action?.disposition,...(i.finding.node_numbers||[]),
   ...(i.finding.node_keys||[])].some(s=>String(s??"").toLowerCase().includes(q));
  const relevant=i=>match(i)&&(category==="all"||category===i.category)&&
-  (filter==="all"||filter===i.severity.toLowerCase()||filter===i.fix.kind);
+  (filter==="all"||filter===i.severity.toLowerCase()||filter===i.fix.kind||
+   (filter==="information"&&trialGroup(i)==="information"));
  let shown=0;
  const manual=filter==='manual';
  const sections=(manual?['manual']:Object.keys(CATEGORIES)).map(categoryId=>{
@@ -289,6 +301,8 @@ export function filterCounts(audit,{search="",category="all"}={}){
    warning:matched.filter(i=>i.severity==="WARNING").length,
    auto:matched.filter(i=>i.fix.kind==="auto").length,
    manual:matched.filter(i=>i.fix.kind==="manual").length,
+   keep:matched.filter(i=>i.fix.kind==="keep").length,
+   information:matched.filter(i=>trialGroup(i)==="information").length,
    evidence:matched.filter(i=>i.fix.kind==="evidence").length};
 }
 
