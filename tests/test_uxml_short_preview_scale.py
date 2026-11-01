@@ -114,6 +114,6 @@ class UxmlShortPreviewScale(unittest.TestCase):
                              [original.name])
             self.assertGreater(old_s,0)
             print(f"SYNTHETIC_89_SHORT_PREVIEW_BASELINE_SECONDS={old_s:.5f}")
-            print(f"SYNTHETIC_89_SHORT_PREVIEW_OPTIMIZED_SECONDS={new_s:.5f}")
-            print(f"SYNTHETIC_89_SHORT_PREVIEW_SPEEDUP={old_s/new_s:.2f}x")
+            print(f"SYNTHETIC_89_SHORT_PREVIEW_SINGLE_SESSION_SECONDS={new_s:.5f}")
+            print(f"SYNTHETIC_89_SHORT_PREVIEW_TIMING_RATIO={old_s/new_s:.2f}x")
             print("SYNTHETIC_89_SHORT_PREVIEW_FULL_NATIVE_PARITY=89/89")
