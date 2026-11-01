@@ -859,21 +859,25 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       ' · working revision '+state.revision+
       (outcome.stopMessage?' · '+outcome.stopMessage:'')+
       (done?' · validated XML, source-linked operations and lineage digests downloadable.':' · no XML changed.');
-    query(root,'[data-progress]').textContent=message;
-    setFixStatus(message,reason==='COMPLETE'&&done?'ready':done?'stopped':'rejected','drop');
-    updateStatus('Selected short-element batch finished. '+done+
-      ' validated; '+skipped+' not eligible on reanalysis. Engineering review remains required.');
-    if(outcome.latest&&done)await refreshPublishedEvidence(generation,state.revision,state.source);
-    if(state.hubEnabled&&String(outcome.stopMessage||'').startsWith('UXML_SHORT_PARITY_')){
-      // Do not leave a previous EQUAL badge or downloadable checkpoint after
-      // a newly observed hub mismatch. The prior validated copy is retained
-      // privately, but re-verification is required before any release.
+    const hubMismatch=state.hubEnabled&&
+      String(outcome.stopMessage||'').startsWith('UXML_SHORT_PARITY_');
+    if(hubMismatch){
+      // Fail closed BEFORE a status refresh can expose a previous EQUAL
+      // checkpoint, including while an asynchronous evidence recheck runs.
       state.hubParity={status:'DIFFERENT',differences:[outcome.stopMessage]};
       state.hubRevision=null;state.opsPreview=null;state.shortHubPreview=null;
       clearEvidenceProof('EVIDENCE_RECHECK_PARITY_NOT_EQUAL');
-      setFixStatus(message,'rejected','drop');
-      renderHubParity();refresh();
+      renderHubParity();
     }
+    query(root,'[data-progress]').textContent=message;
+    setFixStatus(message,hubMismatch?'rejected':
+      reason==='COMPLETE'&&done?'ready':done?'stopped':'rejected','drop');
+    updateStatus('Selected short-element batch finished. '+done+
+      ' validated; '+skipped+' not eligible on reanalysis. Engineering review remains required.');
+    // On a hub mismatch, do not reset the negative parity by reanalysing
+    // the partially validated checkpoint until an explicit fresh Analyze.
+    if(outcome.latest&&done&&!hubMismatch)
+      await refreshPublishedEvidence(generation,state.revision,state.source);
   }
   async function dropShortElements(){
     if(state.hubEnabled&&(!shortHubPreviewCurrent()||
