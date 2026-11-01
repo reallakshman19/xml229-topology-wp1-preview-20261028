@@ -316,9 +316,10 @@ test('UI clarity: hub-only short-drop explanation, review Next/Previous and reta
    assert.equal(await page.locator('[data-download-resolutions] + .action-unavailable-reason').count(),1);
    const short=page.locator('[data-preview-short]');
    assert.equal(await short.isDisabled(),true);
-   assert.match(await short.getAttribute('title'),/Runs on the direct route only/);
+   assert.match(await short.getAttribute('title'),
+     /Universal XML parity must be EQUAL before short-element changes/);
    assert.match(await page.locator('[data-preview-short] + .action-unavailable-reason').textContent(),
-     /Untick Universal XML route to use it/);
+     /Universal XML parity must be EQUAL before short-element changes/);
    await page.locator('[data-uxml-toggle]').uncheck();
    assert.equal(await short.isEnabled(),true);
    assert.equal(await short.getAttribute('title'),null);
