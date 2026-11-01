@@ -200,6 +200,10 @@ class InputXmlS3BPatch(unittest.TestCase):
                            "field":"@TO_NODE","raw":"40.000000"}})
             variants.append(("loss-field",altered,payload,original,
                              "INPUT_XML_LOSS_CONTRACT_FIELD_TOUCH"))
+            altered=deepcopy(hub)
+            altered["lossContract"]=[]
+            variants.append(("forged-loss-ledger",altered,payload,original,
+                             "INPUT_XML_UXML_NOT_FROM_PINNED_ORIGINAL"))
             # Forging only a UXML component source ref must fail original proof.
             altered=deepcopy(hub)
             altered["components"][2]["sourceRefs"][0]["recordKey"]="E999:F21:T31"
@@ -242,6 +246,22 @@ class InputXmlS3BPatch(unittest.TestCase):
             self.assertFalse(out.exists())
             self.assertFalse(validation.exists())
             self.assertEqual(original.read_bytes(),old)
+
+    def test_modified_pinned_reader_blob_refused_before_any_output(self):
+        with tempfile.TemporaryDirectory(prefix="uxml-s3b-reader-pin-") as td:
+            from shutil import copytree
+            base=Path(td)
+            original,hub,payload=self.fixture(base)
+            copied=base/"xcu"
+            copytree(self.xcu,copied)
+            module=copied/"uxml/UxmlInputXmlSchemaMapper.js"
+            module.write_bytes(module.read_bytes()+b"\n// TEST-ONLY MUTANT\n")
+            from psi116_topology_resolver.uxml_patch_inputxml import patch_inputxml
+            with self.assertRaisesRegex(InputXmlPatchError,
+                                        "INPUT_XML_PINNED_XCU_BLOB_MISMATCH"):
+                patch_inputxml(original,hub,payload,copied)
+            self.assertEqual(len(list(base.glob("*.fixed*"))),0)
+            self.assertTrue(original.exists())
 
     def test_public_inputxml_only_findings_still_run_without_cross_run_join(self):
         for name,count in (("GREInputxml.xml",100),("PLB314Inputxml.xml",53)):
