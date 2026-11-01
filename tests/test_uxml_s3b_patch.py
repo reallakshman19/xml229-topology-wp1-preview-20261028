@@ -144,7 +144,7 @@ class InputXmlS3BPatch(unittest.TestCase):
             self.assertEqual(p.returncode,0,p.stdout+p.stderr)
             self.assertEqual(p.stdout.strip(),"EQUAL")
             self.assertEqual(out.read_bytes(),patched)
-            self.assertEqual(json.loads(validation.read_text()),report)
+            self.assertEqual(json.loads(validation.read_text()),json.loads(json.dumps(report)))
             self.assertEqual(original.read_bytes(),prior,"original must never be overwritten")
             # Exactly two source attributes carry physical node 40 across a route.
             self.assertEqual(patched,prior.replace(
@@ -196,8 +196,8 @@ class InputXmlS3BPatch(unittest.TestCase):
                              "INPUT_XML_REVIEW_ONLY_OR_UNSUPPORTED_ACTION"))
             altered=deepcopy(hub)
             altered["lossContract"].append({
-                "details":{"path":"/CAESARII/PIPINGMODEL/PIPINGELEMENT[2]",
-                           "field":"@FROM_NODE","raw":"21.000000"}})
+                "details":{"path":"/CAESARII/PIPINGMODEL/PIPINGELEMENT[3]",
+                           "field":"@TO_NODE","raw":"40.000000"}})
             variants.append(("loss-field",altered,payload,original,
                              "INPUT_XML_LOSS_CONTRACT_FIELD_TOUCH"))
             # Forging only a UXML component source ref must fail original proof.
