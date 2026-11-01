@@ -141,10 +141,13 @@ def _preview_fields(op: dict, action: Any, records: dict[str, Any]) -> list[dict
 def build_operation_preview(uxml: dict, *,
                             source_name: str = "<memory>",
                             config: ResolverConfig | None = None,
-                            short_requests: list[dict] | None = None) -> dict:
+                            short_requests: list[dict] | None = None,
+                            progress=None) -> dict:
     """Read-only; one preview row for each actual export_edit_ops/v1 op.
 
-    No XML clone is modified; no transaction is started or outputs written.
+    The existing full-source native transaction runs on disposable in-memory
+    copies for each owner. No corrected output is published or source written.
+    Progress is an advisory callback, never evidence authorizing Apply.
     Does not broaden the source's Auto-fix selection policy.
     """
     config = config or ResolverConfig()
@@ -152,7 +155,7 @@ def build_operation_preview(uxml: dict, *,
     short_requests = short_requests or []
     _need(isinstance(short_requests, list), "UXML_PREVIEW_SHORT_SELECTION_INVALID")
     short_ops, refused, seen_short = [], [], set()
-    for request in short_requests:
+    for index, request in enumerate(short_requests, start=1):
         identifier = request.get("id") if isinstance(request, dict) else None
         if not isinstance(identifier, str) or not identifier:
             # Without a source-bound identifier the entire request is invalid:
@@ -172,6 +175,11 @@ def build_operation_preview(uxml: dict, *,
             # Source qualification is per owner. These are existing named
             # refusals; never synthesize an operation for a refused owner.
             refused.append({"id": identifier, "code": str(exc)})
+        # Report only after completing the full native check of this owner.
+        # One Worker job owns all selected owners, preserving base analysis and
+        # reader/parity qualification. Never publish a partially built preview.
+        if progress is not None and (index % 4 == 0 or index == len(short_requests)):
+            progress(index, len(short_requests))
     _need(payload.get("schema") == "uxml-edit-ops/v1",
           "UXML_PREVIEW_OP_SCHEMA_MISMATCH")
     resolved = resolve_from_uxml(uxml, config, source_name=source_name)
