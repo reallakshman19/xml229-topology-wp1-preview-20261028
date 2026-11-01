@@ -49,7 +49,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   const ownedWorker=runEngine?null:createTopologyWorkerClient();
   runEngine ||= ownedWorker.run;
   cancelEngine ||= ownedWorker?()=>ownedWorker.cancel():()=>{};
-  const state={epoch:0,source:null,original:null,revision:0,applied:0,history:[],resolutions:[],shortElements:[],shortPreview:null,scene:null,plan:null,findings:[],result:null,
+  const state={epoch:0,source:null,original:null,revision:0,applied:0,history:[],resolutions:[],shortElements:[],shortSelection:null,scene:null,plan:null,findings:[],result:null,
     selected:new Set(),search:'',filter:'all',category:'all',hubEnabled:false,hubParity:null,hubRevision:null,analysisProof:null,evidenceProofReason:'EVIDENCE_ANALYSIS_REQUIRED',opsPreview:null,opsPreviewError:null,
      activeJob:null,manualPorts:[],secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false,shortBulk:null,manualQueue:[],manualQueueRunning:false,manualQueueCheckpoint:null,manualQueueStatus:''};
   // The queue lives alongside Second Pass, without changing the engineering audit.
@@ -167,7 +167,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       (matching.length>350?'<p>Showing first 350 matches. Narrow the search.</p>':'');
   }
   function renderActions() {
-    const shortButton=query(root,'[data-preview-short]');
+    const shortButton=query(root,'[data-select-short]');
     if(shortButton)shortButton.disabled=!state.plan||state.busy||state.batchRunning||
       (state.hubEnabled&&(state.hubParity?.status!=='EQUAL'||!analysisProofCurrent()));
     const plan=state.plan;
@@ -622,7 +622,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       state.source=nextSource;state.scene=nextScene;state.plan=current.plan;
       invalidateManualQueue();
       state.resolutions=current.resolutions;
-      state.shortElements=current.shortElements;state.shortPreview=null;state.manualPorts=current.manualPorts;state.secondPass=null;state.openCases.clear();
+      state.shortElements=current.shortElements;state.shortSelection=null;state.manualPorts=current.manualPorts;state.secondPass=null;state.openCases.clear();
       const shortPanel=query(root,'[data-short-preview]');if(shortPanel)shortPanel.textContent='';
       state.findings=current.findings;state.result=recheck;state.selected.clear();state.gapReviews.clear();
       state.selected=new Set(changedIds);
@@ -684,16 +684,16 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
 
   // This preview is only a view of source-qualified data already received.
   // Paginate so one click never constructs an unbounded DOM tree.
-  const SHORT_PREVIEW_PAGE_SIZE=24;
-  function renderShortPreview(){
+  const SHORT_SELECTION_PAGE_SIZE=24;
+  function renderShortSelection(){
     // Selection only: no separate hub short-op preview or approval gate.
-    const p=state.shortPreview,panel=query(root,'[data-short-preview]');
+    const p=state.shortSelection,panel=query(root,'[data-short-preview]');
     if(!p||!state.source||p.sha!==state.source.sourceSha256){panel.textContent='';return;}
     const rows=state.shortElements,total=rows.length;
-    const pages=Math.max(1,Math.ceil(total/SHORT_PREVIEW_PAGE_SIZE));
+    const pages=Math.max(1,Math.ceil(total/SHORT_SELECTION_PAGE_SIZE));
     p.page=Math.max(0,Math.min(p.page,pages-1));
-    const start=p.page*SHORT_PREVIEW_PAGE_SIZE;
-    const visible=rows.slice(start,start+SHORT_PREVIEW_PAGE_SIZE);
+    const start=p.page*SHORT_SELECTION_PAGE_SIZE;
+    const visible=rows.slice(start,start+SHORT_SELECTION_PAGE_SIZE);
     const eligible=rows.filter(r=>r.eligible).length;
     const hubReady=!state.hubEnabled||
       (state.hubParity?.status==='EQUAL'&&analysisProofCurrent());
@@ -725,10 +725,10 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       '<p>Cancel retains the last validated revision. Refused owners are reported individually and never written.</p>';
     explainDisabledActions();
   }
-  function previewShortElements(){
+  function selectShortElements(){
     if(!state.source||!state.plan||state.busy||state.batchRunning)return;
-    state.shortPreview={sha:state.source.sourceSha256,epoch:state.epoch,page:0,selected:new Set()};
-    renderShortPreview();
+    state.shortSelection={sha:state.source.sourceSha256,epoch:state.epoch,page:0,selected:new Set()};
+    renderShortSelection();
     query(root,'[data-short-preview]').scrollIntoView({block:'nearest'});
   }
 
@@ -781,7 +781,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       state.resolutions=next.findings.resolvedConnections||[];
       state.shortElements=next.findings.shortElements||[];
       state.manualPorts=next.findings.manualConnectionPorts||[];
-      state.secondPass=null;state.shortPreview=null;state.selected.clear();
+      state.secondPass=null;state.shortSelection=null;state.selected.clear();
       state.gapReviews.clear();state.openCases.clear();
       query(root,'[data-short-preview]').textContent='';
       for(const [i,pass] of applied.entries()){
@@ -859,7 +859,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       setFixStatus('UXML_SHORT_PARITY_OR_EVIDENCE_REQUIRED: Analyze the current source and verify EQUAL before Apply.','rejected');
       return;
     }
-    const p=state.shortPreview;
+    const p=state.shortSelection;
     if(state.busy||state.batchRunning||!p||p.epoch!==state.epoch||
        p.sha!==state.source?.sourceSha256)return;
     // Do not silently drop a source-bound selection: per-owner Apply reports
@@ -973,7 +973,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       state.shortElements=next.findings.shortElements||[];
       state.manualPorts=next.findings.manualConnectionPorts||[];
       state.selected.clear();state.openCases.clear();state.gapReviews.clear();
-      state.secondPass=null;state.shortPreview=null;
+      state.secondPass=null;state.shortSelection=null;
       const shortPanel=query(root,'[data-short-preview]');
       if(shortPanel)shortPanel.textContent='';
       for(const item of applied){
@@ -1244,7 +1244,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     cancelEngine();
     const generation=++state.epoch;
     state.shortBulk=null;
-    state.source=null;state.original=null;state.revision=0;state.hubParity=null;state.hubRevision=null;clearEvidenceProof('EVIDENCE_ANALYSIS_REQUIRED');state.opsPreview=null;state.opsPreviewError=null;state.applied=0;state.history=[];state.resolutions=[];state.shortElements=[];state.shortPreview=null;
+    state.source=null;state.original=null;state.revision=0;state.hubParity=null;state.hubRevision=null;clearEvidenceProof('EVIDENCE_ANALYSIS_REQUIRED');state.opsPreview=null;state.opsPreviewError=null;state.applied=0;state.history=[];state.resolutions=[];state.shortElements=[];state.shortSelection=null;
     const shortPanel=query(root,'[data-short-preview]');if(shortPanel)shortPanel.textContent='';
     state.manualPorts=[];state.secondPass=null;state.manualQueue=[];
     state.manualQueueCheckpoint=null;state.manualQueueRunning=false;
@@ -1344,17 +1344,17 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       const rules=getNodes(root,'.audit-rule');state.openRules.set(state.filter,new Set(open?rules.map(r=>r.dataset.ruleCode):[]));
       rules.forEach(r=>r.open=open);
     }
-    else if(target.hasAttribute('data-preview-short'))previewShortElements();
+    else if(target.hasAttribute('data-select-short'))selectShortElements();
     else if(target.hasAttribute('data-select-gaskets')){
-      const p=state.shortPreview;if(!p)return;
+      const p=state.shortSelection;if(!p)return;
       for(const r of state.shortElements)if(r.eligible&&r.componentType==='GASK')p.selected.add(r.id);
-      renderShortPreview();
+      renderShortSelection();
     }
     else if(target.hasAttribute('data-short-prev')){
-      if(state.shortPreview){state.shortPreview.page--;renderShortPreview();}
+      if(state.shortSelection){state.shortSelection.page--;renderShortSelection();}
     }
     else if(target.hasAttribute('data-short-next')){
-      if(state.shortPreview){state.shortPreview.page++;renderShortPreview();}
+      if(state.shortSelection){state.shortSelection.page++;renderShortSelection();}
     }
     else if(target.hasAttribute('data-run-short-drop'))dropShortElements();
     else if(target.hasAttribute('data-analyze'))analyze();
@@ -1377,7 +1377,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       await publishShortBulk({...saved,stopReason:'CANCELLED',stopMessage:'User cancelled active batch'},state.epoch);
       refresh();
     }
-    else if(target.hasAttribute('data-cancel')){cancelEngine();state.secondPass=null;state.shortPreview=null;
+    else if(target.hasAttribute('data-cancel')){cancelEngine();state.secondPass=null;state.shortSelection=null;
       query(root,'[data-short-preview]').textContent='';state.epoch++;state.busy=false;state.batchRunning=false;refresh();
       state.batch=null;query(root,'[data-batch-confirm]').textContent='';
       query(root,'[data-progress]').textContent='CANCELLED · working revision '+state.revision+' retained.';
@@ -1437,10 +1437,10 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   };
   const changed=event=>{
     if(event.target.matches('[data-short-index]')){
-      const p=state.shortPreview,r=state.shortElements[Number(event.target.dataset.shortIndex)];
+      const p=state.shortSelection,r=state.shortElements[Number(event.target.dataset.shortIndex)];
       if(p&&r?.eligible&&p.epoch===state.epoch&&p.sha===state.source?.sourceSha256){
         if(event.target.checked)p.selected.add(r.id);else p.selected.delete(r.id);
-        renderShortPreview();
+        renderShortSelection();
       }
     }
     const d=state.secondPass;
@@ -1456,7 +1456,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     if(event.target.matches('[data-uxml-toggle]')){
       if(state.busy||state.batchRunning){event.target.checked=state.hubEnabled;return;}
       state.hubEnabled=event.target.checked;state.hubParity=null;clearEvidenceProof('EVIDENCE_ANALYSIS_REQUIRED');state.opsPreview=null;state.opsPreviewError=null;
-      state.shortPreview=null;
+      state.shortSelection=null;
       query(root,'[data-short-preview]').textContent='';
       opsPanel.reset();
       renderHubParity();renderActions();refresh();
