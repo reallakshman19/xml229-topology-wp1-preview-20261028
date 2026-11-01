@@ -223,7 +223,7 @@ test('injected Worker: short-element bulk publishes new-revision evidence, stale
     const {page,errors}=await openInjected(mode);
     try{
       await loadAndAnalyze(page,shortXML);
-      await page.locator('[data-preview-short]').click();
+      await page.locator('[data-select-short]').click();
       const shortApply=page.locator('[data-run-short-drop]');
       assert.equal(await shortApply.isDisabled(),true);
       assert.match(await shortApply.getAttribute('title'),/Select at least one eligible short element/);
@@ -298,7 +298,7 @@ test('revision-race negative: in-flight read-only recheck cannot enable evidence
  const {page,errors}=await openInjected('REVISION_RACE');
  try{
    await loadAndAnalyze(page,shortXML);
-   await page.locator('[data-preview-short]').click();
+   await page.locator('[data-select-short]').click();
    await page.locator('[data-select-gaskets]').click();
    assert.equal(await page.locator('[data-short-index]:checked').count(),1);
    await page.locator('[data-run-short-drop]').click();
@@ -343,17 +343,17 @@ test('UI clarity: hub-only short-drop explanation, review Next/Previous and reta
    assert.equal(await evidence.isDisabled(),true);
    assert.match(await evidence.getAttribute('title'),/EVIDENCE_ANALYSIS_REQUIRED/);
    assert.equal(await page.locator('[data-download-resolutions] + .action-unavailable-reason').count(),1);
-   const short=page.locator('[data-preview-short]');
+   const short=page.locator('[data-select-short]');
    assert.equal(await short.isDisabled(),true);
    assert.match(await short.getAttribute('title'),
      /Universal XML parity must be EQUAL before short-element changes/);
-   assert.match(await page.locator('[data-preview-short] + .action-unavailable-reason').textContent(),
+   assert.match(await page.locator('[data-select-short] + .action-unavailable-reason').textContent(),
      /Universal XML parity must be EQUAL before short-element changes/);
    await page.locator('[data-uxml-toggle]').uncheck();
    assert.equal(await short.isEnabled(),true);
    assert.equal(await short.getAttribute('title'),null);
    assert.equal(await short.getAttribute('data-reason-set'),null);
-   assert.equal(await page.locator('[data-preview-short] + .action-unavailable-reason').count(),0);
+   assert.equal(await page.locator('[data-select-short] + .action-unavailable-reason').count(),0);
    await page.locator('[data-audit-category]').selectOption('all');
    await page.locator('[data-audit-filter="manual"]').click();
    await page.locator('[data-rules-expand]').click();
@@ -489,7 +489,7 @@ async function prepareHubShort(page){
     ?.dataset?.parity==='EQUAL'&&document.querySelector('[data-status]')
     ?.textContent?.includes('Authoritative topology analysis complete.'),
     null,{timeout:120000});
-  const short=page.locator('[data-preview-short]');
+  const short=page.locator('[data-select-short]');
   assert.equal(await short.isEnabled(),true,'EQUAL hub must enable short drop preview');
   assert.equal(await short.getAttribute('title'),null);
   await short.click();
@@ -534,7 +534,7 @@ test('hub deleted-owner raw-only children: exact removed fields shown in read-on
       ?.dataset?.parity==='EQUAL'&&document.querySelector('[data-status]')
       ?.textContent?.includes('Authoritative topology analysis complete.'),
       null,{timeout:120000});
-    await page.locator('[data-preview-short]').click();
+    await page.locator('[data-select-short]').click();
     await page.locator('[data-select-gaskets]').click();
     assert.equal(await page.locator('[data-short-index]:checked').count(),1);
     await page.locator('[data-short-hub-preview]').click();
@@ -616,7 +616,7 @@ async function prepareTwoShort(page){
     ?.dataset?.parity==='EQUAL'&&document.querySelector('[data-status]')
     ?.textContent?.includes('Authoritative topology analysis complete.'),
     null,{timeout:120000});
-  await page.locator('[data-preview-short]').click();
+  await page.locator('[data-select-short]').click();
   const candidates=page.locator('[data-short-index]:not([disabled])');
   assert.ok(await candidates.count()>=2,
     'two independent selected synthetic owners must qualify');
@@ -741,7 +741,7 @@ async function prepareThreeShort(page){
     ?.dataset?.parity==='EQUAL'&&document.querySelector('[data-status]')
     ?.textContent?.includes('Authoritative topology analysis complete.'),
     null,{timeout:120000});
-  await page.locator('[data-preview-short]').click();
+  await page.locator('[data-select-short]').click();
   await page.locator('[data-select-gaskets]').click();
   assert.equal(await page.locator('[data-short-index]:checked').count(),3,
     'three independent synthetic owners must qualify before partial preview');
