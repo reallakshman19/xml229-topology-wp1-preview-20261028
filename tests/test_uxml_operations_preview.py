@@ -180,6 +180,54 @@ class UxmlPreviewReadOnlyContract(unittest.TestCase):
                 "display failure must not write corrected XML or mutation receipts",
             )
 
+    def test_named_global_builder_code_survives_worker_without_download(self):
+        """Actual embedded Worker must preserve a safe named exception code."""
+        from psi116_topology_resolver.uxml_operations_preview import OperationsPreviewError
+        root = os.environ.get("XCU_UXML_ROOT")
+        if not root or not (Path(root) / "tools" / "psi116-to-uxml.mjs").is_file():
+            self.skipTest("Pinned external XCU_UXML_ROOT required")
+        with tempfile.TemporaryDirectory(prefix="uxml-preview-named-error-") as temp:
+            scratch = Path(temp)
+            source = scratch / "synthetic.xml"
+            raw = verified_synthetic(pipe_flange(25)).encode("utf-8")
+            source.write_bytes(raw)
+            cli = subprocess.run(
+                ["node", str(Path(root) / "tools" / "psi116-to-uxml.mjs"),
+                 str(source)], cwd=root,
+                capture_output=True, text=True, timeout=45, check=False)
+            self.assertEqual(cli.returncode, 0, cli.stderr)
+            doc = json.loads(cli.stdout)
+            script = (REPO / "converters/xml-cii-2019-standalone/topology-integration.js"
+                      ).read_text(encoding="utf-8")
+            match = re.search(r"const TOPOLOGY_SNIPPET = `\n(.*?)\n`;", script, re.S)
+            self.assertIsNotNone(match)
+            snippet = match.group(1).replace("\\\\", "\\")
+            paths = {name: scratch / (name + ".json")
+                     for name in ("findings", "plan", "status")}
+            context = {
+                "job_topology_input_path": str(source),
+                "job_topology_uxml_json": json.dumps(doc),
+                "job_generate_topofix": False,
+                "job_topology_findings_path": str(paths["findings"]),
+                "job_topology_plan_path": str(paths["plan"]),
+                "job_topology_status_path": str(paths["status"]),
+                "job_connection_preview_json": "null",
+                "job_short_preview_json": "[]",
+            }
+            with patch("psi116_topology_resolver.uxml_operations_preview.build_operation_preview",
+                       side_effect=OperationsPreviewError(
+                           "UXML_PREVIEW_SYNTHETIC_BUILDER_REFUSED")):
+                exec(compile(snippet, "<real-topofix-preview-snippet>", "exec"),
+                     context)
+            status = json.loads(paths["status"].read_text())
+            self.assertEqual(status["hubParity"], {"status": "EQUAL", "differences": []})
+            self.assertEqual(status["opsPreview"]["error"],
+                "UXML_OPS_PREVIEW_BUILDER_FAILURE:UXML_PREVIEW_SYNTHETIC_BUILDER_REFUSED")
+            self.assertFalse(status["committed"])
+            self.assertEqual(source.read_bytes(), raw)
+            self.assertEqual(sorted(p.name for p in scratch.iterdir()),
+                             ["findings.json", "plan.json", "status.json", "synthetic.xml"])
+
     def test_preview_is_not_a_mutation_or_review_queue_api(self):
         import inspect
         import psi116_topology_resolver.uxml_operations_preview as module
