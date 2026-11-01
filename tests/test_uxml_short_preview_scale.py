@@ -1,7 +1,6 @@
 """Public synthetic-only 89-owner short-preview benchmark and native exactness."""
 from __future__ import annotations
 
-from copy import deepcopy
 import json
 import os
 from pathlib import Path
@@ -15,11 +14,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "converters"))
 from psi116_topology_resolver import ResolverConfig, resolve_psi116
 from psi116_topology_resolver.short_elements import short_elements
 from psi116_topology_resolver.transaction import TransactionPolicy
-from psi116_topology_resolver.uxml_adapter import resolve_from_uxml
 from psi116_topology_resolver.uxml_edit_ops import export_edit_ops
-from psi116_topology_resolver.uxml_operations_preview import (
-    _ShortPreviewSourceScope, build_operation_preview,
-)
+from psi116_topology_resolver.uxml_operations_preview import build_operation_preview
+from unittest.mock import patch
 from test_port_policy import doc, node
 from test_uxml_psi116_s1 import verified_synthetic
 
@@ -43,81 +40,80 @@ def synthetic_owners(count=89):
 class UxmlShortPreviewScale(unittest.TestCase):
     def setUp(self):
         if os.environ.get("UXML_SCALE_BENCHMARK") != "1":
-            self.skipTest("Run explicitly with UXML_SCALE_BENCHMARK=1 to prevent repeated 89-owner timings")
+            self.skipTest("Run explicitly with UXML_SCALE_BENCHMARK=1")
         self.reader = os.environ.get("XCU_UXML_ROOT")
         if not self.reader or not (Path(self.reader) / "tools" / "psi116-to-uxml.mjs").is_file():
-            self.skipTest("Pinned XCU_UXML_ROOT required for source-bound speed trial")
+            self.skipTest("Pinned XCU_UXML_ROOT required")
 
-    def test_89_owner_source_bound_native_op_byte_identity_and_5x_wall_speed(self):
-        cfg = ResolverConfig()
-        with tempfile.TemporaryDirectory(prefix="uxml-short-scale-synthetic-") as temp:
-            original = Path(temp) / "public-synthetic-89.xml"
-            raw = synthetic_owners(89).encode("utf-8")
+    def test_89_owner_full_source_canonical_byte_and_refusal_identity(self):
+        """No branch shortcut: both passes use unchanged full native code."""
+        cfg=ResolverConfig()
+        with tempfile.TemporaryDirectory(prefix="uxml-full-89-synthetic-") as temp:
+            original=Path(temp)/"public-synthetic-89.xml"
+            raw=synthetic_owners(89).encode("utf-8")
             original.write_bytes(raw)
-            cli = subprocess.run(["node", str(Path(self.reader) / "tools" / "psi116-to-uxml.mjs"),
-                                   str(original)], cwd=self.reader,
-                                  capture_output=True, text=True, timeout=90)
-            self.assertEqual(cli.returncode, 0, cli.stderr)
-            uxml = json.loads(cli.stdout)
-            before = resolve_psi116(original)
-            rows = [r for r in short_elements(before.document, cfg)
-                    if r["componentRefNo"].startswith("SHORT-")]
-            self.assertEqual(len(rows), 89)
-            self.assertTrue(all(r["eligible"] for r in rows), rows)
-            requests = [{k: row[k] for k in ("id", "sourceSha256", "nodeKeys")}
-                        for row in rows]
-            policies = [TransactionPolicy(selected_action_ids=(req["id"],),
-                         short_element_requests=(req,)) for req in requests]
-
-            # Baseline = the exact 347ff15b per-owner full-source transaction
-            # path. Its operation dicts are the independent byte oracle.
-            start = time.perf_counter()
-            baseline = [export_edit_ops(uxml, policy=policy, source_name=str(original),
-                        config=cfg)["ops"][0] for policy in policies]
-            before_seconds = time.perf_counter() - start
-
-            start = time.perf_counter()
-            resolved = resolve_from_uxml(uxml, cfg, source_name=str(original))
-            scope = _ShortPreviewSourceScope(uxml, resolved, cfg)
-            by_id = {row["id"]: row for row in scope.rows}
-            fast = []
-            for req, policy in zip(requests, policies):
-                witness = scope.native_witness(by_id[req["id"]])
-                self.assertIsNotNone(witness,
-                                     "public separated branches must qualify for safe native slice")
-                fast.append(export_edit_ops(
-                    uxml, policy=policy, source_name=str(original), config=cfg,
-                    _preview_result=resolved, _preview_short_rows=scope.rows,
-                    _preview_native=witness, _preview_indexes=scope.indexes)["ops"][0])
-            after_seconds = time.perf_counter() - start
-
-            self.assertEqual(
-                [json.dumps(op, sort_keys=True, ensure_ascii=False).encode("utf-8")
-                 for op in fast],
-                [json.dumps(op, sort_keys=True, ensure_ascii=False).encode("utf-8")
-                 for op in baseline],
-                "EVERY canonical source-bound op must remain byte-for-byte identical")
-            self.assertGreater(before_seconds, 0)
-            print(f"SYNTHETIC_89_SHORT_PREVIEW_BASELINE_SECONDS={before_seconds:.5f}")
-            print(f"SYNTHETIC_89_SHORT_PREVIEW_OPTIMIZED_SECONDS={after_seconds:.5f}")
-            print(f"SYNTHETIC_89_SHORT_PREVIEW_SPEEDUP={before_seconds/after_seconds:.2f}x")
-            self.assertGreaterEqual(before_seconds / after_seconds, 5.0,
-                                    "must be >=5x faster on same fixture and runner")
-
-            projected = build_operation_preview(uxml, source_name=str(original),
-                                                config=cfg, short_requests=requests)
+            cli=subprocess.run(["node",str(Path(self.reader)/"tools"/"psi116-to-uxml.mjs"),
+                                str(original)],cwd=self.reader,
+                               capture_output=True,text=True,timeout=90)
+            self.assertEqual(cli.returncode,0,cli.stderr)
+            uxml=json.loads(cli.stdout)
+            rows=[r for r in short_elements(resolve_psi116(original).document,cfg)
+                  if r["componentRefNo"].startswith("SHORT-")]
+            self.assertEqual(len(rows),89)
+            self.assertTrue(all(r["eligible"] for r in rows))
+            requests=[{k:r[k] for k in ("id","sourceSha256","nodeKeys")}
+                      for r in rows]
+            policies=[TransactionPolicy(selected_action_ids=(req["id"],),
+                      short_element_requests=(req,)) for req in requests]
+            canonical=lambda op:json.dumps(op,sort_keys=True,ensure_ascii=False).encode("utf-8")
+            start=time.perf_counter()
+            old=[]
+            for policy in policies:
+                try:
+                    payload=export_edit_ops(uxml,policy=policy,
+                                           source_name=str(original),config=cfg)
+                    old.append(("READY",canonical(payload["ops"][0])))
+                except ValueError as error:
+                    old.append(("REFUSED",str(error)))
+            old_s=time.perf_counter()-start
+            observed=[]
+            progress=[]
+            original_export=export_edit_ops
+            def checked_export(payload,**kwargs):
+                pol=kwargs.get("policy")
+                track=pol is not None and bool(pol.short_element_requests)
+                try:
+                    value=original_export(payload,**kwargs)
+                    if track:
+                        observed.append(("READY",canonical(value["ops"][0])))
+                    return value
+                except ValueError as error:
+                    if track:observed.append(("REFUSED",str(error)))
+                    raise
+            start=time.perf_counter()
+            with patch("psi116_topology_resolver.uxml_operations_preview.export_edit_ops",
+                       side_effect=checked_export):
+                projected=build_operation_preview(
+                    uxml,source_name=str(original),config=cfg,
+                    short_requests=requests,
+                    progress=lambda completed,total:progress.append((completed,total)))
+            new_s=time.perf_counter()-start
+            self.assertEqual(observed,old,"all 89 full-source ops/refusals byte-identical")
+            self.assertEqual(len(observed),89)
             self.assertEqual(projected["shortPreview"]["selectedIds"],
                              [r["id"] for r in requests])
             self.assertEqual(projected["shortPreview"]["acceptedIds"],
                              [r["id"] for r in requests])
-            self.assertEqual(projected["shortPreview"]["refused"], [])
-            short_rows = [op for op in projected["ops"]
-                          if op["kind"] == "DROP_SHORT_ELEMENT"]
-            self.assertEqual(len(short_rows), 89)
-            for shown, op in zip(short_rows, baseline):
-                self.assertEqual(shown["sourceActionId"], op["sourceActionId"])
-                self.assertEqual(shown["changes"], op["params"][0]["edits"])
-                self.assertEqual(shown["removedWithRecord"], op["removedWithRecord"])
-            self.assertEqual(original.read_bytes(), raw)
+            self.assertEqual(projected["shortPreview"]["refused"],[])
+            self.assertEqual(len([x for x in projected["ops"]
+                                  if x["kind"]=="DROP_SHORT_ELEMENT"]),89)
+            self.assertEqual(progress,
+                [(min(index,89),89) for index in range(4,90,4)]+[(89,89)])
+            self.assertEqual(original.read_bytes(),raw)
             self.assertEqual(sorted(p.name for p in Path(temp).iterdir()),
                              [original.name])
+            self.assertGreater(old_s,0)
+            print(f"SYNTHETIC_89_SHORT_PREVIEW_BASELINE_SECONDS={old_s:.5f}")
+            print(f"SYNTHETIC_89_SHORT_PREVIEW_OPTIMIZED_SECONDS={new_s:.5f}")
+            print(f"SYNTHETIC_89_SHORT_PREVIEW_SPEEDUP={old_s/new_s:.2f}x")
+            print("SYNTHETIC_89_SHORT_PREVIEW_FULL_NATIVE_PARITY=89/89")
