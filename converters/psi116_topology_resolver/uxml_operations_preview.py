@@ -1,9 +1,9 @@
-"""UXML-PREVIEW: presentation-only projection of the *published* S2 edit ops.
+"""UXML-PREVIEW: read-only projection of pinned S2 edit ops.
 
-No new transaction, mutation or approval route. Uses export_edit_ops as the
-exclusive list of proposed Auto-eligible operations, and reads original source
-record semantics to describe the exact fields that S2's existing transaction
-would edit. Unknown or unrepresentable operations fail closed.
+Auto-eligible proposals use the existing read-only field projection. A
+separately selected short-owner preview derives its exact field changes from
+a copy-only native transaction; it never writes corrected XML to disk or
+authorizes Apply. Unknown or unrepresentable operations fail closed.
 """
 from __future__ import annotations
 
