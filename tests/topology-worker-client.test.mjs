@@ -65,3 +65,46 @@ test('idle worker recycles after eight completed jobs to bound Pyodide scratch g
  await next;
  c.dispose();
 });
+
+
+test('bulk lease keeps one warm Pyodide Worker for twelve serial independently returned jobs',async()=>{
+ const c=createTopologyWorkerClient({WorkerCtor:FakeWorker,jobTimeoutMs:1000});
+ c.beginBulkSession();
+ let first;
+ for(let i=0;i<12;i++){
+   const job={...validJob,options:{...validJob.options,topologyBulkSession:true}};
+   const p=c.run(job),w=FakeWorker.instances.at(-1);
+   first ||=w;
+   assert.equal(w,first,'bulk lease must prevent eight-job cold-start recycle');
+   w.emit('message',{type:'RESULT',id:w.sent.at(-1).id,
+     result:{ok:true,revision:i+1,hubParity:'EQUAL'}});
+   const returned=await p;
+   assert.equal(returned.revision,i+1);
+   assert.equal(returned.hubParity,'EQUAL');
+   assert.equal(w.terminated,false,'warm Worker remains live during bulk');
+ }
+ c.endBulkSession();
+ const post=c.run(validJob),w=FakeWorker.instances.at(-1);
+ assert.equal(w,first,'warm Worker reused for final read-only evidence refresh');
+ w.emit('message',{type:'RESULT',id:w.sent.at(-1).id,result:{ok:true,rechecked:true}});
+ assert.equal((await post).rechecked,true);
+ assert.equal(first.terminated,true,'ordinary idle recycle resumes after release');
+ c.dispose();
+});
+
+test('bulk cancellation terminates Worker and cannot publish a stale revision',async()=>{
+ const c=createTopologyWorkerClient({WorkerCtor:FakeWorker,jobTimeoutMs:1000});
+ c.beginBulkSession();
+ const p=c.run({...validJob,options:{...validJob.options,topologyBulkSession:true}});
+ const w=FakeWorker.instances.at(-1),id=w.sent.at(-1).id;
+ c.cancel();
+ assert.equal(w.terminated,true);
+ await assert.rejects(p,/CANCELLED/);
+ w.emit('message',{type:'RESULT',id,result:{ok:true,revision:'FORGED_STALE'}});
+ c.endBulkSession();
+ const post=c.run(validJob),fresh=FakeWorker.instances.at(-1);
+ assert.notEqual(fresh,w);
+ fresh.emit('message',{type:'RESULT',id:fresh.sent.at(-1).id,result:{ok:true,revision:0}});
+ assert.equal((await post).revision,0);
+ c.dispose();
+});
