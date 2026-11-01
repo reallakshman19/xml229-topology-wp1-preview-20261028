@@ -502,7 +502,9 @@ test('hub deleted-owner raw-only children: canonical removedWithRecord disclosed
     assert.equal(await page.locator('[data-run-short-drop]').isEnabled(),true);
     await page.locator('[data-run-short-drop]').click();
     await page.waitForFunction(()=>
-      document.querySelector('[data-progress]')?.textContent?.includes('BULK COMPLETE'),
+      document.querySelector('[data-progress]')?.textContent?.includes('BULK COMPLETE')&&
+      document.querySelector('main')?.getAttribute('aria-busy')==='false'&&
+      document.querySelector('[data-download-working]')?.disabled===false,
       null,{timeout:120000});
     const disclosure=page.locator('[data-short-bulk-operations]');
     assert.equal(await disclosure.count(),1);
