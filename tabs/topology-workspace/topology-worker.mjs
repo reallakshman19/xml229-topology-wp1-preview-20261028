@@ -51,7 +51,15 @@ self.onmessage=async ({data})=>{
       const mapStarted=speed?performance.now():0;
       const uxmlDocument=reader.read(job.sourceText,sha);
       if(speed)phases.hubUxmlReadMs=performance.now()-mapStarted;
-      payload={...job,uxmlDocument};
+      payload={...job,uxmlDocument,
+        // Advisory only: synchronous Python computes each native operation,
+        // then posts progress in groups of four. Never send partial ops.
+        topologyPreviewProgress:(completed,total)=>{
+          const expected=job.options?.topologyShortPreviewRequests?.length||0;
+          if(expected>0&&Number.isSafeInteger(completed)&&
+             completed>=1&&completed<=expected&&total===expected)
+            self.postMessage({type:'PROGRESS',id,completed,total});
+        }};
     }catch(error){
       // A failed hub reader cannot authorize a mutating job, even when called
       // directly outside the UI's disabled-button guard.
