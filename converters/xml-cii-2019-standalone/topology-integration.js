@@ -121,6 +121,7 @@ status = {
 }
 
 if job_generate_topofix:
+    applied_edit_ops = None
     direct_transaction = apply_topofix_transaction(
         result,
         policy=TransactionPolicy(selected_action_ids=tuple(job_topology_action_ids),
@@ -157,6 +158,9 @@ if job_generate_topofix:
                 hub_parity = {"status": "DIFFERENT", "differences": differences}
             else:
                 transaction = patched
+                # Canonical operation disclosure ONLY after both independent
+                # transactions and their corrected bytes agree. No new writer.
+                applied_edit_ops = ops["ops"]
         except Exception as exc:
             hub_parity = {"status": "DIFFERENT",
                           "differences": ["/patchBack: "+type(exc).__name__+": "+str(exc)]}
@@ -206,6 +210,7 @@ if job_generate_topofix:
 
 _speed_marks['pyValidationRecheckMs'] = (_speed_time.perf_counter() - _speed_started) * 1000 - sum(_speed_marks.values())
 status['bulkTimings'] = _speed_marks if globals().get('job_bulk_speed_profile', False) else None
+status["appliedEditOps"] = applied_edit_ops if (job_generate_topofix and status["committed"] and hub_parity["status"] == "EQUAL") else None
 status["opsPreview"] = ops_preview if hub_parity["status"] == "EQUAL" else None
 status["hubParity"] = hub_parity
 Path(job_topology_status_path).write_text(
@@ -351,6 +356,8 @@ export async function runPsi116TopologyStage(pyodide, job, inputPath, jobDir, st
     ...status.bulkTimings,
   }:null;
   const topologyOperationsPreview = status.opsPreview || null;
+  const topologyUxmlAppliedEditOps = topoFixCommitted && status.hubParity?.status==='EQUAL'?
+    (status.appliedEditOps || null):null;
   const topologyFindingsText = readOptional(pyodide, paths.findings);
   const topologyFixPlanText = readOptional(pyodide, paths.plan);
   const topoFixTransactionText = generateTopoFix ? readOptional(pyodide, paths.transaction) : '';
@@ -411,6 +418,7 @@ export async function runPsi116TopologyStage(pyodide, job, inputPath, jobDir, st
     topologyUxmlParity,
     topologyBulkTiming,
     topologyOperationsPreview,
+    topologyUxmlAppliedEditOps,
     ciiInputSource: useTopoFixForCii ? 'topofix' : 'original',
     topologySummary: {
       requested: true,
