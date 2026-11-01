@@ -286,13 +286,32 @@ test('UI clarity: hub-only short-drop explanation, review Next/Previous and reta
  const {page,errors}=await openInjected('PASS');
  try{
    await loadAndAnalyze(page,manualXML);
+   const directDownload=page.locator('[data-download-working]');
+   assert.equal(await directDownload.isDisabled(),true);
+   assert.match(await directDownload.getAttribute('title'),/No validated corrected revision exists/);
+   assert.equal(await page.locator('[data-download-working] + .action-unavailable-reason').count(),1);
    await page.locator('[data-uxml-toggle]').check();
+   const all=page.locator('[data-auto-fix-all]');
+   assert.equal(await all.isDisabled(),true);
+   assert.match(await all.getAttribute('title'),/Universal XML parity must be EQUAL/);
+   assert.equal(await page.locator('[data-auto-fix-all] + .action-unavailable-reason').count(),1);
+   const queueApply=page.locator('[data-queue-apply]');
+   assert.equal(await queueApply.isDisabled(),true);
+   assert.match(await queueApply.getAttribute('title'),/Runs on the direct route only/);
+   const evidence=page.locator('[data-download-resolutions]');
+   assert.equal(await evidence.isDisabled(),true);
+   assert.match(await evidence.getAttribute('title'),/EVIDENCE_ANALYSIS_REQUIRED/);
+   assert.equal(await page.locator('[data-download-resolutions] + .action-unavailable-reason').count(),1);
    const short=page.locator('[data-preview-short]');
    assert.equal(await short.isDisabled(),true);
    assert.match(await short.getAttribute('title'),/Runs on the direct route only/);
    assert.match(await page.locator('[data-preview-short] + .action-unavailable-reason').textContent(),
      /Untick Universal XML route to use it/);
    await page.locator('[data-uxml-toggle]').uncheck();
+   assert.equal(await short.isEnabled(),true);
+   assert.equal(await short.getAttribute('title'),null);
+   assert.equal(await short.getAttribute('data-reason-set'),null);
+   assert.equal(await page.locator('[data-preview-short] + .action-unavailable-reason').count(),0);
    await page.locator('[data-audit-category]').selectOption('all');
    await page.locator('[data-audit-filter="manual"]').click();
    await page.locator('[data-rules-expand]').click();
@@ -327,6 +346,16 @@ test('UI clarity: direct synthetic Auto-fix surfaces revision, native checks and
      '<Position>125 0 0</Position>').replace('<Position>261 0 0</Position>',
      '<Position>211 0 0</Position>');
    await loadAndAnalyze(page,autoXML);
+   const autofixAll=page.locator('[data-auto-fix-all]');
+   assert.equal(await autofixAll.isEnabled(),true);
+   await page.locator('[data-uxml-toggle]').check();
+   assert.equal(await autofixAll.isDisabled(),true);
+   assert.match(await autofixAll.getAttribute('title'),/Universal XML parity must be EQUAL/);
+   await page.locator('[data-uxml-toggle]').uncheck();
+   assert.equal(await autofixAll.isEnabled(),true);
+   assert.equal(await autofixAll.getAttribute('title'),null);
+   assert.equal(await autofixAll.getAttribute('data-reason-set'),null);
+   assert.equal(await page.locator('[data-auto-fix-all] + .action-unavailable-reason').count(),0);
    const auto=page.locator('[data-auto-fix]').first();
    assert.ok(await auto.count()>0,'synthetic near-miss must offer existing Auto-fix');
    await auto.locator('xpath=ancestor::details[contains(@class,"audit-rule")]')
@@ -373,6 +402,34 @@ test('UI clarity: direct synthetic Auto-fix surfaces revision, native checks and
    assert.deepEqual(errors,[]);
  }finally{await page.close();}
 });
+test('UI clarity: disabled Cancel reason disappears on actual analysis start',
+ {timeout:180000},async()=>{
+ const {page,errors}=await openInjected('DELAY_ANALYSIS');
+ try{
+   await page.locator('[data-file]').setInputFiles({
+     name:'synthetic-delayed-analysis.xml',mimeType:'application/xml',
+     buffer:Buffer.from(manualXML,'utf8')
+   });
+   await page.waitForFunction(()=>document.querySelector('[data-occ-summary]')
+     ?.textContent?.includes('4 of 4'));
+   const cancel=page.locator('[data-cancel]');
+   assert.equal(await cancel.isDisabled(),true);
+   assert.equal(await cancel.getAttribute('title'),'No active operation to cancel.');
+   await page.locator('[data-analyze]').click();
+   await page.waitForFunction(()=>window.__evidenceFixture?.analysisHeld===true);
+   assert.equal(await cancel.isEnabled(),true);
+   assert.equal(await cancel.getAttribute('title'),null);
+   assert.equal(await cancel.getAttribute('data-reason-set'),null);
+   assert.equal(await page.locator('[data-cancel] + .action-unavailable-reason').count(),0);
+   await page.evaluate(()=>window.__evidenceFixture.releaseAnalysis());
+   await page.waitForFunction(()=>document.querySelector('[data-status]')
+     ?.textContent?.includes('Authoritative topology analysis complete.'),null,{timeout:120000});
+   assert.equal(await cancel.isDisabled(),true);
+   assert.equal(await cancel.getAttribute('title'),'No active operation to cancel.');
+   assert.deepEqual(errors,[]);
+ }finally{await page.close();}
+});
+
 test.after(async()=>{
  await browser.close();
  await new Promise(done=>server.close(done));
