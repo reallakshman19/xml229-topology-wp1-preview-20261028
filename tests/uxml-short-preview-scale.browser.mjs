@@ -59,7 +59,8 @@ test('one real Worker preview session: ETA, Cancel then restarted Worker re-prev
         import('/tabs/topology-workspace/workspace-app.mjs'),
         import('/tabs/topology-workspace/topology-worker-client.mjs')]);
       const fixture={previewJobs:[],progress:[],workerCount:0,
-        holdSecond:true,holding:false,releaseLate:null,lateDelivered:false};
+        holdSecond:true,holding:false,releaseLate:null,lateDelivered:false,
+        forceFailedNextPreview:false};
       const NativeWorker=window.Worker;
       class CountedWorker extends NativeWorker{
         constructor(...args){super(...args);fixture.workerCount++;}
@@ -68,6 +69,11 @@ test('one real Worker preview session: ETA, Cancel then restarted Worker re-prev
       const runEngine=async (job,{onProgress}={})=>{
         const part=job.options?.topologyShortPreviewRequests||[];
         if(part.length)fixture.previewJobs.push(part.length);
+        if(part.length&&fixture.forceFailedNextPreview){
+          fixture.forceFailedNextPreview=false;
+          // A failed job may contain an untrustworthy EQUAL receipt.
+          return {ok:false,topologyUxmlParity:{status:'EQUAL',differences:[]}};
+        }
         const result=await client.run(job,{onProgress:(completed,total)=>{
           onProgress?.(completed,total);
           fixture.progress.push({completed,total,
@@ -161,6 +167,20 @@ test('one real Worker preview session: ETA, Cancel then restarted Worker re-prev
     assert.equal(final.revision,0,'read-only preview never advances revision');
     assert.equal(await page.locator('[data-run-short-drop]').isEnabled(),true);
     assert.equal(await page.locator('[data-download-working]').isDisabled(),true);
+
+    // A synthetic failed result carrying stale EQUAL MUST revoke the entire
+    // hub's release permission, not merely reject one preview.
+    await page.locator('[data-short-index="0"]').uncheck();
+    await page.locator('[data-short-index="0"]').check();
+    await page.evaluate(()=>{window.__scaleFixture.forceFailedNextPreview=true;});
+    await page.locator('[data-short-hub-preview]').click();
+    await page.waitForFunction(()=>
+      window.__scaleFixture.workspace.getState().hubParity==='DIFFERENT',
+      null,{timeout:15000});
+    assert.equal(await page.locator('[data-run-short-drop]').isDisabled(),true);
+    assert.equal(await page.locator('[data-download-working]').isDisabled(),true);
+    assert.match(await page.locator('[data-short-hub-status]').textContent(),
+      /UXML_SHORT_PREVIEW_WORKER_FAILED/);
     assert.deepEqual(errors,[]);
     console.log('SYNTHETIC_SINGLE_PREVIEW_WORKER_RESTART_PASS '+JSON.stringify({
       selected:5,jobSizes:final.previewJobs,progressEvents:final.progress.length,
