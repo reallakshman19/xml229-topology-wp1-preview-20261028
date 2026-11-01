@@ -755,13 +755,13 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       query(root,'[data-short-preview]').textContent='';
       for(const [i,pass] of applied.entries()){
         state.history.push({sourceSha256:pass.sourceSha256,fixedSha256:pass.fixedSha256,
-          actionIds:[pass.id],operations:pass.transaction.operations,validation:pass.validation.checks,
+          actionIds:[pass.id],operations:pass.transaction.operations,
+          canonicalEditOps:pass.canonicalEditOps,validation:pass.validation.checks,
           reviews:i===0?reviews:{},resolvedConnections:i===applied.length-1?state.resolutions:[]});
       }
       state.revision+=applied.length;
       state.applied+=applied.length;
       state.hubRevision=state.hubEnabled?state.revision:null;
-      state.shortHubPreview=null;state.shortHubPreviewError=null;
       clearEvidenceProof('EVIDENCE_RECHECK_PENDING');
       state.fix={sourceSha256:state.source.sourceSha256,receiptKey:'drop',
         hubRoute:state.hubEnabled,
@@ -801,7 +801,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       // Fail closed BEFORE a status refresh can expose a previous EQUAL
       // checkpoint, including while an asynchronous evidence recheck runs.
       state.hubParity={status:'DIFFERENT',differences:[outcome.stopMessage]};
-      state.hubRevision=null;state.opsPreview=null;state.shortHubPreview=null;
+      state.hubRevision=null;state.opsPreview=null;
       clearEvidenceProof('EVIDENCE_RECHECK_PARITY_NOT_EQUAL');
       renderHubParity();
     }
@@ -816,34 +816,38 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       await refreshPublishedEvidence(generation,state.revision,state.source);
   }
   async function dropShortElements(){
-    if(state.hubEnabled&&(!shortHubPreviewCurrent()||
-       state.hubParity?.status!=='EQUAL'||!analysisProofCurrent())){
-      setFixStatus('UXML_SHORT_PREVIEW_OR_PARITY_REQUIRED: preview selected edits and verify EQUAL before Apply.','rejected');
+    if(state.hubEnabled&&
+       (state.hubParity?.status!=='EQUAL'||!analysisProofCurrent())){
+      setFixStatus('UXML_SHORT_PARITY_OR_EVIDENCE_REQUIRED: Analyze the current source and verify EQUAL before Apply.','rejected');
       return;
     }
     const p=state.shortPreview;
     if(state.busy||state.batchRunning||!p||p.epoch!==state.epoch||
        p.sha!==state.source?.sourceSha256)return;
-    const eligibleIds=new Set(state.shortElements.filter(r=>r.eligible).map(r=>r.id));
-    const ids=[...p.selected].filter(id=>eligibleIds.has(id));
+    // Do not silently drop a source-bound selection: per-owner Apply reports
+    // each ineligible/refused item with its exact current-revision reason.
+    const ids=[...p.selected];
     if(!ids.length){setFixStatus('Select at least one source-qualified element.','rejected');return;}
     const generation=state.epoch,source={...state.source};
-    state.batchRunning=true;state.shortBulk=null;refresh();
+    state.batchRunning=true;state.activeJob='short-bulk';
+    state.shortBulk=null;refresh();
     const startedAt=Date.now();
-    let lastBulkStatus='STARTING',lastCompleted=0,lastApplied=0,lastSkipped=0;
+    let lastCompleted=0,lastApplied=0,lastSkipped=0,bulkFinished=false;
     const paintBulkProgress=()=>{
-      if(generation!==state.epoch||!state.batchRunning)return;
-      const elapsed=Math.floor((Date.now()-startedAt)/1000);
+      if(generation!==state.epoch||!state.batchRunning||bulkFinished)return;
+      const elapsed=Math.max(0,(Date.now()-startedAt)/1000);
+      const remaining=lastCompleted>0&&lastCompleted<ids.length?
+        Math.ceil(elapsed*(ids.length-lastCompleted)/lastCompleted):null;
+      const eta=remaining===null?'estimating after first item':
+        '~ETA '+(remaining>=60?Math.ceil(remaining/60)+' min':
+          Math.max(1,remaining)+' sec')+' (approximate)';
       query(root,'[data-progress]').textContent=
-        'BULK '+lastBulkStatus+' · '+lastCompleted+'/'+ids.length+
-        ' selected checked · '+lastApplied+' validated · '+lastSkipped+' skipped · '+
-        elapsed+' s elapsed · audit/canvas show PRE-BATCH REVISION '+state.revision+
-        ' (frozen snapshot until final publication). Cancel remains available.';
+        'Applying '+lastCompleted+' of '+ids.length+' · '+
+        lastApplied+' validated · '+lastSkipped+' skipped · '+eta+
+        ' · Cancel available; only validated working revisions retained.';
     };
     const heartbeat=setInterval(paintBulkProgress,1000);
-    query(root,'[data-progress]').textContent=
-      'BULK STARTED · 0/'+ids.length+' selected checked. Audit counts and canvas are PRE-BATCH SNAPSHOT at revision '+
-      state.revision+'. Python validates each owner headlessly; canvas refreshes after the batch.';
+    paintBulkProgress();
     try{
       const outcome=await runShortBulk({
         source,shortElements:state.shortElements,selectedIds:ids,runEngine,
@@ -852,23 +856,26 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
         onCheckpoint:checkpoint=>{if(generation===state.epoch)state.shortBulk=checkpoint;},
         onProgress:step=>{
           if(generation!==state.epoch)return;
-          lastBulkStatus=step.status;
           lastCompleted=step.completed;lastApplied=step.applied;lastSkipped=step.skipped;
           paintBulkProgress();
         },
       });
       if(generation!==state.epoch)return;
+      bulkFinished=true;clearInterval(heartbeat);
       state.shortBulk=null;
       await publishShortBulk(outcome,generation);
     }catch(error){
       if(generation!==state.epoch)return;
       const checkpoint=state.shortBulk||{originSha256:source.sourceSha256,latest:null,
         applied:[],skipped:[],requested:ids,completed:0};
+      bulkFinished=true;clearInterval(heartbeat);
       state.shortBulk=null;
       await publishShortBulk({...checkpoint,stopReason:'ERROR',stopMessage:error?.message||String(error)},generation);
     }finally{
       clearInterval(heartbeat);
-      if(generation===state.epoch){state.batchRunning=false;state.shortBulk=null;refresh();}
+      if(generation===state.epoch){
+        state.batchRunning=false;state.activeJob=null;state.shortBulk=null;refresh();
+      }
     }
   }
 
