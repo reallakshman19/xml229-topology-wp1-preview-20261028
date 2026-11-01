@@ -190,3 +190,24 @@ test('only source-bound UxmlPatchError veto is a skippable refusal; parity drift
       '/patchBack: UxmlPatchError: UXML_CLOS_WRITE_HELD:B0:N1','/findings: DIFFERENT']}},
   ])assert.equal(namedHubOwnerRefusal(mutant),null);
 });
+
+test('forged and ineligible selections are separately skipped without a Worker or write',async()=>{
+  let calls=0;
+  const r=await runShortBulk({
+    source:{sourceSha256:'h0',sourceText:'xml|h0',name:'synthetic.xml'},
+    selectedIds:['MISSING:OWNER','CLOSED:OWNER'],
+    shortElements:[{id:'CLOSED:OWNER',eligible:false,
+      sourceSha256:'h0',reason:'CLOS_WRITE_HELD',nodeKeys:['SYNTHETIC_KEY']}],
+    hubEnabled:true,
+    runEngine:async()=>{calls++;throw Error('FORGED_ITEM_REACHED_ENGINE');},
+    hash:async()=>{throw Error('FORGED_ITEM_WRITTEN');},
+  });
+  assert.equal(r.stopReason,'COMPLETE');
+  assert.equal(r.applied.length,0);
+  assert.equal(r.latest,null);
+  assert.equal(calls,0);
+  assert.deepEqual(r.skipped.map(x=>({id:x.id,reason:x.reason})),[
+    {id:'MISSING:OWNER',reason:'NOT_ELIGIBLE_ON_CURRENT_REVISION'},
+    {id:'CLOSED:OWNER',reason:'CLOS_WRITE_HELD'}]);
+  assert.equal(r.completed,2);
+});
