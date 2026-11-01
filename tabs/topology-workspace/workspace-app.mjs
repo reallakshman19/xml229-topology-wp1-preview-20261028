@@ -6,8 +6,6 @@ import {buildAudit,renderAuditHTML,renderAuditSummary,filterCounts} from './audi
 import {eligibleActions,previewBatchPlan,explicitlyRejectedActionIds} from './batch-plan.mjs';
 import {runValidatedPasses} from './batch-runner.mjs';
 import {assertOperationsPreview} from './uxml-operations-view.mjs';
-import {assessShortPreview} from './short-preview-model.mjs';
-import {mergeShortHubPreviewChunks,SHORT_HUB_PREVIEW_PROGRESS_INTERVAL} from './short-preview-chunks.mjs';
 import {createOperationsPreviewPanel} from './uxml-operations-panel.mjs';
 import {runShortBulk} from './short-bulk.mjs';
 import {secondPassHTML} from './second-pass.mjs';
@@ -52,8 +50,8 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   runEngine ||= ownedWorker.run;
   cancelEngine ||= ownedWorker?()=>ownedWorker.cancel():()=>{};
   const state={epoch:0,source:null,original:null,revision:0,applied:0,history:[],resolutions:[],shortElements:[],shortPreview:null,scene:null,plan:null,findings:[],result:null,
-    selected:new Set(),search:'',filter:'all',category:'all',hubEnabled:false,hubParity:null,hubRevision:null,analysisProof:null,evidenceProofReason:'EVIDENCE_ANALYSIS_REQUIRED',opsPreview:null,opsPreviewError:null,shortHubPreview:null,shortHubPreviewError:null,
-     shortHubReport:null,shortHubProgress:null,activeJob:null,previewToken:0,activePreviewToken:null,manualPorts:[],secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false,shortBulk:null,manualQueue:[],manualQueueRunning:false,manualQueueCheckpoint:null,manualQueueStatus:''};
+    selected:new Set(),search:'',filter:'all',category:'all',hubEnabled:false,hubParity:null,hubRevision:null,analysisProof:null,evidenceProofReason:'EVIDENCE_ANALYSIS_REQUIRED',opsPreview:null,opsPreviewError:null,
+     activeJob:null,manualPorts:[],secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false,shortBulk:null,manualQueue:[],manualQueueRunning:false,manualQueueCheckpoint:null,manualQueueStatus:''};
   // The queue lives alongside Second Pass, without changing the engineering audit.
   const queuePanel=document.createElement('section');
   queuePanel.dataset.manualQueue='';
@@ -683,137 +681,6 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     }
   }
   function autoFix(actionId){return runFix([actionId],'single');}
-
-  function shortSelectionKey(){
-    return JSON.stringify([...(state.shortPreview?.selected||[])].sort());
-  }
-  function shortHubPreviewCurrent(){
-    const p=state.shortPreview,h=state.shortHubPreview;
-    return !!(p&&h&&state.hubEnabled&&state.hubParity?.status==='EQUAL'&&
-      h.epoch===state.epoch&&h.revision===state.revision&&
-      h.sha===state.source?.sourceSha256&&p.sha===h.sha&&
-      h.ids===shortSelectionKey()&&p.selected.size>0&&
-      h.acceptedIds===h.ids&&!state.shortHubReport?.refusedCount);
-  }
-  function invalidateShortHubPreview(){
-    state.shortHubPreview=null;state.shortHubPreviewError=null;
-    state.shortHubReport=null;
-    if(state.hubEnabled){
-      state.opsPreview=null;
-      state.opsPreviewError='SHORT_SELECTION_CHANGED_REPREVIEW_REQUIRED';
-      opsPanel.render();
-    }
-  }
-  async function previewSelectedUxmlShortOps(){
-    const p=state.shortPreview,source=state.source;
-    if(!state.hubEnabled||!p||!source||state.busy||state.batchRunning||
-       !state.plan||state.hubParity?.status!=='EQUAL'||!analysisProofCurrent()||
-       p.sha!==source.sourceSha256||p.epoch!==state.epoch)return;
-    const ids=[...p.selected].sort(),idKey=shortSelectionKey();
-    const requests=ids.map(id=>{
-      const row=state.shortElements.find(item=>item.id===id);
-      return row?.eligible&&row.sourceSha256===source.sourceSha256
-        ?{id:row.id,sourceSha256:row.sourceSha256,nodeKeys:[...row.nodeKeys]}:null;
-    });
-    if(!requests.length||requests.some(item=>!item)){
-      state.shortHubPreviewError='SHORT_SELECTION_NOT_QUALIFIED_ON_CURRENT_SOURCE';
-      renderShortPreview();return;
-    }
-    const generation=state.epoch,revision=state.revision;
-    const previewToken=++state.previewToken,started=performance.now();
-    const current=()=>previewToken===state.previewToken&&
-      generation===state.epoch&&state.source===source&&
-      revision===state.revision&&state.hubEnabled&&
-      idKey===shortSelectionKey();
-    const progress=(completed,total)=>{
-      if(!current()||total!==ids.length||!Number.isSafeInteger(completed)||
-         completed<0||completed>total)return;
-      const elapsed=Math.max(0,(performance.now()-started)/1000);
-      const etaSeconds=completed>=Math.min(SHORT_HUB_PREVIEW_PROGRESS_INTERVAL,total)&&
-        completed<total ? Math.ceil(elapsed*(total-completed)/completed):null;
-      state.shortHubProgress={completed,total,etaSeconds};
-      const estimate=etaSeconds===null?
-        (completed===0?' · estimating after first group':''):
-        ' · Estimated time remaining: ~'+
-          (etaSeconds>=60?Math.ceil(etaSeconds/60)+' min':
-            Math.max(1,etaSeconds)+' sec')+' (approximate)';
-      const message='Previewing '+completed+' of '+total+
-        ' short elements'+estimate+' · read-only, Cancel available.';
-      query(root,'[data-progress]').textContent=message;
-      updateStatus(message);
-      renderShortPreview();
-    };
-    state.busy=true;state.activeJob='preview';state.activePreviewToken=previewToken;
-    state.shortHubPreview=null;state.shortHubPreviewError=null;
-    state.shortHubReport=null;
-    progress(0,ids.length);refresh();
-    try{
-      // ONE read-only Worker job: pinned reader, full-source Python analysis,
-      // EQUAL parity and all native per-owner checks run once per selection.
-      // Progress carries counts ONLY; no partial edit ops may authorize Apply.
-      const job=readOnlyAnalysisJob(source);
-      job.options.topologyShortPreviewRequests=requests;
-      const result=await runEngine(job,{onProgress:progress});
-      if(!current())return;
-      if(result?.ok!==true){
-        // Never trust an EQUAL receipt attached to a failed Worker result.
-        // Revoke release authority, not just the short selection.
-        recordHubResult({topologyUxmlParity:{status:'DIFFERENT',
-          differences:['UXML_SHORT_PREVIEW_WORKER_FAILED']}},source.rawSha256);
-        throw Error('UXML_SHORT_PREVIEW_WORKER_FAILED');
-      }
-      if(result?.topologyUxmlParity?.status!=='EQUAL'){
-        // A changed reader/source/parity must revoke the entire hub route,
-        // not merely the short-selection Apply flag. Preserve original
-        // DIFFERENT/UNAVAILABLE authority on the workspace and download gate.
-        recordHubResult(result,source.rawSha256);
-        throw Error('UXML_SHORT_PREVIEW_PARITY_'+
-          (result?.topologyUxmlParity?.status||'UNAVAILABLE'));
-      }
-      if(!result.topologyOperationsPreview||
-         result.topologyOperationsPreview.error){
-        state.opsPreview=null;
-        state.opsPreviewError=String(result.topologyOperationsPreview?.error||
-          'UXML_SHORT_PREVIEW_MISSING');
-        opsPanel.render();
-        throw Error(state.opsPreviewError);
-      }
-      // Retain the same fail-closed merger and its drift/mutation falsifiers,
-      // now with exactly one entire-selection response instead of 23 analyses.
-      const merged=mergeShortHubPreviewChunks(
-        [{ids,preview:result.topologyOperationsPreview}],ids);
-      recordHubResult({...result,topologyOperationsPreview:merged},source.rawSha256);
-      if(state.hubParity?.status!=='EQUAL')
-        throw Error('UXML_SHORT_PREVIEW_PARITY_'+state.hubParity?.status+': '+
-          (state.hubParity?.differences||[]).join(' | '));
-      if(state.opsPreviewError)throw Error(state.opsPreviewError);
-      const report=assessShortPreview(state.opsPreview,ids);
-      state.shortHubReport={...report,ids:idKey,sha:source.sourceSha256,
-        epoch:generation,revision};
-      if(report.complete){
-        state.shortHubPreview={sha:source.sourceSha256,epoch:generation,
-          revision,ids:idKey,acceptedIds:idKey};
-        updateStatus('Read-only UXML preview verified for exact current selection. '+
-          report.readyCount+' ready / 0 refused; separate explicit Apply required.');
-      }else{
-        state.shortHubPreview=null;
-        updateStatus('UXML short-element preview: '+report.readyCount+
-          ' ready / '+report.refusedCount+' refused. Deselect refused, '+
-          'then re-preview the accepted selection before Apply.');
-      }
-    }catch(error){
-      if(!current())return;
-      state.shortHubPreview=null;
-      state.shortHubPreviewError='UXML_SHORT_PREVIEW_BLOCKED: '+String(error?.message||error);
-      updateStatus(state.shortHubPreviewError);
-    }finally{
-      if(previewToken===state.previewToken&&generation===state.epoch){
-        state.busy=false;state.activeJob=null;state.activePreviewToken=null;
-        state.shortHubProgress=null;
-        renderShortPreview();refresh();
-      }
-    }
-  }
 
   // This preview is only a view of source-qualified data already received.
   // Paginate so one click never constructs an unbounded DOM tree.
