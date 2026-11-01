@@ -6,6 +6,7 @@ import {buildAudit,renderAuditHTML,renderAuditSummary,filterCounts} from './audi
 import {eligibleActions,previewBatchPlan,explicitlyRejectedActionIds} from './batch-plan.mjs';
 import {runValidatedPasses} from './batch-runner.mjs';
 import {assertOperationsPreview} from './uxml-operations-view.mjs';
+import {assessShortPreview} from './short-preview-model.mjs';
 import {createOperationsPreviewPanel} from './uxml-operations-panel.mjs';
 import {runShortBulk} from './short-bulk.mjs';
 import {secondPassHTML} from './second-pass.mjs';
@@ -50,7 +51,8 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   runEngine ||= ownedWorker.run;
   cancelEngine ||= ownedWorker?()=>ownedWorker.cancel():()=>{};
   const state={epoch:0,source:null,original:null,revision:0,applied:0,history:[],resolutions:[],shortElements:[],shortPreview:null,scene:null,plan:null,findings:[],result:null,
-    selected:new Set(),search:'',filter:'all',category:'all',hubEnabled:false,hubParity:null,hubRevision:null,analysisProof:null,evidenceProofReason:'EVIDENCE_ANALYSIS_REQUIRED',opsPreview:null,opsPreviewError:null,shortHubPreview:null,shortHubPreviewError:null,manualPorts:[],secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false,shortBulk:null,manualQueue:[],manualQueueRunning:false,manualQueueCheckpoint:null,manualQueueStatus:''};
+    selected:new Set(),search:'',filter:'all',category:'all',hubEnabled:false,hubParity:null,hubRevision:null,analysisProof:null,evidenceProofReason:'EVIDENCE_ANALYSIS_REQUIRED',opsPreview:null,opsPreviewError:null,shortHubPreview:null,shortHubPreviewError:null,
+     shortHubReport:null,manualPorts:[],secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false,shortBulk:null,manualQueue:[],manualQueueRunning:false,manualQueueCheckpoint:null,manualQueueStatus:''};
   // The queue lives alongside Second Pass, without changing the engineering audit.
   const queuePanel=document.createElement('section');
   queuePanel.dataset.manualQueue='';
@@ -689,10 +691,12 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     return !!(p&&h&&state.hubEnabled&&state.hubParity?.status==='EQUAL'&&
       h.epoch===state.epoch&&h.revision===state.revision&&
       h.sha===state.source?.sourceSha256&&p.sha===h.sha&&
-      h.ids===shortSelectionKey()&&p.selected.size>0);
+      h.ids===shortSelectionKey()&&p.selected.size>0&&
+      h.acceptedIds===h.ids&&!state.shortHubReport?.refusedCount);
   }
   function invalidateShortHubPreview(){
     state.shortHubPreview=null;state.shortHubPreviewError=null;
+    state.shortHubReport=null;
     if(state.hubEnabled){
       state.opsPreview=null;
       state.opsPreviewError='SHORT_SELECTION_CHANGED_REPREVIEW_REQUIRED';
@@ -716,7 +720,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     }
     const generation=state.epoch,revision=state.revision;
     state.busy=true;state.shortHubPreview=null;state.shortHubPreviewError=null;
-    renderShortPreview();refresh();
+    state.shortHubReport=null;renderShortPreview();refresh();
     updateStatus('Read-only UXML edit-ops preview for '+ids.length+
       ' explicitly selected short elements. No XML changes applied.');
     try{
@@ -730,13 +734,23 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       if(state.hubParity?.status!=='EQUAL')
         throw Error('UXML_SHORT_PREVIEW_PARITY_'+state.hubParity?.status+': '+
           (state.hubParity?.differences||[]).join(' | '));
-      const rows=state.opsPreview?.ops?.filter(op=>op.kind==='DROP_SHORT_ELEMENT')||[];
-      if(rows.length!==ids.length||
-         JSON.stringify(rows.map(op=>op.sourceActionId).sort())!==JSON.stringify(ids))
-        throw Error('UXML_SHORT_PREVIEW_SELECTED_OPS_MISMATCH');
-      state.shortHubPreview={sha:source.sourceSha256,epoch:generation,revision,ids:idKey};
-      updateStatus('Read-only UXML preview verified '+ids.length+
-        ' selected short-element operation(s). Separate explicit Apply required.');
+      // A global preview error must retain its true named builder code; it is
+      // NOT a selection mismatch, nor an implied zero-operation result.
+      if(state.opsPreviewError)throw Error(state.opsPreviewError);
+      const report=assessShortPreview(state.opsPreview,ids);
+      state.shortHubReport={...report,ids:idKey,sha:source.sourceSha256,
+        epoch:generation,revision};
+      if(report.complete){
+        state.shortHubPreview={sha:source.sourceSha256,epoch:generation,
+          revision,ids:idKey,acceptedIds:idKey};
+        updateStatus('Read-only UXML preview verified for exact current selection. '+
+          report.readyCount+' ready / 0 refused; separate explicit Apply required.');
+      }else{
+        state.shortHubPreview=null;
+        updateStatus('UXML short-element preview: '+report.readyCount+
+          ' ready / '+report.refusedCount+' refused. Deselect refused, '+
+          'then re-preview the accepted selection before Apply.');
+      }
     }catch(error){
       if(generation!==state.epoch)return;
       state.shortHubPreview=null;
@@ -762,6 +776,22 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     const visible=rows.slice(start,start+SHORT_PREVIEW_PAGE_SIZE);
     const eligible=rows.filter(r=>r.eligible).length;
     const hubReady=!state.hubEnabled||shortHubPreviewCurrent();
+    const report=state.shortHubReport;
+    const reported=!!(state.hubEnabled&&report&&report.ids===shortSelectionKey()&&
+      report.sha===state.source.sourceSha256&&report.epoch===state.epoch&&
+      report.revision===state.revision);
+    const refusedHtml=reported&&report.refusedCount?
+      '<section data-short-refusals aria-label="Refused short operations">'+
+      '<p><strong>'+report.readyCount+' ready / '+report.refusedCount+
+        ' refused</strong> · Refused items are never Apply operations.</p>'+
+      '<button type="button" data-short-deselect-refused>Deselect refused ('+
+        report.refusedCount+')</button><ul>'+
+      report.refused.map(item=>'<li data-short-refused="'+esc(item.id)+'">'+
+        '<strong>'+esc(item.id)+'</strong> · '+esc(item.plainReason)+
+        ' <code>'+esc(item.code)+'</code> '+
+        '<button type="button" data-short-refused-locate="'+esc(item.id)+
+        '">Locate original records</button></li>').join('')+
+      '</ul></section>':'';
     panel.innerHTML='<h3>Drop elements ≤6 mm, then close</h3>'+
       '<p role="status">PREVIEW ONLY · '+total+' measured candidates · '+eligible+
       ' eligible under source checks · working XML unchanged. Select source owners, then explicitly Apply.</p>'+
@@ -780,8 +810,12 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       (state.hubEnabled?'<button data-short-hub-preview '+(!p.selected.size||state.busy?'disabled':'')+
         '>Preview selected UXML edit operations ('+p.selected.size+')</button>'+
         '<p data-short-hub-status role="status">'+esc(state.shortHubPreviewError||
-          (hubReady?'UXML operation preview verified for exact current selection.':
-            'Select source owners, then preview exact UXML edit operations before Apply.'))+'</p>':'')+
+          (reported?report.readyCount+' ready / '+report.refusedCount+
+             ' refused'+(hubReady?' · UXML operation preview verified for exact current selection.':
+               ' · Deselect refused, then re-preview before Apply.'):
+           hubReady?'UXML operation preview verified for exact current selection.':
+             'Select source owners, then preview exact UXML edit operations before Apply.'))+
+        '</p>'+refusedHtml:'')+
       (total?'<button data-run-short-drop '+(!p.selected.size||!hubReady?'disabled':'')+
         '>Apply all '+p.selected.size+' selected &amp; close</button>':
         '<p>No measurable two-port elements at ≤6 mm.</p>')+
@@ -792,6 +826,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     if(!state.source||!state.plan||state.busy||state.batchRunning)return;
     state.shortPreview={sha:state.source.sourceSha256,epoch:state.epoch,page:0,selected:new Set()};
     state.shortHubPreview=null;state.shortHubPreviewError=null;
+    state.shortHubReport=null;
     renderShortPreview();
     query(root,'[data-short-preview]').scrollIntoView({block:'nearest'});
   }
