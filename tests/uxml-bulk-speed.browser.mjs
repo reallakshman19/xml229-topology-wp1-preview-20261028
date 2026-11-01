@@ -26,7 +26,7 @@ function synthetic(elements=336){
  node(-1,'FLAN','F',1,103)+node(40,'RIGID','F',2,189)+'</Branch>';
  const fillers=Array.from({length:elements-3},(_,i)=>
   node(1000+i,'PIPE','FILL-'+i,0,1000+i*100)).join('');
- return '<PipeStressExport>'+short+
+ return '<PipeStressExport xmlns="http://aveva.com/pipeStress116.xsd">'+short+
  '<Branch><Branchname>GENERATED-FILLER</Branchname>'+fillers+'</Branch>'+
  '</PipeStressExport>';
 }
