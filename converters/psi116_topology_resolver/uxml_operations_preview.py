@@ -8,19 +8,13 @@ authorizes Apply. Unknown or unrepresentable operations fail closed.
 from __future__ import annotations
 
 from collections import Counter
-from copy import deepcopy
-from math import isfinite
 from typing import Any
 import xml.etree.ElementTree as ET
 
 from .models import ResolverConfig
 from .transaction import TransactionPolicy
 from .uxml_adapter import resolve_from_uxml
-from .resolver import resolve_psi116
-from .short_elements import short_elements
-from .uxml_edit_ops import (export_edit_ops, UxmlPatchError,
-                            _source_sha, _source_refs_by_key, _source_record_paths,
-                            _preview_short_native_transaction)
+from .uxml_edit_ops import export_edit_ops, UxmlPatchError
 
 SCHEMA = "uxml-operations-preview/v1"
 NAMES = {
@@ -144,146 +138,18 @@ def _preview_fields(op: dict, action: Any, records: dict[str, Any]) -> list[dict
     return changes
 
 
-class _ShortPreviewSourceScope:
-    """Read-only local native witnesses, with mandatory full-source fallback.
-
-    Only an isolated source branch can be sliced: no other branch may share
-    an identity or be within the native 25 mm physical-candidate radius.
-    Miniature native transactions use the SAME transaction/short-element
-    engine. Apply/edit-op canonical validation NEVER consumes this shortcut.
-    This saves repeated whole-source XML parsing and serialization in preview.
-    """
-
-    def __init__(self, uxml: dict, result, config: ResolverConfig):
-        self.result, self.config = result, config
-        self.rows = short_elements(result.document, config)
-        self.records = {r.key: r for branch in result.document.branches
-                        for r in branch.nodes}
-        self.indexes = {
-            "records": self.records,
-            "refs": _source_refs_by_key(uxml, _source_sha(uxml)),
-            "paths": _source_record_paths(result.document.source_text, result),
-        }
-        self.root = ET.fromstring(result.document.source_text)
-        self.branches = [node for node in self.root.iter()
-                         if isinstance(node.tag, str) and
-                         node.tag.rsplit("}", 1)[-1] == "Branch"]
-        self.root_direct = (len(self.branches) == len(result.document.branches) and
-                            all(branch in self.root for branch in self.branches))
-        self.blocking = (
-            any(a.status == "BLOCKED" or a.blockers for a in result.fix_actions)
-            or any(f.blocking for f in result.findings))
-        self.numbers = []
-        self.boxes = []
-        self.node_count = sum(len(b.nodes) for b in result.document.branches)
-        for branch in result.document.branches:
-            self.numbers.append({n.node_number for n in branch.nodes if n.positive})
-            points = [n.position.as_list() for n in branch.nodes
-                      if n.position is not None]
-            self.boxes.append(
-                (tuple(min(p[i] for p in points) for i in range(3)),
-                 tuple(max(p[i] for p in points) for i in range(3)))
-                if points else None)
-
-    def _isolated(self, idx: int) -> bool:
-        if not self.root_direct or self.blocking or idx >= len(self.branches):
-            return False
-        selected = self.result.document.branches[idx]
-        # Do not pay the overhead of a slice when it contains most of the model.
-        if 5 * len(selected.nodes) >= self.node_count:
-            return False
-        box = self.boxes[idx]
-        if box is None:
-            return False
-        for other, candidate in enumerate(self.boxes):
-            if other == idx:
-                continue
-            if self.numbers[idx] & self.numbers[other]:
-                return False
-            if candidate is None:
-                continue
-            # Conservative box distance: overlaps veto the shortcut even if
-            # the closest actual record is distant; never infer a connection.
-            squared = sum(max(0.0, box[0][i]-candidate[1][i],
-                              candidate[0][i]-box[1][i]) ** 2
-                          for i in range(3))
-            if not isfinite(squared) or squared <= (25.0 + 1e-9) ** 2:
-                return False
-        return True
-
-    def native_witness(self, row: dict):
-        """Use only authoritative existing native code on a private slice.
-
-        Return None if there is any ambiguity; the caller then takes the
-        unchanged full-source route and preserves its exact refusal reason.
-        """
-        idx = row["branchIndex"]
-        if not self._isolated(idx):
-            return None
-        try:
-            # Empty preceding Branch placeholders preserve original branch
-            # indexes and source record keys. The complete selected branch is
-            # copied; no source record or actual working document is mutated.
-            root = ET.Element(self.root.tag, dict(self.root.attrib))
-            for _ in range(idx):
-                ET.SubElement(root, self.branches[idx].tag)
-            root.append(deepcopy(self.branches[idx]))
-            namespace = self.result.document.namespace
-            if namespace:
-                ET.register_namespace("", namespace)
-            scoped_source = ET.tostring(root, encoding="unicode")
-            before = resolve_psi116(scoped_source, self.config,
-                                    source_name=self.result.document.source_path)
-            scoped = next((r for r in short_elements(before.document, self.config)
-                           if r["id"] == row["id"]), None)
-            authority_fields = ("id", "branchIndex", "componentType", "nodeKeys",
-                                "leftKey", "rightKey", "lengthBasis", "lengthMm",
-                                "measuredSpanMm", "weightRemoved", "eligible")
-            if scoped is None or any(scoped[k] != row[k] for k in authority_fields):
-                return None
-            request = {k: scoped[k] for k in ("id", "sourceSha256", "nodeKeys")}
-            native = _preview_short_native_transaction(
-                before, policy=TransactionPolicy(
-                    selected_action_ids=(scoped["id"],),
-                    short_element_requests=(request,)), config=self.config)
-            if not native.committed or not native.operations:
-                return None
-            if any(op.source_node_key not in self.records or
-                   op.action_id != row["id"]
-                   for op in native.operations):
-                return None
-            return native
-        except (ValueError, KeyError, IndexError, TypeError, ET.ParseError):
-            # Never promote an item when miniature/native qualification fails.
-            # The full original-source path below supplies the real verdict.
-            return None
-
-
 def build_operation_preview(uxml: dict, *,
                             source_name: str = "<memory>",
                             config: ResolverConfig | None = None,
-                            short_requests: list[dict] | None = None,
-                            _resolved=None) -> dict:
-    """Read-only; one row per canonical source-qualified edit operation.
+                            short_requests: list[dict] | None = None) -> dict:
+    """Read-only; one preview row for each actual export_edit_ops/v1 op.
 
-    A disposable native transaction may run on a proven isolated source slice,
-    or on the full source when isolation is uncertain. The original is never
-    modified, no corrected output is published, and Apply always reruns the
-    authoritative full-original transaction with its complete validation.
+    No XML clone is modified; no transaction is started or outputs written.
+    Does not broaden the source's Auto-fix selection policy.
     """
     config = config or ResolverConfig()
-    # Resolve the exact full original source ONCE per read-only job, and reuse
-    # its sourceRefs, record paths and eligibility for each selected owner.
-    resolved = (_resolved if _resolved is not None
-                else resolve_from_uxml(uxml, config, source_name=source_name))
-    _need(resolved.document.source_sha256 == _source_sha(uxml) and
-          resolved.document.source_path == source_name,
-          "UXML_PREVIEW_RESOLVED_SOURCE_DRIFT")
-    payload = export_edit_ops(uxml, source_name=source_name, config=config,
-                              _preview_result=resolved)
+    payload = export_edit_ops(uxml, source_name=source_name, config=config)
     short_requests = short_requests or []
-    scope = _ShortPreviewSourceScope(uxml, resolved, config) if short_requests else None
-    rows_by_id = {row["id"]: row for row in scope.rows} if scope else {}
     _need(isinstance(short_requests, list), "UXML_PREVIEW_SHORT_SELECTION_INVALID")
     short_ops, refused, seen_short = [], [], set()
     for request in short_requests:
@@ -295,13 +161,9 @@ def build_operation_preview(uxml: dict, *,
         _need(identifier not in seen_short, "UXML_PREVIEW_DUPLICATE_SHORT_SELECTION")
         seen_short.add(identifier)
         try:
-            row = rows_by_id.get(identifier)
-            native = scope.native_witness(row) if row is not None else None
             one = export_edit_ops(uxml, policy=TransactionPolicy(
                 selected_action_ids=(identifier,), short_element_requests=(request,)),
-                source_name=source_name, config=config,
-                _preview_result=resolved, _preview_short_rows=scope.rows,
-                _preview_native=native, _preview_indexes=scope.indexes)
+                source_name=source_name, config=config)
             _need(len(one["ops"]) == 1 and one["ops"][0]["kind"] == "DROP_SHORT_ELEMENT"
                   and one["ops"][0]["sourceActionId"] == identifier,
                   "UXML_PREVIEW_SHORT_KIND_INVALID")
@@ -312,6 +174,7 @@ def build_operation_preview(uxml: dict, *,
             refused.append({"id": identifier, "code": str(exc)})
     _need(payload.get("schema") == "uxml-edit-ops/v1",
           "UXML_PREVIEW_OP_SCHEMA_MISMATCH")
+    resolved = resolve_from_uxml(uxml, config, source_name=source_name)
     records = {record.key: record for branch in resolved.document.branches
                for record in branch.nodes}
     actions = {action.action_id: action for action in resolved.fix_actions}
