@@ -1349,10 +1349,11 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       rules.forEach(r=>r.open=open);
     }
     else if(target.hasAttribute('data-preview-short'))previewShortElements();
+    else if(target.hasAttribute('data-short-hub-preview'))previewSelectedUxmlShortOps();
     else if(target.hasAttribute('data-select-gaskets')){
       const p=state.shortPreview;if(!p)return;
       for(const r of state.shortElements)if(r.eligible&&r.componentType==='GASK')p.selected.add(r.id);
-      renderShortPreview();
+      invalidateShortHubPreview();renderShortPreview();
     }
     else if(target.hasAttribute('data-short-prev')){
       if(state.shortPreview){state.shortPreview.page--;renderShortPreview();}
@@ -1443,11 +1444,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       const p=state.shortPreview,r=state.shortElements[Number(event.target.dataset.shortIndex)];
       if(p&&r?.eligible&&p.epoch===state.epoch&&p.sha===state.source?.sourceSha256){
         if(event.target.checked)p.selected.add(r.id);else p.selected.delete(r.id);
-        const status=query(root,'[data-short-selection-count]');
-        if(status)status.textContent=p.selected.size+' selected · page '+(p.page+1);
-        const run=query(root,'[data-run-short-drop]');
-        if(run){run.disabled=!p.selected.size;run.textContent='Apply all '+p.selected.size+' selected & close';}
-        explainDisabledActions();
+        invalidateShortHubPreview();renderShortPreview();
       }
     }
     const d=state.secondPass;
@@ -1463,6 +1460,8 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     if(event.target.matches('[data-uxml-toggle]')){
       if(state.busy||state.batchRunning){event.target.checked=state.hubEnabled;return;}
       state.hubEnabled=event.target.checked;state.hubParity=null;clearEvidenceProof('EVIDENCE_ANALYSIS_REQUIRED');state.opsPreview=null;state.opsPreviewError=null;
+      state.shortHubPreview=null;state.shortHubPreviewError=null;state.shortPreview=null;
+      query(root,'[data-short-preview]').textContent='';
       opsPanel.reset();
       renderHubParity();renderActions();refresh();
       updateStatus(state.hubEnabled?
