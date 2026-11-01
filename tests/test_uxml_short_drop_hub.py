@@ -18,7 +18,11 @@ from psi116_topology_resolver.transaction import TransactionPolicy, apply_topofi
 from psi116_topology_resolver.uxml_edit_ops import (
     export_edit_ops, apply_edit_ops, UxmlPatchError, compare_patch_to_direct,
 )
-from psi116_topology_resolver.uxml_operations_preview import build_operation_preview
+from psi116_topology_resolver.uxml_operations_preview import (
+    build_operation_preview, OperationsPreviewError,
+)
+from psi116_topology_resolver.uxml_edit_ops import _source_record_paths
+from test_port_policy import doc, node
 from test_short_elements import fixture
 from test_uxml_psi116_s1 import verified_synthetic
 
@@ -47,6 +51,100 @@ class UxmlShortDropHub(unittest.TestCase):
         policy = TransactionPolicy(selected_action_ids=(row["id"],),
                                    short_element_requests=(request,))
         return path, data, uxml, policy, request
+
+    def three_owner_source(self, base):
+        """Three separated qualified short gaskets; only synthetic records."""
+        branches = []
+        for i in range(3):
+            x = 500 * i
+            ref = "SHORT-" + str(i)
+            branches.append(
+                node(10+i*100, "PIPE", "P"+str(i), 1, f"{x} 0 0") +
+                node(20+i*100, "PIPE", "P"+str(i), 2, f"{x+100} 0 0") +
+                node(-1, "GASK", ref, 1, f"{x+100} 0 0") +
+                node(30+i*100, "RIGID", ref, 2, f"{x+103} 0 0") +
+                node(-1, "FLAN", "F"+str(i), 1, f"{x+103} 0 0") +
+                node(40+i*100, "RIGID", "F"+str(i), 2, f"{x+189} 0 0"))
+        path = base / "three-synthetic-gaskets.xml"
+        raw = verified_synthetic(doc(*branches)).encode("utf-8")
+        path.write_bytes(raw)
+        cli = subprocess.run(["node", str(self.xcu / "tools" / "psi116-to-uxml.mjs"),
+                              str(path)], cwd=self.xcu,
+                             capture_output=True, text=True, timeout=45)
+        self.assertEqual(cli.returncode, 0, cli.stderr)
+        uxml = json.loads(cli.stdout)
+        resolved = resolve_psi116(path)
+        rows = [r for r in short_elements(resolved.document, ResolverConfig())
+                if r["componentRefNo"].startswith("SHORT-")]
+        self.assertEqual(len(rows), 3)
+        self.assertTrue(all(r["eligible"] for r in rows), rows)
+        requests = [{key: row[key] for key in
+                     ("id", "sourceSha256", "nodeKeys")} for row in rows]
+        return path, raw, uxml, resolved, requests
+
+    def test_partial_preview_discloses_two_ready_one_exact_loss_refusal(self):
+        with tempfile.TemporaryDirectory(prefix="uxml-short-partial-") as temp:
+            path, raw, uxml, resolved, requests = self.three_owner_source(Path(temp))
+            paths = _source_record_paths(resolved.document.source_text, resolved)
+            refused = requests[1]
+            touch = paths[refused["nodeKeys"][0]]
+            uxml["lossContract"].append({
+                "code": "SYNTHETIC_PRIVATE_FIELD_UNREPRESENTED",
+                "details": {"sourcePath": touch}})
+            preview = build_operation_preview(uxml, source_name=str(path),
+                                               short_requests=requests)
+            report = preview["shortPreview"]
+            self.assertEqual(report["selectedIds"], [r["id"] for r in requests])
+            self.assertEqual(report["acceptedIds"],
+                             [requests[0]["id"], requests[2]["id"]])
+            self.assertEqual(len(report["refused"]), 1)
+            self.assertEqual(report["refused"][0]["id"], refused["id"])
+            self.assertRegex(report["refused"][0]["code"],
+                             r"^UXML_LOSS_CONTRACT_FIELD_TOUCH:")
+            self.assertEqual(
+                [r["sourceActionId"] for r in preview["ops"]
+                 if r["kind"] == "DROP_SHORT_ELEMENT"],
+                report["acceptedIds"])
+            self.assertEqual(preview["summary"]["totalOps"], len(preview["ops"]))
+            self.assertTrue(all(row["sourceActionId"] != refused["id"]
+                                for row in preview["ops"]))
+            # Guard: removing the per-owner refusal branch fails these
+            # independent exact counts and forbids accidentally promoted ops.
+            self.assertEqual(path.read_bytes(), raw)
+            self.assertEqual(sorted(x.name for x in Path(temp).iterdir()),
+                             ["three-synthetic-gaskets.xml"])
+            # Deselect refused, then a fresh read-only preview becomes 2/0.
+            accepted = [requests[0], requests[2]]
+            after = build_operation_preview(uxml, source_name=str(path),
+                                            short_requests=accepted)
+            self.assertEqual(after["shortPreview"]["acceptedIds"],
+                             [r["id"] for r in accepted])
+            self.assertEqual(after["shortPreview"]["refused"], [])
+            self.assertEqual(len([op for op in after["ops"]
+                                  if op["kind"] == "DROP_SHORT_ELEMENT"]), 2)
+            self.assertEqual(path.read_bytes(), raw)
+
+    def test_per_item_field_projection_refusal_never_promoted_to_op(self):
+        with tempfile.TemporaryDirectory(prefix="uxml-short-partial-projection-") as temp:
+            path, raw, uxml, resolved, requests = self.three_owner_source(Path(temp))
+            from psi116_topology_resolver import uxml_operations_preview as preview_mod
+            original = preview_mod._preview_fields
+            def synthetic_projection(op, action, records):
+                if op["kind"] == "DROP_SHORT_ELEMENT" and                         op["sourceActionId"] == requests[1]["id"]:
+                    raise OperationsPreviewError("UXML_PREVIEW_SHORT_EFFECT_TARGET_INVALID")
+                return original(op, action, records)
+            with patch.object(preview_mod, "_preview_fields",
+                              side_effect=synthetic_projection):
+                preview = build_operation_preview(uxml, source_name=str(path),
+                                                   short_requests=requests)
+            report = preview["shortPreview"]
+            self.assertEqual(report["acceptedIds"],
+                             [requests[0]["id"], requests[2]["id"]])
+            self.assertEqual(report["refused"], [{
+                "id": requests[1]["id"],
+                "code": "UXML_PREVIEW_SHORT_EFFECT_TARGET_INVALID"}])
+            self.assertEqual(preview["summary"]["totalOps"], len(preview["ops"]))
+            self.assertEqual(path.read_bytes(), raw)
 
     def test_exact_gasket_owner_and_closure_patch_matches_direct_bytes(self):
         with tempfile.TemporaryDirectory(prefix="uxml-short-synthetic-") as temp:
