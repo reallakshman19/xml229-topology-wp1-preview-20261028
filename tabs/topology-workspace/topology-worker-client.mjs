@@ -9,6 +9,7 @@ export function createTopologyWorkerClient({
   let worker=null;
   let sequence=0;
   let completedInWorker=0;
+  let bulkLeases=0;
   let disposed=false;
   const pending=new Map();
 
@@ -16,6 +17,7 @@ export function createTopologyWorkerClient({
     const old=worker;
     worker=null;
     completedInWorker=0;
+    bulkLeases=0;
     if(old) old.terminate();
     for(const {reject,timeout} of pending.values()) {
       clearTimeout(timeout);
@@ -38,7 +40,7 @@ export function createTopologyWorkerClient({
       else task.reject(Error('TOPOLOGY_WORKER_PROTOCOL_ERROR'));
       // Engine job scratch directories live in Pyodide's in-memory FS.
       // Recycle only when idle, bounding memory during hundreds of sequential drops.
-      if(++completedInWorker>=8 && !pending.size && worker===created){
+      if(++completedInWorker>=8 && !pending.size && bulkLeases===0 && worker===created){
         worker=null;completedInWorker=0;created.terminate();
       }
     });
@@ -68,8 +70,17 @@ export function createTopologyWorkerClient({
       catch(error){reset('TOPOLOGY_WORKER_SEND_FAILED: '+(error?.message||String(error)));}
     });
   }
+  function beginBulkSession(){
+    if(disposed)throw Error('TOPOLOGY_WORKER_DISPOSED');
+    bulkLeases++;
+  }
+  function endBulkSession(){
+    if(bulkLeases>0)bulkLeases--;
+    // Keep the already-verified Worker for the immediate post-bulk read-only
+    // evidence check. Its normal idle recycle resumes after that job.
+  }
   return {
-    run,
+    run,beginBulkSession,endBulkSession,
     cancel(){reset('TOPOLOGY_WORKER_CANCELLED: last validated revision retained.');},
     dispose(){disposed=true;reset('TOPOLOGY_WORKER_DISPOSED');},
   };
