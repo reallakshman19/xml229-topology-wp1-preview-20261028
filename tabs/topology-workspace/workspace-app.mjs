@@ -732,6 +732,37 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     query(root,'[data-short-preview]').scrollIntoView({block:'nearest'});
   }
 
+  function showShortBulkAudit(outcome){
+    // Presentation only. Each applied op is the exact canonical operation
+    // returned after export_edit_ops -> apply_edit_ops -> byte-equal native
+    // comparison; every refusal is retained with its original named reason.
+    const panel=query(root,'[data-fix-result]');if(!panel)return;
+    const applied=outcome?.applied||[],skipped=outcome?.skipped||[];
+    if(!applied.length&&!skipped.length)return;
+    const details=document.createElement('details');
+    details.dataset.shortBulkOperations='';
+    const summary=document.createElement('summary');
+    summary.textContent='Review source-bound Apply operations: '+applied.length+
+      ' validated, '+skipped.length+' skipped/refused';
+    details.appendChild(summary);
+    const list=document.createElement('ul');
+    for(const pass of applied){
+      const op=pass.canonicalEditOps?.[0];
+      const removed=(op?.removedWithRecord||[])
+        .map(x=>x.recordKey+' / '+x.field).join('; ')||'none';
+      const li=document.createElement('li');
+      li.textContent=pass.id+' · validated original source operation · removed records: '+
+        (op?.targets||[]).join(', ')+' · removedWithRecord: '+removed;
+      list.appendChild(li);
+    }
+    for(const item of skipped){
+      const li=document.createElement('li');
+      li.textContent=item.id+' · SKIPPED (no write) · '+item.reason;
+      list.appendChild(li);
+    }
+    details.appendChild(list);panel.appendChild(details);
+  }
+
   /** One UI publication for a fully audited sequence (or last validated checkpoint).
    * Never call runFix() or repaint the canvas per selected element.
    */
@@ -808,12 +839,19 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     query(root,'[data-progress]').textContent=message;
     setFixStatus(message,hubMismatch?'rejected':
       reason==='COMPLETE'&&done?'ready':done?'stopped':'rejected','drop');
+    showShortBulkAudit(outcome);
     updateStatus('Selected short-element batch finished. '+done+
       ' validated; '+skipped+' not eligible on reanalysis. Engineering review remains required.');
     // On a hub mismatch, do not reset the negative parity by reanalysing
     // the partially validated checkpoint until an explicit fresh Analyze.
     if(outcome.latest&&done&&!hubMismatch)
       await refreshPublishedEvidence(generation,state.revision,state.source);
+    // No preview heartbeat may overwrite a terminal Apply result. A later
+    // evidence mismatch is a HOLD, never an implied corrected download.
+    if(generation===state.epoch)
+      query(root,'[data-progress]').textContent=
+        state.hubEnabled&&state.hubParity?.status!=='EQUAL'?
+          message+' · HUB EVIDENCE HOLD: re-analyse before download.':message;
   }
   async function dropShortElements(){
     if(state.hubEnabled&&
