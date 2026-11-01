@@ -169,3 +169,143 @@ test('one real Worker preview session: ETA, Cancel then restarted Worker re-prev
     await page.close();await browser.close();await new Promise(done=>server.close(done));
   }
 });
+
+
+test('loading a new file retires preview state; later short-bulk Cancel publishes CANCELLED',
+ {timeout:360000},async()=>{
+  const server=createServer(async(req,res)=>{
+    try{
+      const rel=decodeURIComponent(new URL(req.url,'http://localhost').pathname)
+        .replace(/^\/+/,'')||'index.html';
+      const file=path.resolve(root,rel);
+      if(!file.startsWith(root+path.sep)){res.writeHead(403).end();return;}
+      res.writeHead(200,{'Content-Type':mime[path.extname(file)]||'application/octet-stream'});
+      res.end(await readFile(file));
+    }catch(error){res.writeHead(404).end(String(error));}
+  });
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  const browser=await chromium.launch({headless:true,args:['--no-sandbox']});
+  const page=await browser.newPage({viewport:{width:1400,height:980}});
+  const errors=[];page.on('pageerror',e=>errors.push(String(e)));
+  try{
+    await page.route('**/index.html',async route=>{
+      const response=await route.fetch(),html=await response.text();
+      const tag='<script type="module" src="./tabs/topology-workspace/workspace-app.mjs"></script>';
+      assert.ok(html.includes(tag));
+      await route.fulfill({response,body:html.replace(tag,'')});
+    });
+    await page.goto('http://127.0.0.1:'+server.address().port+'/index.html');
+    await page.evaluate(async xml=>{
+      const root=document.querySelector('#xml229-topology-workspace');
+      const [{mountTopologyWorkspace},{createTopologyWorkerClient}]=await Promise.all([
+        import('/tabs/topology-workspace/workspace-app.mjs'),
+        import('/tabs/topology-workspace/topology-worker-client.mjs')]);
+      const client=createTopologyWorkerClient();
+      const fixture={holdPreview:false,previewHeld:false,releasePreview:null,
+        bulkCalls:0,bulkHolding:false,releaseBulk:null,staleDelivered:false};
+      const runEngine=async (job,opts={})=>{
+        const short=job.options?.topologyShortPreviewRequests||[];
+        if(short.length&&fixture.holdPreview){
+          const valid=await client.run(job,opts);
+          fixture.previewHeld=true;
+          await new Promise(resolve=>{
+            fixture.releasePreview=()=>{fixture.staleDelivered=true;resolve();};
+          });
+          return valid;
+        }
+        if(job.options?.generateTopoFix&&job.options?.topologyShortElementRequests?.length){
+          fixture.bulkCalls++;
+          if(fixture.bulkCalls===2){
+            fixture.bulkHolding=true;
+            // Leave item two in flight while Cancel publishes the verified
+            // checkpoint for item one, then settle this stale promise below.
+            return new Promise(resolve=>{fixture.releaseBulk=()=>resolve({ok:false});});
+          }
+        }
+        return client.run(job,opts);
+      };
+      fixture.client=client;
+      fixture.workspace=mountTopologyWorkspace(root,{runEngine,cancelEngine:()=>client.cancel()});
+      window.__reloadPreviewFixture=fixture;
+      await fixture.workspace.load(new File([xml],'public-original.xml',{type:'text/xml'}));
+    },syntheticXML);
+    await page.locator('[data-uxml-toggle]').check();
+    await page.evaluate(()=>window.__reloadPreviewFixture.workspace.analyze());
+    await page.waitForFunction(()=>
+      window.__reloadPreviewFixture.workspace.getState().hubParity==='EQUAL',
+      null,{timeout:120000});
+    await page.locator('[data-preview-short]').click();
+    await page.locator('[data-select-gaskets]').click();
+    assert.equal(await page.locator('[data-short-index]:checked').count(),5);
+    await page.evaluate(()=>{window.__reloadPreviewFixture.holdPreview=true;});
+    await page.locator('[data-short-hub-preview]').click();
+    await page.waitForFunction(()=>window.__reloadPreviewFixture.previewHeld,
+      null,{timeout:120000});
+    assert.match(await page.locator('[data-short-hub-status]').textContent(),/Previewing/);
+
+    // Replacement source with a different identity. The old Worker result
+    // is still deliberately held while load() cancels and invalidates it.
+    const reloaded=syntheticXML.replace('PUBLIC-SYNTH-0','PUBLIC-RELOADED-0');
+    await page.evaluate(async xml=>window.__reloadPreviewFixture.workspace.load(
+      new File([xml],'public-reloaded.xml',{type:'text/xml'})),reloaded);
+    assert.equal((await page.evaluate(()=>
+      window.__reloadPreviewFixture.workspace.getState())).busy,false);
+    assert.match(await page.locator('[data-progress]').textContent(),
+      /Original loaded · revision 0/);
+    assert.equal(await page.locator('button[title*="active preview"]').count(),0,
+      'old preview disabled reasons must be removed after load');
+    await page.evaluate(()=>window.__reloadPreviewFixture.releasePreview());
+    await page.waitForTimeout(100);
+    assert.equal(await page.evaluate(()=>
+      window.__reloadPreviewFixture.staleDelivered),true);
+    assert.doesNotMatch(await page.locator('[data-progress]').textContent(),/Previewing/);
+    assert.equal(await page.locator('button[title*="active preview"]').count(),0);
+
+    // A fresh qualified preview on the new source is required before Apply.
+    await page.evaluate(()=>window.__reloadPreviewFixture.holdPreview=false);
+    await page.evaluate(()=>window.__reloadPreviewFixture.workspace.analyze());
+    await page.waitForFunction(()=>
+      window.__reloadPreviewFixture.workspace.getState().hubParity==='EQUAL',
+      null,{timeout:120000});
+    await page.locator('[data-preview-short]').click();
+    await page.locator('[data-select-gaskets]').click();
+    await page.locator('[data-short-hub-preview]').click();
+    await page.waitForFunction(()=>document.querySelector('[data-run-short-drop]')
+      ?.disabled===false,null,{timeout:120000});
+
+    // First short bulk item is a real, independently validated native
+    // transaction; second item is held before return, with a checkpoint.
+    await page.locator('[data-run-short-drop]').click();
+    await page.waitForFunction(()=>window.__reloadPreviewFixture.bulkHolding,
+      null,{timeout:120000});
+    assert.equal(await page.locator('[data-cancel]').isEnabled(),true);
+    await page.locator('[data-cancel]').click();
+    await page.waitForFunction(()=>
+      document.querySelector('[data-progress]')?.textContent?.includes('BULK STOPPED · CANCELLED'),
+      null,{timeout:120000});
+    const result=await page.evaluate(()=>({
+      progress:document.querySelector('[data-progress]')?.textContent,
+      state:window.__reloadPreviewFixture.workspace.getState(),
+      cancelledPreviewClaim:document.querySelector('[data-short-hub-status]')
+        ?.textContent?.includes('UXML_SHORT_PREVIEW_CANCELLED')||false,
+    }));
+    assert.match(result.progress,/BULK STOPPED · CANCELLED/);
+    assert.doesNotMatch(result.progress,/BULK STOPPED · ERROR/);
+    assert.equal(result.cancelledPreviewClaim,false,
+      'short-bulk Cancel must not be routed through stale preview Cancel');
+    assert.equal(result.state.revision,1,
+      'last validated native bulk checkpoint is retained');
+    assert.equal(result.state.busy,false);
+    await page.evaluate(()=>window.__reloadPreviewFixture.releaseBulk());
+    await page.waitForTimeout(100);
+    assert.match(await page.locator('[data-progress]').textContent(),
+      /BULK STOPPED · CANCELLED/);
+    assert.deepEqual(errors,[]);
+    console.log('SYNTHETIC_PREVIEW_LOAD_BULK_CANCEL_PASS '+JSON.stringify({
+      stalePreviewRetired:true,staleResultIgnored:true,
+      bulkStopReason:'CANCELLED',checkpointRevision:result.state.revision,
+      pageErrors:errors}));
+  }finally{
+    await page.close();await browser.close();await new Promise(done=>server.close(done));
+  }
+});
