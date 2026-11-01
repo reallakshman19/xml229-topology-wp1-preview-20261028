@@ -346,13 +346,13 @@ export async function runPsi116TopologyStage(pyodide, job, inputPath, jobDir, st
     ...status.bulkTimings,
   }:null;
   const topologyOperationsPreview = status.opsPreview || null;
-  const topologyUxmlAppliedEditOps = topoFixCommitted && status.hubParity?.status==='EQUAL'?
-    (status.appliedEditOps || null):null;
   const topologyFindingsText = readOptional(pyodide, paths.findings);
   const topologyFixPlanText = readOptional(pyodide, paths.plan);
   const topoFixTransactionText = generateTopoFix ? readOptional(pyodide, paths.transaction) : '';
   const topoFixValidationText = generateTopoFix ? readOptional(pyodide, paths.validation) : '';
   const topoFixCommitted = status.committed === true;
+  const topologyUxmlAppliedEditOps = topoFixCommitted && status.hubParity?.status==='EQUAL'?
+    (status.appliedEditOps || null):null;
   const topoFixXmlText = topoFixCommitted ? readOptional(pyodide, paths.fixed) : '';
   const topoFixLineageText = topoFixCommitted ? readOptional(pyodide, paths.lineage) : '';
   const topoFixPreFinalHandoffText = topoFixCommitted ? readOptional(pyodide, paths.handoff) : '';
