@@ -9,6 +9,7 @@ on:
       - 'tests/uxml-bulk-speed.browser.mjs'
       - 'tests/uxml-bulk-three.browser.mjs'
       - 'tests/short-bulk.test.mjs'
+      - 'tests/topology-worker-client.test.mjs'
       - 'docs/CODER-CHECKPOINT-BULK-SPEED.md'
       - '.github/workflows/uxml-bulk-speed.yml'
   workflow_dispatch:
@@ -24,7 +25,7 @@ jobs:
         with:
           node-version: '22'
       - name: Existing short-bulk serial and parity tests
-        run: node --test tests/short-bulk.test.mjs
+        run: node --test tests/short-bulk.test.mjs tests/topology-worker-client.test.mjs
       - name: Assemble isolated browser with verified immutable runtime
         shell: bash
         run: |
