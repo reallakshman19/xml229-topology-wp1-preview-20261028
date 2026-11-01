@@ -263,10 +263,7 @@ def _loss_veto(uxml: Mapping[str, Any], result: ResolutionResult,
 
 def _short_canonical_operation(uxml: dict, result: ResolutionResult,
                                policy: TransactionPolicy,
-                               config: ResolverConfig, *,
-                               preview_native: TopoFixTransactionResult | None = None,
-                               preview_rows: list[dict] | None = None,
-                               preview_indexes: dict | None = None) -> dict:
+                               config: ResolverConfig) -> dict:
     """Exactly one explicit owner; native copy-only transaction supplies effects."""
     _require(not policy.joint_repairs and not policy.apply_all_safe and
              len(policy.short_element_requests) == len(policy.selected_action_ids) == 1,
@@ -281,28 +278,17 @@ def _short_canonical_operation(uxml: dict, result: ResolutionResult,
     _require(request["sourceSha256"] == sha and
              policy.selected_action_ids == (request["id"],),
              "UXML_SHORT_REQUEST_SOURCE_OR_SELECTION_DRIFT")
-    rows = preview_rows if preview_rows is not None else short_elements(result.document, config)
-    row = next((r for r in rows if r["id"] == request["id"]), None)
+    row = next((r for r in short_elements(result.document, config)
+                if r["id"] == request["id"]), None)
     _require(row is not None and row["eligible"] and
              list(request["nodeKeys"]) == row["nodeKeys"] and
              row["sourceSha256"] == sha, "UXML_SHORT_NOT_ELIGIBLE_OR_WITNESS_DRIFT")
     # Only the existing native short_element routine can remove and reclose
     # an owner. This is a disposable in-memory clone, never an output write.
-    if preview_native is None:
-        try:
-            transaction = apply_topofix_transaction(result, policy=policy, config=config)
-        except (ValueError, KeyError) as exc:
-            raise UxmlPatchError("UXML_SHORT_NATIVE_REFUSED:" + type(exc).__name__) from exc
-    else:
-        # Preview-only native witness. The patch-back/apply path NEVER uses
-        # this option and always re-executes the complete full-source native
-        # transaction against the exact original bytes.
-        transaction = preview_native
-        _require(transaction.committed and
-                 len(transaction.selected_actions) == 1 and
-                 transaction.selected_actions[0].action_id == request["id"] and
-                 transaction.source_result.document.namespace == result.document.namespace,
-                 "UXML_SHORT_PREVIEW_NATIVE_WITNESS_INVALID")
+    try:
+        transaction = apply_topofix_transaction(result, policy=policy, config=config)
+    except (ValueError, KeyError) as exc:
+        raise UxmlPatchError("UXML_SHORT_NATIVE_REFUSED:" + type(exc).__name__) from exc
     _require(transaction.committed and transaction.fixed_xml is not None,
              "UXML_SHORT_NATIVE_TRANSACTION_REJECTED")
     edits = []
@@ -327,14 +313,11 @@ def _short_canonical_operation(uxml: dict, result: ResolutionResult,
              set(row["nodeKeys"]), "UXML_SHORT_DELETE_SET_MISMATCH")
     edits.sort(key=lambda e: (e["recordKey"], e["field"]))
     targets = sorted({e["recordKey"] for e in edits})
-    refs = (preview_indexes["refs"] if preview_indexes is not None
-            else _source_refs_by_key(uxml, sha))
+    refs = _source_refs_by_key(uxml, sha)
     _require(bool(targets) and all(key in refs for key in targets),
              "UXML_SHORT_SOURCE_REF_NOT_FOUND")
-    records = (preview_indexes["records"] if preview_indexes is not None
-               else {n.key: n for branch in result.document.branches for n in branch.nodes})
-    paths = (preview_indexes["paths"] if preview_indexes is not None
-             else _source_record_paths(result.document.source_text, result))
+    records = {n.key: n for branch in result.document.branches for n in branch.nodes}
+    paths = _source_record_paths(result.document.source_text, result)
     losses = uxml.get("lossContract")
     _require(isinstance(losses, list), "UXML_LOSS_CONTRACT_MISSING")
     touched = {key: set() for key in targets}
@@ -383,22 +366,9 @@ def _short_canonical_operation(uxml: dict, result: ResolutionResult,
                         "edits": edits}]}
 
 
-def _preview_short_native_transaction(before: ResolutionResult,
-                                      policy: TransactionPolicy,
-                                      config: ResolverConfig) -> TopoFixTransactionResult:
-    """Existing native transaction on a disposable read-only preview slice.
-
-    The original-source apply route does not use slices or this helper.
-    """
-    return apply_topofix_transaction(before, policy=policy, config=config)
-
 def export_edit_ops(
     uxml: dict, *, policy: TransactionPolicy | None = None,
     source_name: str = "<memory>", config: ResolverConfig | None = None,
-    _preview_result: ResolutionResult | None = None,
-    _preview_short_rows: list[dict] | None = None,
-    _preview_native: TopoFixTransactionResult | None = None,
-    _preview_indexes: dict | None = None,
 ) -> dict[str, object]:
     """One operation for each selected, currently proposed mutating action."""
     config = config or ResolverConfig()
@@ -408,14 +378,10 @@ def export_edit_ops(
     _enforce_today_auto_policy(requested.minimum_confidence,
                                requested.require_no_blocking_plan_actions)
     _require(not requested.joint_repairs, "UXML_MANUAL_REPAIR_NOT_AUTHORIZED")
-    result = (_preview_result if _preview_result is not None
-              else resolve_from_uxml(uxml, config, source_name=source_name))
+    result = resolve_from_uxml(uxml, config, source_name=source_name)
     sha = _source_sha(uxml)
     if requested.short_element_requests:
-        op = _short_canonical_operation(
-            uxml, result, requested, config,
-            preview_native=_preview_native, preview_rows=_preview_short_rows,
-            preview_indexes=_preview_indexes)
+        op = _short_canonical_operation(uxml, result, requested, config)
         return {"schema": EDIT_OP_SCHEMA, "sourceFormat": "PSI116",
                 "fileSha256": sha, "policy": json.loads(json.dumps(asdict(requested))),
                 "ops": [op]}
