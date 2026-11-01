@@ -15,7 +15,8 @@ from psi116_topology_resolver.short_elements import short_elements
 from psi116_topology_resolver.transaction import TransactionPolicy
 from psi116_topology_resolver.uxml_adapter import resolve_from_uxml
 from psi116_topology_resolver.uxml_edit_ops import export_edit_ops, _source_record_paths
-from psi116_topology_resolver.uxml_operations_preview import _ShortPreviewSourceScope, build_operation_preview
+from psi116_topology_resolver.uxml_operations_preview import build_operation_preview
+from unittest.mock import patch
 from test_port_policy import doc, node
 from test_uxml_psi116_s1 import verified_synthetic
 
@@ -105,33 +106,38 @@ class InterconnectedBaseline(unittest.TestCase):
             report=io.StringIO()
             pstats.Stats(profile,stream=report).strip_dirs().sort_stats("cumulative").print_stats(18)
             print("INTERCONNECTED_BASELINE_PROFILE_TOP_CUMULATIVE\n"+report.getvalue())
-            start=time.perf_counter()
-            optimized=build_operation_preview(uxml,source_name=str(source),
-                                              config=cfg,short_requests=request)
-            optimized_seconds=time.perf_counter()-start
-            accepted={op["sourceActionId"] for op in optimized["ops"] if op["kind"]=="DROP_SHORT_ELEMENT"}
-            refused={row["id"]:row["code"] for row in optimized["shortPreview"]["refused"]}
             current=[]
-            # One full-source authority for this entire current-preview pass.
-            # The real builder is measured separately above.
-            resolved=resolve_from_uxml(uxml,cfg,source_name=str(source))
-            scope=_ShortPreviewSourceScope(uxml,resolved,cfg)
-            by_id={r["id"]:r for r in scope.rows}
-            for req in request:
-                if req["id"] in accepted:
-                    # Compare complete canonical operation in the cache-backed
-                    # source context, not merely rendered preview row fields.
-                    policy=TransactionPolicy(selected_action_ids=(req["id"],),
-                                             short_element_requests=(req,))
-                    call=lambda p=policy:export_edit_ops(
-                        uxml,policy=p,config=cfg,source_name=str(source),
-                        _preview_result=resolved,_preview_short_rows=scope.rows,
-                        _preview_native=scope.native_witness(by_id[req["id"]]),
-                        _preview_indexes=scope.indexes)
-                    current.append(capture(call))
-                else:
-                    current.append(("REFUSED",refused[req["id"]]))
-            self.assertEqual(current,old,"canonical operation/refusal bytes MUST match for all sources")
+            native_export=export_edit_ops
+            def checked_export(payload,**kwargs):
+                pol=kwargs.get("policy")
+                track=pol is not None and bool(pol.short_element_requests)
+                try:
+                    value=native_export(payload,**kwargs)
+                    if track:
+                        current.append(("READY",json.dumps(
+                            value["ops"][0],sort_keys=True,
+                            ensure_ascii=False).encode("utf-8")))
+                    return value
+                except ValueError as error:
+                    if track:current.append(("REFUSED",str(error)))
+                    raise
+            progress=[]
+            start=time.perf_counter()
+            with patch("psi116_topology_resolver.uxml_operations_preview.export_edit_ops",
+                       side_effect=checked_export):
+                optimized=build_operation_preview(
+                    uxml,source_name=str(source),config=cfg,
+                    short_requests=request,
+                    progress=lambda completed,total:progress.append((completed,total)))
+            optimized_seconds=time.perf_counter()-start
+            accepted={op["sourceActionId"] for op in optimized["ops"]
+                      if op["kind"]=="DROP_SHORT_ELEMENT"}
+            refused={row["id"]:row["code"] for row in optimized["shortPreview"]["refused"]}
+            self.assertEqual(current,old,
+                "all 60 canonical full-source operation bytes and refusal codes identical")
+            self.assertEqual(len(current),N)
+            self.assertEqual(progress,
+                [(i,N) for i in range(4,N+1,4)])
             self.assertEqual(len(accepted)+len(refused),N)
             self.assertGreaterEqual(len(refused),3)
             self.assertEqual(source.read_bytes(),xml.encode("utf-8"))
