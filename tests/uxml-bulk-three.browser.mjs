@@ -63,11 +63,15 @@ async function exercise(mismatchAt=Infinity){
    root.id='xml229-topology-workspace';
    const client=createTopologyWorkerClient();
    let count=0;
-   const parities=[];
+   const parities=[],timings=[];
    const runEngine=async job=>{
+    const t=performance.now();
     const result=await client.run(job);
     if(job.options?.generateTopoFix && job.options?.topologyShortElementRequests?.length){
       count++;
+      timings.push({item:count,roundTripMs:Math.round(performance.now()-t),
+        readerLoadMs:Math.round(result.topologyBulkTiming?.hubReaderLoadMs||0),
+        pyTopologyMs:Math.round(result.topologyBulkTiming?.pythonTopologyMs||0)});
       const mismatch=count===mismatchAt;
       parities.push(mismatch?'DIFFERENT':result.topologyUxmlParity?.status);
       if(mismatch){
@@ -80,7 +84,7 @@ async function exercise(mismatchAt=Infinity){
    };
    runEngine.beginBulkSession=()=>client.beginBulkSession();
    runEngine.endBulkSession=()=>client.endBulkSession();
-   window.__triple={client,parities,get count(){return count;},
+   window.__triple={client,parities,timings,get count(){return count;},
     workspace:mountTopologyWorkspace(root,{runEngine,cancelEngine:()=>client.cancel()})};
    await window.__triple.workspace.load(new File([xml],'synthetic-three.xml',{type:'text/xml'}));
   },{xml:fixture(),mismatchAt});
@@ -110,6 +114,7 @@ async function exercise(mismatchAt=Infinity){
    state:window.__triple.workspace.getState(),
    count:window.__triple.count,
    parities:window.__triple.parities,
+   timings:window.__triple.timings,
    downloadEnabled:!document.querySelector('[data-download-working]').disabled,
    progress:document.querySelector('[data-progress]')?.textContent,
   }));
@@ -130,7 +135,8 @@ async function exercise(mismatchAt=Infinity){
   console.log('UXML_BULK_THREE_REAL_BROWSER '+JSON.stringify({
    syntheticShortOwners:3,forcedMismatchAt:mismatchAt===Infinity?null:mismatchAt,
    revision:result.state.revision,workerTransactions:result.count,
-   independentParityChecks:result.parities,downloadEnabled:result.downloadEnabled}));
+   independentParityChecks:result.parities,
+   timings:result.timings,downloadEnabled:result.downloadEnabled}));
  }finally{
   await page.close();await browser.close();await new Promise(done=>server.close(done));
  }
