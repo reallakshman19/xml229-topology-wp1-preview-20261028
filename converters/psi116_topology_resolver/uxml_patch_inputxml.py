@@ -11,7 +11,7 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 from dataclasses import asdict
-from hashlib import sha256
+from hashlib import sha1, sha256
 import json
 import os
 from pathlib import Path
@@ -40,6 +40,50 @@ OP_FIELDS = frozenset({"opId", "kind", "sourceActionId", "fileSha256", "targets"
 TAG = re.compile(rb"""<PIPINGELEMENT\b(?:"[^"]*"|'[^']*'|[^"'>])*>""", re.I)
 FIELD = re.compile(rb"""\s+(FROM_NODE|TO_NODE)\s*=\s*(["'])(.*?)\2""", re.S)
 
+
+# XCU pin manifest and verifier follow the source-owned checkout, not vendored code.
+
+# Git blob identities from the externally pinned XCU #244 commit, not copies
+# of XCU reader source. A partial or modified local XCU root is NOT trusted.
+XCU_S3B_COMMIT = "980f325323b87a9daaa8ee6523c6d85132b9208f"
+XCU_BLOBS = {
+    "package.json": "8b0cc1e976ef2cd3cd10f344b37463738d22ea3d",
+    "uxml/UxmlConstants.js": "457b970f9cbccd29d38cecd0842614c339108107",
+    "uxml/UxmlProfileDetector.js": "b4edfc1b47337a0ad62d2a01c0c8f2ff86844803",
+    "uxml/UxmlTypes.js": "5bac50ca692c483c3800ae7ec712710e7ae08572",
+    "uxml/UxmlValidationGate.js": "7a6070f9b77602f227a30d7e06a3e425d17c9c16",
+    "uxml/UxmlPsi116SchemaMapper.js": "978a63141fb94ef9cad3c8eaa637a37675a605f9",
+    "uxml/UxmlInputXmlSchemaMapper.js": "1e730b594c536d955a5d1a24190d0ca4dc147d27",
+    "uxml/UxmlInputXmlDeltaGraph.js": "8b45016bccf2a759108dfa6efc9827cc1c2eba7d",
+    "utils/line-no-metadata.js": "8315e966d5911ba60703ee3726166e3a3035c6df",
+    "tools/psi116-to-uxml.mjs": "7148fc20000963c5a32be27a7787705745e1d30b",
+    "tools/inputxml-to-uxml.mjs": "7f32736308a0baea86b95c3281bb0bbd71d12176",
+    "tests/fixtures/uxml-s3-synthetic.psi116.xml": "f262e6a4affb5c5a929b12c415a04569b79dbe46",
+    "tests/fixtures/uxml-s3-synthetic.workspace.input.xml": "ed141547b7b8cb4ee0cc4c07b1d888850681749e",
+    "tests/fixtures/uxml-s3-synthetic.workspace.delta-only.input.xml": "4888341e419b0efbd5deb93c012fdbe672014773",
+    "docs/GREInputxml.xml": "e7dc8ff9b1082d489609980bb495ced048a81679",
+    "docs/PLB314Inputxml.xml": "b0bdcf853992cee6ae7911e7a4c035c6b7ff7990",
+}
+
+
+def pinned_reader(path: Path, root: Path) -> dict:
+    for relative, expected in XCU_BLOBS.items():
+        f = root / relative
+        need(f.is_file(), "INPUT_XML_PINNED_XCU_BLOB_MISSING:" + relative)
+        content = f.read_bytes()
+        blob = sha1(b"blob " + str(len(content)).encode("ascii") + b"\0" + content).hexdigest()
+        need(blob == expected, "INPUT_XML_PINNED_XCU_BLOB_MISMATCH:" + relative)
+    tool = root / "tools" / "inputxml-to-uxml.mjs"
+    try:
+        p = subprocess.run(["node", str(tool), str(path)],
+                           cwd=root, capture_output=True, text=True, timeout=60)
+    except FileNotFoundError as exc:
+        raise InputXmlPatchError("INPUT_XML_PINNED_NODE_RUNTIME_REQUIRED") from exc
+    need(p.returncode == 0, "INPUT_XML_PINNED_READER_FAILED:" +
+         (p.stderr.strip() or str(p.returncode)))
+    data = json.loads(p.stdout)
+    need(isinstance(data, dict), "INPUT_XML_PINNED_READER_RESULT_INVALID")
+    return data
 
 class InputXmlPatchError(ValueError):
     """Specific fail-closed refusal; no output or validation file is emitted."""
@@ -259,6 +303,10 @@ def patch_inputxml(original: Path, uxml: dict, payload: dict,
                    xcu_root: Path, config: ResolverConfig | None = None) -> tuple[bytes, dict]:
     config = config or ResolverConfig()
     data = original.read_bytes()
+    # Independently regenerate from actual original bytes: never let a
+    # caller remove lossContract warnings or forge a UXML permission.
+    canonical = pinned_reader(original, xcu_root)
+    need(canonical == uxml, "INPUT_XML_UXML_NOT_FROM_PINNED_ORIGINAL")
     rows, refs = exact_original_refs(uxml, data)
     result = resolve_from_uxml(uxml, config, source_name=str(original))
     need(result.document.source_text.encode("utf-8") == data,
@@ -285,13 +333,7 @@ def patch_inputxml(original: Path, uxml: dict, payload: dict,
     with tempfile.TemporaryDirectory(prefix="topofix-inputxml-reread-") as tmp:
         path = Path(tmp) / "patched.input.xml"
         path.write_bytes(candidate)
-        tool = xcu_root / "tools" / "inputxml-to-uxml.mjs"
-        need(tool.is_file(), "INPUT_XML_PINNED_XCU_READER_REQUIRED")
-        p = subprocess.run(["node", str(tool), str(path)], cwd=xcu_root,
-                           text=True, capture_output=True, timeout=60)
-        need(p.returncode == 0, "INPUT_XML_POST_PATCH_READER_FAILED:" +
-             (p.stderr.strip() or str(p.returncode)))
-        reread = json.loads(p.stdout)
+        reread = pinned_reader(path, xcu_root)
     need(reread.get("sources", [{}])[0].get("hash") == sha256(candidate).hexdigest(),
          "INPUT_XML_PATCHED_SOURCE_SHA_NOT_VERIFIED")
     # Verify all newly issued source refs against patched *original* bytes.
