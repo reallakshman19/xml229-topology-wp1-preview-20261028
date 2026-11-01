@@ -3,16 +3,21 @@
  */
 export function trialGroup(item) {
   if(item.fix?.kind==='manual')return 'review';
-  if(item.fix?.kind==='keep'||item.fix?.kind==='evidence')return 'preserve';
+  if(item.fix?.kind==='auto')return 'auto';
+  if(item.fix?.kind==='keep')return 'preserve';
   return 'information';
 }
+export const trialGroupFilters=Object.freeze({
+  review:'manual',auto:'auto',preserve:'keep',information:'information',
+});
 export const trialGroupTitles=Object.freeze({
   review:'Needs your review',
-  preserve:'Preserved by rule — no action',
-  information:'Informational / other remaining',
+  auto:'Auto fixes available',
+  preserve:'No action needed: kept by rule',
+  information:'Informational / evidence-only',
 });
 export function trialRemaining(audit) {
-  const groups={review:[],preserve:[],information:[]};
+  const groups={review:[],auto:[],preserve:[],information:[]};
   for(const item of audit?.items||[])groups[trialGroup(item)].push(item);
   return groups;
 }
