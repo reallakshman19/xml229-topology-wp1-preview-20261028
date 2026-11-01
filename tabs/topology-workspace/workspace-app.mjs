@@ -756,8 +756,10 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       const result=await runEngine(job,{onProgress:progress});
       if(!current())return;
       if(result?.ok!==true){
-        // A failed read-only job cannot retain prior EQUAL hub authority.
-        recordHubResult(result,source.rawSha256);
+        // Never trust an EQUAL receipt attached to a failed Worker result.
+        // Revoke release authority, not just the short selection.
+        recordHubResult({topologyUxmlParity:{status:'DIFFERENT',
+          differences:['UXML_SHORT_PREVIEW_WORKER_FAILED']}},source.rawSha256);
         throw Error('UXML_SHORT_PREVIEW_WORKER_FAILED');
       }
       if(result?.topologyUxmlParity?.status!=='EQUAL'){
