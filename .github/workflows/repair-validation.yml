@@ -39,6 +39,12 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}/converters
         run: |
           set -euo pipefail
+          test -f "$XCU_UXML_ROOT/tools/psi116-to-uxml.mjs"
+          python3 -B -m unittest discover -s tests -p test_uxml_short_drop_hub.py -v 2>&1 | tee /tmp/topofix-pinned-short-drop-hub.log
+          if grep -Fq 'skipped' /tmp/topofix-pinned-short-drop-hub.log; then
+            echo 'PINNED_UXML_SHORT_DROP_HUB_TEST_SKIP_REFUSED' >&2
+            exit 1
+          fi
           python3 -B -m unittest discover -s tests -p test_uxml_psi116_s2.py -v
           (cd tests && python3 -B -m unittest test_uxml_psi116_s2 -v)
           python3 -B -m unittest discover -s tests -v
