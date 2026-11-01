@@ -146,10 +146,7 @@ def build_operation_preview(uxml: dict, *,
             # Without a source-bound identifier the entire request is invalid:
             # the UI could not safely deselect or locate the refused item.
             raise OperationsPreviewError("UXML_PREVIEW_SHORT_REQUEST_INVALID")
-        if identifier in seen_short:
-            refused.append({"id": identifier,
-                            "code": "UXML_PREVIEW_DUPLICATE_SHORT_SELECTION"})
-            continue
+        _need(identifier not in seen_short, "UXML_PREVIEW_DUPLICATE_SHORT_SELECTION")
         seen_short.add(identifier)
         try:
             one = export_edit_ops(uxml, policy=TransactionPolicy(
@@ -229,7 +226,7 @@ def build_operation_preview(uxml: dict, *,
         "schema": SCHEMA,
         "sourceSha256": payload["fileSha256"],
         "summary": {
-            "totalOps": len(all_ops),
+            "totalOps": len(rows),
             "byKind": by_kind,
             "sourceRecordCount": len(records),
             "untouchedRecordCount": len(records) - len(edited_keys),
