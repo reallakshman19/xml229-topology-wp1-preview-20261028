@@ -170,8 +170,9 @@ class _ShortPreviewSourceScope:
                          node.tag.rsplit("}", 1)[-1] == "Branch"]
         self.root_direct = (len(self.branches) == len(result.document.branches) and
                             all(branch in self.root for branch in self.branches))
-        self.blocking = any(a.status == "BLOCKED" or a.blockers
-                            for a in result.fix_actions)
+        self.blocking = (
+            any(a.status == "BLOCKED" or a.blockers for a in result.fix_actions)
+            or any(f.blocking for f in result.findings))
         self.numbers = []
         self.boxes = []
         self.node_count = sum(len(b.nodes) for b in result.document.branches)
@@ -262,10 +263,12 @@ def build_operation_preview(uxml: dict, *,
                             source_name: str = "<memory>",
                             config: ResolverConfig | None = None,
                             short_requests: list[dict] | None = None) -> dict:
-    """Read-only; one preview row for each actual export_edit_ops/v1 op.
+    """Read-only; one row per canonical source-qualified edit operation.
 
-    No XML clone is modified; no transaction is started or outputs written.
-    Does not broaden the source's Auto-fix selection policy.
+    A disposable native transaction may run on a proven isolated source slice,
+    or on the full source when isolation is uncertain. The original is never
+    modified, no corrected output is published, and Apply always reruns the
+    authoritative full-original transaction with its complete validation.
     """
     config = config or ResolverConfig()
     # Resolve the exact full original source ONCE per read-only job, and reuse
