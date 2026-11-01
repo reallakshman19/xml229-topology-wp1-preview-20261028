@@ -150,9 +150,9 @@ test('manual evidence notes distinguish intended termination from repair needed 
 
 test('counts reflect search/category and do not change when severity tab is selected',()=>{
  const m=buildAudit(findings,actions);
- assert.deepEqual(filterCounts(m),{all:4,error:1,warning:2,auto:1,manual:1,evidence:1});
+ assert.deepEqual(filterCounts(m),{all:4,error:1,warning:2,auto:1,manual:1,keep:1,information:1,evidence:1});
  assert.deepEqual(filterCounts(m,{category:'connection'}),{
-   all:2,error:1,warning:1,auto:1,manual:1,evidence:0});
+   all:2,error:1,warning:1,auto:1,manual:1,keep:0,information:0,evidence:0});
  assert.equal(filterCounts(m,{search:'B0:N1750:S0'}).all,1);
  assert.equal(filterCounts(m,{category:'gaps'}).all,0);
 });
