@@ -1,10 +1,10 @@
-/** Read-only aggregation of per-chunk UXML short-operation previews.
+/** Read-only custody verification for full-session (or segmented) UXML previews.
  * Every chunk must independently pass its own exact selected=accepted+refused
  * custody contract. Only after the complete set passes is a report published.
  */
 import {assessShortPreview} from './short-preview-model.mjs';
 
-export const SHORT_HUB_PREVIEW_CHUNK_SIZE=4;
+export const SHORT_HUB_PREVIEW_PROGRESS_INTERVAL=4;
 const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 
 export function mergeShortHubPreviewChunks(chunks, selectedIds) {
