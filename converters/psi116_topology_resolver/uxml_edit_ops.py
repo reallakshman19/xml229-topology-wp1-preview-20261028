@@ -404,7 +404,7 @@ def export_edit_ops(
 
 
 def _validate_ops(uxml: dict, payload: Mapping[str, Any],
-                  result: ResolutionResult) -> TransactionPolicy:
+                  result: ResolutionResult, config: ResolverConfig) -> TransactionPolicy:
     _require(isinstance(payload, dict) and set(payload) == PAYLOAD_FIELDS and
              payload.get("schema") == EDIT_OP_SCHEMA and
              payload.get("sourceFormat") == "PSI116",
@@ -422,7 +422,7 @@ def _validate_ops(uxml: dict, payload: Mapping[str, Any],
                  "UXML_SHORT_EXACT_ONE_OP_REQUIRED")
         op = supplied[0]
         _require(op.get("kind") == "DROP_SHORT_ELEMENT", "UXML_SHORT_KIND_REFUSED")
-        canonical = _short_canonical_operation(uxml, result, policy, ResolverConfig())
+        canonical = _short_canonical_operation(uxml, result, policy, config)
         _require(op == canonical, "UXML_SHORT_TARGETS_OR_PARAMS_DIFFER_FROM_AUTHORITY")
         _require(all(key in refs for key in op["targets"]), "UXML_SHORT_SOURCE_REF_NOT_FOUND")
         return policy
@@ -489,7 +489,7 @@ def apply_edit_ops(
     result = resolve_from_uxml(uxml, config, source_name=str(original_path))
     _require(result.document.source_text.encode("utf-8") == data,
              "UXML_ORIGINAL_BYTES_MISMATCH")
-    policy = _validate_ops(uxml, payload, result)
+    policy = _validate_ops(uxml, payload, result, config)
     if not payload["ops"]:
         return None
 
@@ -515,6 +515,26 @@ def apply_edit_ops(
     # Do not reinterpret any FixAction, reconstruct any normalized XML, or
     # bypass native validation. Existing transaction.py has sole write authority.
     return apply_topofix_transaction(result, policy=policy, config=config)
+
+
+
+def compare_hub_patch(direct: TopoFixTransactionResult,
+                      patched: TopoFixTransactionResult | None) -> list[str]:
+    """Fail-closed parity witness for the Worker before it can emit fixed XML.
+
+    Complete transaction/validation payloads and the corrected XML bytes
+    must agree; a missing or rejected patched transaction is not EQUAL.
+    """
+    if patched is None or not patched.committed or patched.fixed_xml is None:
+        return ["/patchBack: UXML_PATCH_NOT_COMMITTED"]
+    differences: list[str] = []
+    _diff("/transaction", direct.transaction_payload(),
+          patched.transaction_payload(), differences)
+    _diff("/validation", direct.validation_payload(),
+          patched.validation_payload(), differences)
+    if direct.fixed_xml != patched.fixed_xml:
+        differences.append("/fixedXml: PATCH_BYTES_DIFFER_FROM_DIRECT")
+    return differences
 
 
 def compare_patch_to_direct(original: str | Path, uxml: dict,
