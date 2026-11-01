@@ -360,6 +360,19 @@ export async function runPsi116TopologyStage(pyodide, job, inputPath, jobDir, st
     throw new Error(`Committed TopoFix XML is required before it can be used for CII conversion${reasonText}`);
   }
 
+  // Pre-Final BULK only: every requested sidecar has already been read into
+  // this result and validated by Python. Remove ephemeral Pyodide scratch
+  // files so 89 validated revisions can reuse one warm Worker safely.
+  // This path NEVER runs for native CII, Final, preview, or ordinary jobs.
+  if(options.topologyBulkSession===true && job.topologyPreFinalOnly===true &&
+     useTopoFixForCii===false){
+    for(const name of pyodide.FS.readdir(jobDir)){
+      if(name==='.'||name==='..')continue;
+      pyodide.FS.unlink(jobDir+'/'+name);
+    }
+    pyodide.FS.rmdir(jobDir);
+  }
+
   stdout.push(`PSI116 topology analysis wrote ${names.findings} and ${names.plan}.`);
   if (generateTopoFix && topoFixCommitted) stdout.push(`Committed TopoFix XML: ${names.fixed}.`);
   if (generateTopoFix && !topoFixCommitted) stdout.push(`WARNING: TopoFix transaction rejected${rejectReasons.length ? `: ${rejectReasons.join(', ')}` : '.'}`);
