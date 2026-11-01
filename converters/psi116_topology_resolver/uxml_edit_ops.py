@@ -358,10 +358,14 @@ def export_edit_ops(
              "UXML_EDIT_POLICY_TYPE_INVALID")
     _enforce_today_auto_policy(requested.minimum_confidence,
                                requested.require_no_blocking_plan_actions)
-    _require(not requested.joint_repairs and not requested.short_element_requests,
-             "UXML_MANUAL_REPAIR_NOT_AUTHORIZED")
+    _require(not requested.joint_repairs, "UXML_MANUAL_REPAIR_NOT_AUTHORIZED")
     result = resolve_from_uxml(uxml, config, source_name=source_name)
     sha = _source_sha(uxml)
+    if requested.short_element_requests:
+        op = _short_canonical_operation(uxml, result, requested, config)
+        return {"schema": EDIT_OP_SCHEMA, "sourceFormat": "PSI116",
+                "fileSha256": sha, "policy": json.loads(json.dumps(asdict(requested))),
+                "ops": [op]}
     candidates = _selected_actions(result, requested)
     actions = [a for a in candidates if a.disposition in MUTATING_DISPOSITIONS]
     _require(all(a.status == "PROPOSED" and not a.blockers and
@@ -412,6 +416,16 @@ def _validate_ops(uxml: dict, payload: Mapping[str, Any],
     supplied = payload.get("ops")
     _require(isinstance(supplied, list), "UXML_EDIT_OPS_LIST_REQUIRED")
     refs = _source_refs_by_key(uxml, sha)
+    if policy.short_element_requests:
+        _require(len(supplied) == 1 and isinstance(supplied[0], dict) and
+                 set(supplied[0]) == EDIT_OP_FIELDS,
+                 "UXML_SHORT_EXACT_ONE_OP_REQUIRED")
+        op = supplied[0]
+        _require(op.get("kind") == "DROP_SHORT_ELEMENT", "UXML_SHORT_KIND_REFUSED")
+        canonical = _short_canonical_operation(uxml, result, policy, ResolverConfig())
+        _require(op == canonical, "UXML_SHORT_TARGETS_OR_PARAMS_DIFFER_FROM_AUTHORITY")
+        _require(all(key in refs for key in op["targets"]), "UXML_SHORT_SOURCE_REF_NOT_FOUND")
+        return policy
     by_id = {a.action_id: a for a in result.fix_actions}
     selected = []
     observed_ids = []
