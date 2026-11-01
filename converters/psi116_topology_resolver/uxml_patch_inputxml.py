@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 from dataclasses import asdict
+from decimal import Decimal, InvalidOperation
 from hashlib import sha1, sha256
 import json
 import os
@@ -190,30 +191,102 @@ def _format_like(original: str, target: int) -> bytes:
     return (f"{target:.{digits}f}" if digits else str(target)).encode("ascii")
 
 
-def _target_field_losses(uxml: dict, writes: list[tuple[int, str, int, int]]) -> None:
+# Source-only node references are protected throughout the WHOLE InputXML,
+# including records that the selected operation does not otherwise touch.
+CHILD_NODE_FIELD = re.compile(r"(?:NODE[0-9]*|CNODE)", re.I)
+LOSS_NUMBER = re.compile(
+    r"(?<![A-Za-z0-9_.])[-+]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)"
+    r"(?:[Ee][-+]?[0-9]+)?(?![A-Za-z0-9_.])"
+)
+RECORD_PATH = re.compile(r"^/CAESARII/PIPINGMODEL/PIPINGELEMENT\[([0-9]+)\](?:/|$)")
+
+
+def _is_old_node_number(value: object, old: int) -> bool:
+    """Numerical equality without float rounding or substring matching."""
+    try:
+        number = Decimal(str(value).strip())
+        return number.is_finite() and number == old
+    except (InvalidOperation, ValueError, TypeError):
+        return False
+
+
+def _loss_mentions_node(value: object, old: int) -> bool:
+    """Loss raw may be a single numeric attribute OR an unrepresented XML tag."""
+    if not isinstance(value, str):
+        return False
+    if _is_old_node_number(value, old):
+        return True
+    return any(_is_old_node_number(m.group(), old)
+               for m in LOSS_NUMBER.finditer(value))
+
+
+def _protect_source_only_references(
+    uxml: dict, rows: list[ET.Element], writes: list[tuple[int, str, int, int]]
+) -> None:
+    """Reject any stranded descendant or raw-only witness in ANY source record.
+
+    The lossContract cannot carry the edited FROM_NODE/TO_NODE fields (those
+    are represented), so a touched-field-only veto is ineffective. Instead
+    check all ORIGINAL child attributes and ALL raw ledger values for every
+    absorbed source node, regardless of which PIPINGELEMENT is selected.
+    """
     losses = uxml.get("lossContract")
     need(isinstance(losses, list), "INPUT_XML_LOSS_CONTRACT_MISSING")
-    for index, field, before, _ in writes:
-        path = f"/CAESARII/PIPINGMODEL/PIPINGELEMENT[{index}]"
-        for loss in losses:
-            need(isinstance(loss, dict) and isinstance(loss.get("details"), dict),
-                 "INPUT_XML_LOSS_CONTRACT_INVALID")
-            info = loss["details"]
-            source_path = info.get("path") or info.get("sourcePath") or ""
-            source_field = info.get("field") or ""
-            if source_path == path and source_field.upper() == "@" + field:
-                raise InputXmlPatchError("INPUT_XML_LOSS_CONTRACT_FIELD_TOUCH:" +
-                                         path + ":@" + field)
-        # Never change a source node referenced in unrepresented descendants
-        # such as SIF, RESTRANT, HANGER or vendor records.
-        children = uxml["components"][index]["rawAttributes"]["inputXml"]
-        for item in children.get("sifEvidence") or []:
-            if item.get("node") and str(item["node"]).split(".", 1)[0] == str(before):
-                raise InputXmlPatchError("INPUT_XML_CLASS_B_SIF_OWNER_TOUCH_REFUSED")
-        for child in children.get("restraints") or []:
-            for attr, val in (child.get("attributes") or {}).items():
-                if attr.upper() in {"NODE", "CNODE"} and str(val).split(".", 1)[0] == str(before):
-                    raise InputXmlPatchError("INPUT_XML_RAW_CHILD_NODE_REFERENCE_TOUCH_REFUSED")
+    old_numbers = {old for _, _, old, _ in writes}
+    need(bool(old_numbers), "INPUT_XML_NO_ABSORBED_SOURCE_NODE")
+    for index, row in enumerate(rows):
+        for descendant in row.iter():
+            if descendant is row:
+                continue
+            tag = descendant.tag.rsplit("}", 1)[-1] if isinstance(descendant.tag, str) else ""
+            for field, value in descendant.attrib.items():
+                name = field.rsplit("}", 1)[-1]
+                if not CHILD_NODE_FIELD.fullmatch(name):
+                    continue
+                for old in old_numbers:
+                    if _is_old_node_number(value, old):
+                        reason = ("INPUT_XML_CLASS_B_SIF_OWNER_TOUCH_REFUSED" if
+                                  tag.upper() == "SIF" and name.upper() == "NODE"
+                                  else "INPUT_XML_STRANDED_DESCENDANT_NODE_REFERENCE")
+                        raise InputXmlPatchError(f"{reason}:E{index}:{tag}@{name}:{old}")
+
+    for loss in losses:
+        need(isinstance(loss, dict) and isinstance(loss.get("details"), dict),
+             "INPUT_XML_LOSS_CONTRACT_INVALID")
+        details = loss["details"]
+        path = details.get("path") or details.get("sourcePath")
+        need(isinstance(path, str), "INPUT_XML_LOSS_CONTRACT_PATH_INVALID")
+        if not RECORD_PATH.match(path):
+            continue
+        need(isinstance(details.get("raw"), str),
+             "INPUT_XML_LOSS_CONTRACT_RAW_MISSING:" + path)
+        raw = details["raw"]
+        for old in old_numbers:
+            if _loss_mentions_node(raw, old):
+                raise InputXmlPatchError(
+                    f"INPUT_XML_STRANDED_LOSS_CONTRACT_NODE_VALUE:{path}:{old}")
+
+
+def _refuse_self_loop_after_alias(
+    rows: list[ET.Element], writes: list[tuple[int, str, int, int]]
+) -> None:
+    """Planned renumber must not cause OR leave FROM_NODE == TO_NODE."""
+    planned = [(row.attrib.get("FROM_NODE"), row.attrib.get("TO_NODE"))
+               for row in rows]
+    for index, field, old, new in writes:
+        need(0 <= index < len(planned), "INPUT_XML_WRITE_RECORD_INDEX_INVALID")
+        value = planned[index][0 if field == "FROM_NODE" else 1]
+        need(_is_old_node_number(value, old),
+             "INPUT_XML_PLANNED_ALIAS_SOURCE_DRIFT")
+        from_node, to_node = planned[index]
+        replacement = str(new)
+        planned[index] = ((replacement if field == "FROM_NODE" else from_node),
+                          (replacement if field == "TO_NODE" else to_node))
+    for index, (from_node, to_node) in enumerate(planned):
+        need(from_node is not None and to_node is not None,
+             "INPUT_XML_ELEMENT_ENDPOINT_MISSING:E" + str(index))
+        need(not (_is_old_node_number(from_node, _caesar_int(to_node, "TO_NODE"))),
+             "INPUT_XML_RENUMBER_SELF_LOOP_REFUSED:E" + str(index))
 
 
 def _get_actions(uxml: dict, payload: dict, result) -> tuple[TransactionPolicy, tuple, list[tuple[int, str, int, int]]]:
@@ -295,7 +368,6 @@ def _get_actions(uxml: dict, payload: dict, result) -> tuple[TransactionPolicy, 
         before = {(i, fld) for (num, i, fld) in old_sources if num == old}
         selected = {(i, fld) for i, fld, num, _ in writes if num == old}
         need(before == selected, "INPUT_XML_ALIAS_UNACCOUNTED_SOURCE_OCCURRENCE")
-    _target_field_losses(uxml, writes)
     return policy, actions, writes
 
 
@@ -313,6 +385,8 @@ def patch_inputxml(original: Path, uxml: dict, payload: dict,
          "INPUT_XML_ORIGINAL_BYTES_MISMATCH")
     policy, actions, writes = _get_actions(uxml, payload, result)
     need(bool(writes), "INPUT_XML_NO_AUTHORIZED_EDIT")
+    _protect_source_only_references(uxml, rows, writes)
+    _refuse_self_loop_after_alias(rows, writes)
     span_attrs = byte_record_spans(data, rows)
     replacements: list[tuple[int, int, bytes]] = []
     for index, field, old, new in writes:
@@ -376,6 +450,22 @@ def patch_inputxml(original: Path, uxml: dict, payload: dict,
                         for row in uxml["components"]]
     new_record_spans = [row["rawAttributes"]["inputXml"]["rawXml"]
                         for row in reread["components"]]
+    restraint_before = sum(1 for row in rows for e in row.iter()
+                           if e is not row and isinstance(e.tag, str) and
+                           e.tag.rsplit("}", 1)[-1].upper() in
+                           {"RESTRAINT", "RESTRANT"})
+    restraint_after = sum(1 for row in patched_rows for e in row.iter()
+                          if e is not row and isinstance(e.tag, str) and
+                          e.tag.rsplit("}", 1)[-1].upper() in
+                          {"RESTRAINT", "RESTRANT"})
+    reread_verified = (
+        isinstance(reread, dict) and
+        reread.get("sources", [{}])[0].get("hash") == sha256(candidate).hexdigest()
+        and reread["sources"][0].get("sourceText", "").encode("utf-8") == candidate
+        and after.document.source_sha256 == sha256(candidate).hexdigest()
+        and len(after.document.branches) > 0
+        and bool(after.findings_payload(config).get("summary"))
+    )
     checks = list(native) + [
         ValidationCheck("ORIGINAL_FILE_SHA256_BOUND", True, True,
                         "Original bytes and every sourceRef were verified before edits."),
@@ -389,11 +479,9 @@ def patch_inputxml(original: Path, uxml: dict, payload: dict,
                         "Every original InputXML PIPINGELEMENT retained.",
                         len(rows), len(patched_rows)),
         ValidationCheck("RESTRAINT_COUNT_PRESERVED_EXACT",
-                        len([e for row in rows for e in row if
-                             e.tag.rsplit('}', 1)[-1] in ('RESTRAINT', 'RESTRANT')]) ==
-                        len([e for row in patched_rows for e in row if
-                             e.tag.rsplit('}', 1)[-1] in ('RESTRAINT', 'RESTRANT')]),
-                        True, "All original restraint elements retained."),
+                        restraint_before == restraint_after, True,
+                        "All original restraint elements retained.",
+                        restraint_before, restraint_after),
         ValidationCheck("NODE_IDENTIFIER_ACCOUNTING",
                         after_identifiers == expected_ids, True,
                         "Every absorbed source node is replaced with its approved owner.",
@@ -402,8 +490,10 @@ def patch_inputxml(original: Path, uxml: dict, payload: dict,
                         len(reread.get("ports") or []) == 2 * len(rows), True,
                         "Each PIPINGELEMENT retains FROM and TO occurrences."),
         ValidationCheck("PINNED_UXML_REREAD_AND_FINDINGS",
-                        True, True,
-                        "XCU pinned reader and original TopoFix findings engine reran."),
+                        reread_verified, True,
+                        "Pinned XCU reread bytes, SHA and re-run engine findings checked.",
+                        sha256(candidate).hexdigest(),
+                        after.document.source_sha256),
     ]
     failures = [x.code for x in checks if x.blocking and not x.passed]
     need(not failures, "INPUT_XML_POST_PATCH_VALIDATION_FAILED:" + ",".join(failures))
