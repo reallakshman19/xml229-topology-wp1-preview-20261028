@@ -110,14 +110,12 @@ test('336 generated PSI116 occurrences: real Worker/Pyodide one short-drop with 
   console.info('UXML_BULK_SYNTHETIC_INITIAL_STATE '+JSON.stringify(initialState));
   assert.equal(initialState.state.hubParity,'EQUAL',
     'Generated 336-occurrence fixture must establish exact source/UXML parity');
-  await page.locator('[data-preview-short]').click();
+  await page.locator('[data-select-short]').click();
   await page.locator('[data-select-gaskets]').click();
   assert.equal(await page.locator('[data-short-index]:checked').count(),1);
-  const preview=page.locator('[data-short-hub-preview]');
-  assert.equal(await preview.isEnabled(),true);
-  await preview.click();
-  await page.waitForFunction(()=>document.querySelector('[data-run-short-drop]')?.disabled===false,
-                              undefined,{timeout:120000});
+  assert.equal(await page.locator('[data-short-hub-preview]').count(),0);
+  assert.equal(await page.locator('[data-run-short-drop]').isEnabled(),true,
+    'one-click hub short Apply follows selection with no preview approval');
   const started=performance.now();
   await page.locator('[data-run-short-drop]').click();
   await page.waitForFunction(()=>window.__bulkSpeedProbe.workspace.getState().revision===1&&
