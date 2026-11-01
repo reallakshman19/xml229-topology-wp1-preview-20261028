@@ -1,4 +1,5 @@
 /** Human-readable PSI116 rule audit. Presentation only: all severities and witnesses come from findings. */
+import {trialGroup} from './trial-clarity.mjs';
 const RULES=Object.freeze({
  CONNECTION_DECLARATION_CONFLICT:["Connection declarations conflict","Source-linked records disagree about a junction owner or closed termination. Reconcile the branch declaration with the actual physical owner before changing the connection."],
  PORT_CONNECTION_WITHIN_TOLERANCE:["Connection within 25 mm tolerance","Compatible physical ports have a unique counterpart within the inclusive project tolerance. Auto fix closes the interface and preserves finite component geometry."],
@@ -244,7 +245,8 @@ export function renderAuditHTML(audit,{search="",filter="all",category="all",rev
   i.action?.action_id,i.action?.disposition,...(i.finding.node_numbers||[]),
   ...(i.finding.node_keys||[])].some(s=>String(s??"").toLowerCase().includes(q));
  const relevant=i=>match(i)&&(category==="all"||category===i.category)&&
-  (filter==="all"||filter===i.severity.toLowerCase()||filter===i.fix.kind);
+  (filter==="all"||filter===i.severity.toLowerCase()||filter===i.fix.kind||
+   (filter==="information"&&trialGroup(i)==="information"));
  let shown=0;
  const manual=filter==='manual';
  const sections=(manual?['manual']:Object.keys(CATEGORIES)).map(categoryId=>{
@@ -299,6 +301,8 @@ export function filterCounts(audit,{search="",category="all"}={}){
    warning:matched.filter(i=>i.severity==="WARNING").length,
    auto:matched.filter(i=>i.fix.kind==="auto").length,
    manual:matched.filter(i=>i.fix.kind==="manual").length,
+   keep:matched.filter(i=>i.fix.kind==="keep").length,
+   information:matched.filter(i=>trialGroup(i)==="information").length,
    evidence:matched.filter(i=>i.fix.kind==="evidence").length};
 }
 
