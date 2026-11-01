@@ -199,7 +199,7 @@ if job_generate_topofix:
         )
 
 _speed_marks['pyValidationRecheckMs'] = (_speed_time.perf_counter() - _speed_started) * 1000 - sum(_speed_marks.values())
-status['bulkTimings'] = _speed_marks if job_bulk_speed_profile else None
+status['bulkTimings'] = _speed_marks if globals().get('job_bulk_speed_profile', False) else None
 status["opsPreview"] = ops_preview if hub_parity["status"] == "EQUAL" else None
 status["hubParity"] = hub_parity
 Path(job_topology_status_path).write_text(
