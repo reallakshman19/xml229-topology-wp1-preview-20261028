@@ -41,3 +41,46 @@ footer{font-size:12px;color:#94a3b8;margin-top:14px}
 .topo-short-preview:empty{display:none}.topo-short-preview{padding:12px;border:1px solid #fbbf24;background:#162333;margin-bottom:12px;border-radius:8px}
 .topo-short-preview ul{max-height:300px;overflow:auto;padding-left:20px}.topo-short-preview li{margin:8px 0}.topo-short-preview small{display:block;overflow-wrap:anywhere;color:#cbd5e1}
 .audit-fix-status[data-result=stopped]{border-color:#fbbf24;color:#fde68a}
+
+/* Pinned UXML reader handshake. Text remains visible regardless of color. */
+.uxml-toggle{display:inline-flex;gap:.45rem;align-items:center;font-weight:600;white-space:nowrap}
+.uxml-parity{display:inline-block;border:1px solid #718096;border-radius:.5rem;padding:.35rem .65rem;background:#fff;color:#25354a}
+.uxml-parity[data-parity="EQUAL"]{border-color:#397149;color:#20552d}
+.uxml-parity[data-parity="DIFFERENT"],.uxml-parity[data-parity="UNAVAILABLE"]{border-color:#a13e32;color:#982b20}
+.uxml-parity-details{margin:.35rem 1.25rem;white-space:pre-wrap;overflow-wrap:anywhere;font-size:.92rem}
+
+/* UXML-PREVIEW: read-only list; no approval or apply controls are mounted. */
+.uxml-ops-panel{margin:1rem 1.25rem;padding:1rem;border:1px solid #8e9bac;border-radius:.6rem;background:var(--surface,#fff);color:var(--ink,#172536)}
+.uxml-ops-panel h2{margin:0 0 .5rem;font-size:1.12rem}
+.uxml-ops-panel h2 small{font-size:.78rem;font-weight:normal;margin-left:.6rem}
+.uxml-ops-controls{display:flex;gap:.6rem;flex-wrap:wrap;align-items:end;margin:.8rem 0}
+.uxml-ops-controls label{display:flex;flex-direction:column;gap:.25rem}
+.uxml-ops-controls input,.uxml-ops-controls select{max-width:18rem;padding:.35rem}
+.uxml-ops-panel[data-ops-state="DIFFERENT"] [data-ops-status],
+.uxml-ops-panel[data-ops-state="UNAVAILABLE"] [data-ops-status],
+.uxml-ops-panel[data-ops-state="INVALID"] [data-ops-status]{color:#9a2723;font-weight:600}
+.uxml-ops-rows{max-height:24rem;overflow:auto;border-top:1px solid #b8c1cb}
+.uxml-op-row{border-bottom:1px solid #bdc5ce;padding:.6rem 0}
+.uxml-op-row h3{margin:0 0 .4rem;font-size:1rem}
+.uxml-op-meta{font-size:.86rem;overflow-wrap:anywhere;margin:.15rem 0}
+.uxml-op-changes{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.86rem;list-style:none;padding-left:.7rem}
+.uxml-op-changes li{margin:.24rem 0;overflow-wrap:anywhere}
+.uxml-ops-note{font-size:.85rem;color:var(--muted,#4d5968)}
+.uxml-op-badge{font-size:.78rem;font-weight:600;border:1px solid #6f8996;border-radius:.3rem;padding:.12rem .4rem;margin-right:.4rem}
+
+/* UXML-TRIAL-CLARITY: explanation only; never changes admission gates. */
+.trial-result{margin:0 0 12px;padding:13px 16px;border-radius:8px;border:1px solid #38bdf8;background:#102438}
+.trial-result h2{font-size:17px;margin-bottom:5px}.trial-result h3{font-size:14px;margin:12px 0 6px}
+.trial-result p{font-size:12px;line-height:1.5;margin:5px 0;color:#d0e5f2}
+.trial-result-downloads,.trial-left{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.trial-left button{background:#164e63;border-color:#67e8f9}
+.trial-left button[aria-pressed="true"]{outline:2px solid #fbbf24;outline-offset:2px}
+.trial-note{opacity:.88}
+.audit-next-step{font-size:13px;line-height:1.45;margin:5px 0 9px;border-left:3px solid #67e8f9;padding:8px 10px;background:#112b3e;color:#ecfeff}
+.audit-review-nav{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 0;margin:6px 0;border-top:1px solid #475569}
+.audit-review-nav strong{font-size:12px;color:#cbd5e1}
+.audit-review-nav button{font-size:12px;padding:5px 8px}
+.audit-review-nav button:disabled{opacity:.55}
+.audit-case[open]>.audit-item{border-left:2px solid #67e8f9;padding-left:8px}
+.action-unavailable-reason{font-size:11px;color:#fcd34d;display:inline-block;max-width:330px;line-height:1.35;margin:3px 5px;vertical-align:middle;overflow-wrap:anywhere}
+.audit-controls .action-unavailable-reason,.trial-result-downloads .action-unavailable-reason{display:block}

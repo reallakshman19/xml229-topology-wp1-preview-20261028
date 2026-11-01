@@ -10,7 +10,7 @@
 <body>
 <main id="xml229-topology-workspace">
   <header class="topo-head">
-    <div><p class="topo-eyebrow">XML229 / STANDALONE</p>
+    <div><p class="topo-eyebrow">XML229 / STANDALONE · MANUAL QUEUE PR11</p>
       <h1>Topology audit &amp; inspection</h1>
       <p>Human-readable PSI116 rule audit, source-linked findings, and validated Auto fix copies. No Weight masters, O1, Final or native CII.</p></div>
     <a href="./index.html">Back to 3D Converters</a>
@@ -19,7 +19,41 @@
     <label>Original PSI116 XML <input data-file type="file" accept=".xml,application/xml,text/xml"></label>
     <button data-analyze type="button" disabled>Analyze topology</button>
     <button data-cancel type="button" disabled>Cancel view request</button>
+    <label class="uxml-toggle"><input data-uxml-toggle type="checkbox"> Universal XML route (preview)</label>
+    <strong class="uxml-parity" data-uxml-parity data-parity="OFF" role="status">UXML preview OFF · direct TopoFix</strong>
     <span data-source-meta role="status">Choose an original XML file; no stored source will be used.</span>
+  </section>
+  <section class="trial-result" data-trial-result hidden aria-label="Latest validated revision and remaining source review">
+    <h2 data-trial-head>Validated working revision</h2>
+    <p data-trial-checks role="status">Native validation receipt pending.</p>
+    <div class="trial-result-downloads">
+      <button type="button" data-trial-current disabled>Download validated XML</button>
+      <button type="button" data-trial-history disabled>Download repair history</button>
+      <button type="button" data-trial-evidence disabled>Download connection evidence</button>
+    </div>
+    <h3>What is left</h3>
+    <nav class="trial-left" aria-label="Remaining findings by next action">
+      <button type="button" data-what-left="review">Needs your review (0)</button>
+      <button type="button" data-what-left="auto">Auto fixes available (0)</button>
+      <button type="button" data-what-left="preserve">No action needed: kept by rule (0)</button>
+      <button type="button" data-what-left="information">Informational / evidence-only (0)</button>
+    </nav>
+    <p class="trial-note">These are current findings, not automatically certified connections. Use the group buttons to inspect source records; no new Apply or Approve action is added.</p>
+  </section>
+  <p class="uxml-parity-details" data-uxml-differences aria-live="polite">Enable the optional preview and Analyze to compare the two routes; this is not engineering acceptance.</p>
+  <section class="uxml-ops-panel" data-ops-panel hidden aria-label="Operations preview">
+    <h2>Operations preview <small>Read-only · no action is applied or approved here</small></h2>
+    <p data-ops-summary role="status" aria-live="polite">Enable Universal XML preview and Analyze to inspect proposed operations.</p>
+    <p data-ops-status aria-live="polite">Waiting for exact-source parity.</p>
+    <div class="uxml-ops-controls">
+      <label>Kind <select data-ops-kind aria-label="Filter operations by kind"><option value="all">All kinds</option></select></label>
+      <label>Source record key <input data-ops-search type="search" placeholder="Find exact record key" aria-label="Search operations by source record key"></label>
+      <button type="button" data-ops-json disabled>Export preview JSON</button>
+      <button type="button" data-ops-csv disabled>Export preview CSV</button>
+      <button type="button" data-ops-review>Source Review Queue (<span data-ops-review-count>0</span> review-only)</button>
+    </div>
+    <div data-ops-rows class="uxml-ops-rows" aria-live="polite"></div>
+    <p class="uxml-ops-note">This is an inspection of proposed Auto-eligible source changes, not a guarantee that a subsequent transaction will pass validation. Review-only cases are excluded. Nothing here applies, approves or queues an operation.</p>
   </section>
   <div class="topo-toolbar" role="toolbar" aria-label="Canvas navigation">
     <button data-mode="select" aria-pressed="true">Select</button>
@@ -42,6 +76,7 @@
     <button data-download-working disabled>Download current XML</button>
     <button data-download-history disabled>Download repair history</button>
     <button data-download-resolutions disabled>Download connection evidence</button>
+    <span data-evidence-proof role="status" aria-live="polite">Connection evidence unavailable: EVIDENCE_ANALYSIS_REQUIRED · Analyze the current XML.</span>
     <button data-preview-short disabled>Drop ≤6 mm elements, then close…</button>
   </div>
   <section data-short-preview class="topo-short-preview" aria-live="polite"></section>
@@ -76,6 +111,8 @@
           <button data-audit-filter="warning" data-audit-label="Warnings" aria-pressed="false">Warnings (0)</button>
           <button data-audit-filter="auto" data-audit-label="Auto fix" aria-pressed="false">Auto fix (0)</button>
           <button data-audit-filter="manual" data-audit-label="Manual fix · By rule" aria-pressed="false">Manual fix · By rule (0)</button>
+          <button data-audit-filter="keep" data-audit-label="Kept by rule" aria-pressed="false">Kept by rule (0)</button>
+          <button data-audit-filter="information" data-audit-label="Informational / evidence-only" aria-pressed="false">Informational / evidence-only (0)</button>
           <button data-audit-filter="evidence" data-audit-label="No XML change" aria-pressed="false">No XML change (0)</button>
         </div>
         <div class="audit-bulk"><button type="button" data-auto-fix-all disabled>Autofix-All (0 actions)</button>

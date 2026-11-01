@@ -1,0 +1,57 @@
+name: UXML-S2 original PSI116 patch and native transaction byte parity
+on:
+  pull_request:
+    paths:
+      - 'converters/psi116_topology_resolver/uxml_edit_ops.py'
+      - 'converters/psi116_topology_resolver/uxml_cli_common.py'
+      - 'converters/psi116_topology_resolver/uxml_export_ops.py'
+      - 'converters/psi116_topology_resolver/uxml_patch_psi116.py'
+      - 'tests/test_uxml_psi116_s2.py'
+      - '.github/workflows/uxml-s2-patch.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  psi116-patch-parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Fetch XCU reader from exactly 9f51bfcaf98af4041ec0c0615dc67c9c357b0632 and verify every Git blob
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/xcu-uxml-reader"
+          upstream="https://raw.githubusercontent.com/reallakshman19/XML_Compare_Utilities/9f51bfcaf98af4041ec0c0615dc67c9c357b0632"
+          mkdir -p "$root/uxml" "$root/tools"
+          curl --fail --location --retry 3 "$upstream/package.json" -o "$root/package.json"
+          test "$(git hash-object "$root/package.json")" = "8b0cc1e976ef2cd3cd10f344b37463738d22ea3d"
+          curl --fail --location --retry 3 "$upstream/uxml/UxmlConstants.js" -o "$root/uxml/UxmlConstants.js"
+          test "$(git hash-object "$root/uxml/UxmlConstants.js")" = "457b970f9cbccd29d38cecd0842614c339108107"
+          curl --fail --location --retry 3 "$upstream/uxml/UxmlProfileDetector.js" -o "$root/uxml/UxmlProfileDetector.js"
+          test "$(git hash-object "$root/uxml/UxmlProfileDetector.js")" = "b4edfc1b47337a0ad62d2a01c0c8f2ff86844803"
+          curl --fail --location --retry 3 "$upstream/uxml/UxmlTypes.js" -o "$root/uxml/UxmlTypes.js"
+          test "$(git hash-object "$root/uxml/UxmlTypes.js")" = "5bac50ca692c483c3800ae7ec712710e7ae08572"
+          curl --fail --location --retry 3 "$upstream/uxml/UxmlValidationGate.js" -o "$root/uxml/UxmlValidationGate.js"
+          test "$(git hash-object "$root/uxml/UxmlValidationGate.js")" = "7a6070f9b77602f227a30d7e06a3e425d17c9c16"
+          curl --fail --location --retry 3 "$upstream/uxml/UxmlPsi116SchemaMapper.js" -o "$root/uxml/UxmlPsi116SchemaMapper.js"
+          test "$(git hash-object "$root/uxml/UxmlPsi116SchemaMapper.js")" = "978a63141fb94ef9cad3c8eaa637a37675a605f9"
+          curl --fail --location --retry 3 "$upstream/tools/psi116-to-uxml.mjs" -o "$root/tools/psi116-to-uxml.mjs"
+          test "$(git hash-object "$root/tools/psi116-to-uxml.mjs")" = "7148fc20000963c5a32be27a7787705745e1d30b"
+          echo "XCU_UXML_ROOT=$root" >> "$GITHUB_ENV"
+      - name: Original PSI116 sourceRef patch against exact native transaction
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B -m unittest discover -s tests -p test_uxml_psi116_s2.py -v
+          (cd tests && python3 -B -m unittest test_uxml_psi116_s2 -v)
+          python3 -B -m unittest discover -s tests -v
+          (cd tests && python3 -B -m unittest discover -v)
+          python3 -m py_compile \
+            converters/psi116_topology_resolver/uxml_edit_ops.py \
+            converters/psi116_topology_resolver/uxml_cli_common.py \
+            converters/psi116_topology_resolver/uxml_export_ops.py \
+            converters/psi116_topology_resolver/uxml_patch_psi116.py
+          node --check "$XCU_UXML_ROOT/uxml/UxmlPsi116SchemaMapper.js"

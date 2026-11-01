@@ -44,6 +44,6 @@ export function secondPassHTML(draft,scene,ports){
    draft.preview.changes.map(c=>'<tr><td>'+esc(c.sourceKey)+'</td><td>'+esc(c.before.Position.join(', '))+'<br>Node '+esc(c.before.NodeNumber)+
     '</td><td>'+esc(c.after.Position.join(', '))+'<br>Node '+esc(c.after.NodeNumber)+'</td></tr>').join('')+'</tbody></table>'+
    '<label><input data-second-confirm type="checkbox" '+(draft.confirmed?'checked':'')+'> These exact ports must connect; I approve the displayed movement.</label>'+
-   '<button data-apply-second '+(!draft.confirmed||draft.evidence.trim().length<10||draft.busy?'disabled':'')+'>Apply second pass &amp; recheck</button></div>':'')+
+   '<button data-queue-second '+(!draft.confirmed||draft.evidence.trim().length<10||draft.busy?'disabled':'')+'>Add approved pair to queue</button> '+'<button data-apply-second '+(!draft.confirmed||draft.evidence.trim().length<10||draft.busy?'disabled':'')+'>Apply immediately</button></div>':'')+
   '<button data-cancel-second>Close second pass</button></fieldset>';
 }

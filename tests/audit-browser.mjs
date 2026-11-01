@@ -19,7 +19,8 @@ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 const port=server.address().port;
 const browser=await chromium.launch({headless:true,args:['--no-sandbox']});
 const page=await browser.newPage({viewport:{width:1440,height:960}});
-const pageErrors=[];page.on('pageerror',e=>pageErrors.push(String(e)));page.on('console',msg=>{if(msg.type()==='error')pageErrors.push('console:'+msg.text());});
+const pageErrors=[];const observedWorkers=[];page.on('worker',w=>observedWorkers.push(w.url()));
+page.on('pageerror',e=>pageErrors.push(String(e)));page.on('console',msg=>{if(msg.type()==='error')pageErrors.push('console:'+msg.text());});
 const result={};
 try{
  await page.goto('http://127.0.0.1:'+port+'/index.html');
@@ -28,6 +29,9 @@ try{
  result.loaded=true;
  await page.locator('[data-analyze]').click();
  await page.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'),null,{timeout:120000});
+ if(!observedWorkers.some(url=>url.includes('/topology-worker.mjs')))
+  throw Error('Topology analysis must execute in a dedicated Web Worker, not on the main thread.');
+ result.topologyWorker='PASS: module Worker created for PSI116 analysis';
  result.summary=await page.locator('[data-plan-summary]').textContent();
  result.filterCounts=Object.fromEntries(await Promise.all(
   ['all','error','warning','auto','manual','evidence'].map(async key=>
@@ -306,6 +310,8 @@ try{
  await page.locator('[data-analyze]').click();
  await page.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'),null,{timeout:120000});
  await page.locator('[data-preview-short]').click();
+ if(await page.locator('[data-short-index]').count()>24)throw Error('Unbounded short-element preview rendered');
+ if(!(await page.locator('[data-short-preview]').textContent()).includes('PREVIEW ONLY'))throw Error('Short preview missing nonmutating status');
  const shortPreview=await page.locator('[data-short-preview]').textContent();
  if(!shortPreview.includes('GASK · 3.000 mm · SHORT · 2 records · weight 2.5')||!shortPreview.includes('B0:N30:S3'))throw Error('Short preview missing complete owner/length/weight/source census');
  await page.locator('[data-select-gaskets]').click();
@@ -315,7 +321,7 @@ try{
  await page.locator('[data-run-short-drop]').click();
  await page.waitForFunction(()=>document.querySelector('main').getAttribute('aria-busy')==='false'&&['ready','stopped'].includes(document.querySelector('[data-fix-result]')?.getAttribute('data-result')),null,{timeout:120000});
  result.shortDrop=await page.locator('[data-progress]').textContent();
- if(!result.shortDrop.includes('APPLIED · 1 selected elements dropped and reconnected')||!(await page.locator('[data-occ-summary]').textContent()).includes('4 of 4'))throw Error('Drop did not update working geometry/counts: '+result.shortDrop);
+ if(!result.shortDrop.includes('BULK COMPLETE · selected 1 = 1 validated + 0 skipped + 0 failed + 0 unprocessed')||!(await page.locator('[data-occ-summary]').textContent()).includes('4 of 4'))throw Error('Drop did not update working geometry/counts: '+result.shortDrop);
  const shortXmlDownload=page.waitForEvent('download');await page.locator('[data-download-fix]').click();
  const shortXml=await readFile(await (await shortXmlDownload).path(),'utf8');
  const shortPorts=await page.evaluate(xml=>[...new DOMParser().parseFromString(xml,'application/xml').getElementsByTagNameNS('*','Node')].map(n=>({
@@ -323,15 +329,14 @@ try{
  if(JSON.stringify(shortPorts)!==JSON.stringify([{xyz:'0 0 0',ref:'P'},{xyz:'103 0 0',ref:'P'},{xyz:'103 0 0',ref:'F'},{xyz:'189 0 0',ref:'F'}]))throw Error('Drop failed PIPE-first closure or changed retained flange');
  const shortReceiptDownload=page.waitForEvent('download');await page.locator('[data-download-batch-report]').click();
  const shortReceipt=JSON.parse(await readFile(await (await shortReceiptDownload).path(),'utf8'));
- const shortPass=shortReceipt.passes?.[0];
- if(shortReceipt.schema!=='xml229-short-element-drop-batch/v1'||shortReceipt.stopReason!=='COMPLETE'||shortReceipt.droppedElementCount!==1||shortReceipt.removedRecordCount!==2||
+ const shortPass=shortReceipt.applied?.[0];
+ if(shortReceipt.schema!=='xml229-short-element-bulk/v2'||shortReceipt.stopReason!=='COMPLETE'||shortReceipt.applied.length!==1||shortPass.transaction.operations.filter(o=>o.operation==='REMOVE_SELECTED_SHORT_ELEMENT_RECORD').length!==2||
    shortReceipt.fixedXmlSha256!==createHash('sha256').update(shortXml).digest('hex')||
    shortPass.transaction.policy.short_element_requests[0].sourceSha256!==createHash('sha256').update(shortFixture).digest('hex')||
-   shortPass.operations.filter(o=>o.operation==='REMOVE_SELECTED_SHORT_ELEMENT_RECORD').length!==2||
    shortPass.lineage.counts.removedSelectedShortElementOccurrences!==2||shortPass.selectedElement.weightRemoved!==2.5||
    shortPass.selectedElement.lengthBasis!=='SOURCE_STRAIGHT_TWO_PORT_SPAN'||
    !shortPass.validation.checks.some(c=>c.code==='SHORT_ELEMENT_LENGTH_BASIS_QUALIFIED'&&c.passed&&c.details.lengthBasis==='SOURCE_STRAIGHT_TWO_PORT_SPAN')||
-   !shortPass.operations.some(o=>o.before?.includes?.('<ComponentType>RIGID</ComponentType>')))
+   !shortPass.transaction.operations.some(o=>o.before?.includes?.('<ComponentType>RIGID</ComponentType>')))
    throw Error('Short removal receipt lost source selection/tombstones/lineage/weight');
  await writeFile(path.join(sourceRoot,'preview-test-results','short-drop.xml'),shortXml);
  await writeFile(path.join(sourceRoot,'preview-test-results','short-drop-receipt.json'),JSON.stringify(shortReceipt,null,2));
@@ -346,10 +351,10 @@ try{
  await page.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'),null,{timeout:120000});
  await page.locator('[data-preview-short]').click();await page.locator('[data-select-gaskets]').click();
  await page.locator('[data-run-short-drop]').click();
- await page.waitForFunction(()=>document.querySelector('main').getAttribute('aria-busy')==='false'&&document.querySelector('[data-fix-result]')?.getAttribute('data-result')==='stopped',null,{timeout:120000});
+ await page.waitForFunction(()=>document.querySelector('main').getAttribute('aria-busy')==='false'&&document.querySelector('[data-fix-result]')?.getAttribute('data-result')==='rejected',null,{timeout:120000});
  result.shortDropRejected=await page.locator('[data-progress]').textContent();
  if(result.shortDropRejected.includes('Traceback')||!result.shortDropRejected.includes('Check restraints, mating diameters and port directions.')||
-  !result.shortDropRejected.includes('0 selected elements dropped')||!(await page.locator('[data-occ-summary]').textContent()).includes('6 of 6')||
+  !result.shortDropRejected.includes('selected 1 = 0 validated + 0 skipped + 1 failed + 0 unprocessed')||!(await page.locator('[data-occ-summary]').textContent()).includes('6 of 6')||
   !(await page.locator('[data-download-working]').isDisabled())||await page.locator('[data-download-fix]').count())throw Error('Failed reconnection released a partial removal');
  // S1: zero-filled straight gaskets keep the inclusive boundary; curves/junctions are manual.
  result.shortLengthQualification=[];
@@ -383,6 +388,48 @@ try{
   result.shortLengthQualification.push({kind,outcome:'MANUAL_LENGTH_UNQUALIFIED'});
  }
  await page.screenshot({path:path.join(sourceRoot,'preview-test-results','short-length-guard.png'),fullPage:true});
+ // Scale falsifier: 130 independent short-owner candidates must not render
+ // a giant list or silently process every selected owner at once.
+ const scalePage=await browser.newPage({viewport:{width:1200,height:850}});
+ await scalePage.goto('http://127.0.0.1:'+port+'/index.html');
+ await scalePage.evaluate(async()=>{
+   const {mountTopologyWorkspace}=await import('./tabs/topology-workspace/workspace-app.mjs');
+   const old=document.querySelector('main'),fresh=old.cloneNode(true);old.replaceWith(fresh);
+   window.scaleWorkspace=mountTopologyWorkspace(fresh,{runEngine:async job=>{
+     const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(job.sourceText));
+     const sha=Array.from(new Uint8Array(digest),n=>n.toString(16).padStart(2,'0')).join('');
+     const shortElements=Array.from({length:130},(_,i)=>({
+       id:'SHORT:'+i,sourceSha256:sha,eligible:true,componentType:'GASK',
+       componentRefNo:'GASK-TEST-'+i,lengthMm:3,measuredSpanMm:3,
+       lengthBasis:'SOURCE_STRAIGHT_TWO_PORT_SPAN',recordCount:2,weightRemoved:0,
+       nodeKeys:['B0:N'+i+':S1','B0:N'+i+':S2'],reason:''
+     }));
+     return {ok:true,outputKind:'topology-sidecars',ciiText:null,
+       acceptedFinalTransferred:false,nativeCiiReleaseAuthorized:false,
+       topoFixCommitted:false,topoFixXmlText:null,
+       topologyFixPlanText:JSON.stringify({source:{sha256:sha},actions:[]}),
+       topologyFindingsText:JSON.stringify({source:{sha256:sha},findings:[],shortElements})};
+   }});
+ });
+ await scalePage.locator('[data-file]').setInputFiles({name:'scale-short.xml',mimeType:'application/xml',buffer:Buffer.from(shortFixture)});
+ await scalePage.waitForFunction(()=>!document.querySelector('[data-analyze]').disabled);
+ await scalePage.locator('[data-analyze]').click();
+ await scalePage.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'));
+ await scalePage.locator('[data-preview-short]').click();
+ if(await scalePage.locator('[data-short-index]').count()!==24||
+    !(await scalePage.locator('[data-short-preview]').textContent()).includes('130 measured candidates'))
+   throw Error('Scale preview must render only one page of 24 out of 130');
+ await scalePage.locator('[data-select-gaskets]').click();
+ if(!(await scalePage.locator('[data-run-short-drop]').textContent()).includes('Apply all 130 selected'))
+   throw Error('Selection must expose the bounded eight-owner batch size');
+ await scalePage.locator('[data-short-next]').click();
+ if(await scalePage.locator('[data-short-index]:checked').count()!==24||
+    !(await scalePage.locator('[data-short-selection-count]').textContent()).includes('130 selected'))
+   throw Error('Selection was lost across short-preview pages');
+ if((await scalePage.locator('[data-progress]').textContent()).includes('APPLIED'))
+   throw Error('A preview or selection mutated working XML');
+ result.shortPreviewScale='PASS: 130 rows, 24/page, selection across pages, full-selection bulk intent, no mutation';
+ await scalePage.close();
  // Manual Fix is a collapsed rule/case queue. >25 mm repairs require a separate preview and approval.
  const manualNode=(number,kind,ref,end,x,extra='')=>'<Node><NodeNumber>'+number+'</NodeNumber><ComponentType>'+kind+'</ComponentType><ComponentRefNo>'+ref+'</ComponentRefNo><Endpoint>'+end+'</Endpoint><Position>'+x+' 0 0</Position><OutsideDiameter>100</OutsideDiameter>'+extra+'</Node>';
  const manualDoc=(a,b)=>'<PipeStressExport><Branch><Branchname>SOURCE</Branchname>'+a+'</Branch><Branch><Branchname>PARTNER</Branchname>'+b+'</Branch></PipeStressExport>';
@@ -484,6 +531,28 @@ try{
  if(await page.locator('[data-apply-second]').count()||!await page.locator('[data-download-working]').isDisabled())throw Error('Incompatible manual pair exposed Apply/output');
  result.manualSecondPassNegative='UNKNOWN_DIAMETER_REJECTED';
 
+ // A queued Second Pass must keep XML untouched until explicit queue Apply.
+ // The real PSI116 transaction and full pre-Final replay run in the Worker.
+ await openManualPair(manualPipeFlange,'B1:N30:S0');
+ await page.locator('[data-preview-second]').click();
+ await page.waitForFunction(()=>document.querySelector('[data-second-status]')?.textContent?.includes('PREVIEW ONLY'),null,{timeout:120000});
+ await page.locator('[data-second-evidence]').fill('DRAWING-SYNTHETIC-Q1 explicitly approves exact paired ports');
+ await page.locator('[data-second-confirm]').check();
+ if(await page.locator('[data-queue-second]').isDisabled())throw Error('Qualified confirmed port pair cannot enter queue');
+ await page.locator('[data-queue-second]').click();
+ if(!(await page.locator('[data-manual-queue]').textContent()).includes('1 approved')||
+    !(await page.locator('[data-occ-summary]').textContent()).includes('4 of 4')||
+    !(await page.locator('[data-download-working]').isDisabled()))
+   throw Error('Queue admission did not preserve the unchanged original working XML: queue='+await page.locator('[data-manual-queue]').textContent()+'; occurrences='+await page.locator('[data-occ-summary]').textContent());
+ await page.locator('[data-queue-apply]').click();
+ await page.waitForFunction(()=>document.querySelector('main')?.getAttribute('aria-busy')==='false'&&
+    /QUEUE COMPLETE|QUEUE STOPPED/.test(document.querySelector('[data-queue-status]')?.textContent||''),null,{timeout:120000});
+ const queueSummary=await page.locator('[data-queue-status]').textContent();
+ if(!queueSummary.includes('QUEUE COMPLETE')||
+    !queueSummary.includes('1 selected = 1 applied + 0 blocked + 0 re-review required')||
+    !(await page.locator('[data-download-working]').isEnabled()))
+   throw Error('Qualified queue did not publish one validated working revision: '+queueSummary);
+ result.manualQueueRealBrowser='PASS: 1 explicitly approved pair, source-bound re-preview, atomic transaction, full replay and final UI publication';
  // Source-evidenced closure resolves without a geometry edit and is exportable.
  const closed='<PipeStressExport><Branch><Branchname>CLOSED</Branchname><Node><NodeNumber>-1</NodeNumber><ComponentType>BRAN</ComponentType><ComponentRefNo>B</ComponentRefNo><Endpoint>1</Endpoint><ConnectionType>CLOS</ConnectionType><Position>0 0 0</Position></Node><Node><NodeNumber>10</NodeNumber><ComponentType>FBLI</ComponentType><ComponentRefNo>F</ComponentRefNo><Endpoint>1</Endpoint><Position>0 0 0</Position></Node><Node><NodeNumber>-1</NodeNumber><ComponentType>FBLI</ComponentType><ComponentRefNo>F</ComponentRefNo><Endpoint>2</Endpoint><Position>32.2 0 0</Position></Node></Branch></PipeStressExport>';
  await page.locator('[data-file]').setInputFiles({name:'closed.xml',mimeType:'application/xml',buffer:Buffer.from(closed)});
@@ -497,9 +566,124 @@ try{
  if(!evidence.resolvedConnections.some(x=>x.code==='DECLARED_CLOSED_END')||evidence.xmlChangedByResolution!==false)throw Error('Source closure receipt missing');
  await mkdir(path.join(sourceRoot,'preview-test-results'),{recursive:true});
  await page.screenshot({path:path.join(sourceRoot,'preview-test-results','rule-audit.png'),fullPage:true});
+ // UXML-UI: exact pinned XCU ES modules -> UXML -> same Python resolver and
+ // sourceRef patch route. All fixtures here are synthetic; no Owner file.
+ const portAuto=manualDoc(
+   manualNode(10,'PIPE','P',1,0)+manualNode(20,'PIPE','P',2,100),
+   manualNode(30,'FLAN','F',1,125)+manualNode(-1,'RIGID','F',2,211))
+   .replace('<PipeStressExport>','<PipeStressExport xmlns="http://aveva.com/pipeStress116.xsd">');
+ const hubFixture={name:'uxml-ui-synthetic.xml',mimeType:'application/xml',
+   buffer:Buffer.from(portAuto,'utf8')};
+ if(await page.locator('[data-uxml-toggle]').isChecked())
+   throw Error('Universal XML preview must default OFF');
+ await page.locator('[data-file]').setInputFiles(hubFixture);
+ await page.waitForFunction(()=>document.querySelector('[data-occ-summary]')?.textContent?.includes('4 of 4'));
+ result.uxmlUiStage='TOGGLE_BEFORE_ANALYZE';
+ await page.locator('[data-uxml-toggle]').check();
+ if((await page.locator('[data-uxml-parity]').getAttribute('data-parity'))!=='NOT_CHECKED')
+   throw Error('UXML toggle silently asserted parity without a worker run');
+ result.uxmlUiStage='ANALYZE_WAIT_PARITY';
+ await page.locator('[data-analyze]').click();
+ await page.waitForFunction(()=>['EQUAL','DIFFERENT','UNAVAILABLE'].includes(
+   document.querySelector('[data-uxml-parity]')?.dataset?.parity),null,{timeout:120000});
+ const parity=await page.locator('[data-uxml-parity]').getAttribute('data-parity');
+ result.uxmlUiStage='PARITY_'+parity;
+ if(parity!=='EQUAL')
+   throw Error('Pinned reader must give EQUAL for synthetic auto fixture; got '+
+     parity+' '+await page.locator('[data-uxml-differences]').textContent());
+ await page.locator('[data-auto-fix-all]').click();
+ const go=page.locator('[data-run-auto-fix-all]');
+ if(!await go.count())throw Error('No authorized Auto-fix batch for synthetic hub fixture');
+ result.uxmlUiStage='BULK_APPLY_WAIT_OUTPUT';
+ await go.click();
+ await page.waitForFunction(()=>document.querySelector('[data-download-working]')?.disabled===false||
+   /NOT APPLIED|ERROR|STOPPED|REJECTED/.test(document.querySelector('[data-progress]')?.textContent||''),null,{timeout:120000});
+ if(await page.locator('[data-download-working]').isDisabled())
+   throw Error('UXML hub patch was not verified for download: '+
+     await page.locator('[data-progress]').textContent()+' / '+await page.locator('[data-uxml-differences]').textContent());
+ if((await page.locator('[data-uxml-parity]').getAttribute('data-parity'))!=='EQUAL')
+   throw Error('UXML parity was not retained through validated patch and recheck');
+ await page.locator('[data-uxml-parity]').scrollIntoViewIfNeeded();
+ await page.screenshot({path:path.join(sourceRoot,'preview-test-results','uxml-ui-parity-equal.png'),fullPage:false});
+ result.uxmlUiStage='DOWNLOAD_HUB_XML';
+ const hubDownload=page.waitForEvent('download');
+ await page.locator('[data-download-working]').click();
+ const hubBytes=await readFile(await (await hubDownload).path());
+ result.uxmlUiStage='COMPARE_DIRECT_ROUTE';
+ const directPage=await browser.newPage({viewport:{width:1440,height:960}});
+ try {
+   await directPage.goto('http://127.0.0.1:'+port+'/index.html');
+   await directPage.locator('[data-file]').setInputFiles(hubFixture);
+   await directPage.waitForFunction(()=>document.querySelector('[data-occ-summary]')?.textContent?.includes('4 of 4'));
+   if(await directPage.locator('[data-uxml-toggle]').isChecked())throw Error('Direct route default was not OFF');
+   await directPage.locator('[data-analyze]').click();
+   await directPage.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'),null,{timeout:120000});
+   await directPage.locator('[data-auto-fix-all]').click();
+   await directPage.locator('[data-run-auto-fix-all]').click();
+   await directPage.waitForFunction(()=>document.querySelector('[data-download-working]')?.disabled===false||
+     /NOT APPLIED|ERROR|STOPPED|REJECTED/.test(document.querySelector('[data-progress]')?.textContent||''),null,{timeout:120000});
+   if(await directPage.locator('[data-download-working]').isDisabled())
+     throw Error('Direct comparator did not commit synthetic batch');
+   const dl=directPage.waitForEvent('download');
+   await directPage.locator('[data-download-working]').click();
+   const directBytes=await readFile(await (await dl).path());
+   if(!hubBytes.equals(directBytes))
+     throw Error('UXML hub downloaded XML bytes differ from direct route');
+   result.uxmlUiParity='EQUAL';
+   result.uxmlUiBytesEqual=true;
+   result.uxmlUiFixedSha256=createHash('sha256').update(hubBytes).digest('hex');
+ } finally { await directPage.close(); }
+ result.uxmlUiStage='TAMPER_READER_VERIFY';
+ // Independent tamper: the Worker must NEVER import a reader blob whose
+ // source differs by even one harmless comment, even on a valid fixture.
+ const badContext=await browser.newContext({viewport:{width:1440,height:960}});
+ await badContext.route('**/vendor/uxml/uxml/UxmlPsi116SchemaMapper.js',async route=>{
+   const response=await route.fetch();
+   const bytes=await response.body();
+   await route.fulfill({response,body:Buffer.concat([bytes,Buffer.from('\n/* UXML-UI TAMPER MUTANT */\n')])});
+ });
+ const badPage=await badContext.newPage();
+ try{
+   await badPage.goto('http://127.0.0.1:'+port+'/index.html');
+   await badPage.locator('[data-file]').setInputFiles(hubFixture);
+   await badPage.waitForFunction(()=>document.querySelector('[data-occ-summary]')?.textContent?.includes('4 of 4'));
+   await badPage.locator('[data-uxml-toggle]').check();
+   await badPage.locator('[data-analyze]').click();
+   await badPage.waitForFunction(()=>['EQUAL','DIFFERENT','UNAVAILABLE'].includes(
+     document.querySelector('[data-uxml-parity]')?.dataset?.parity),null,{timeout:120000});
+   const rejected=await badPage.locator('[data-uxml-parity]').getAttribute('data-parity');
+   if(rejected!=='UNAVAILABLE')
+     throw Error('UXML_TAMPER_MUTANT_NOT_REFUSED: verified blob was executed, parity='+rejected);
+   const detail=await badPage.locator('[data-uxml-differences]').textContent();
+   if(!detail.includes('UXML_READER_BLOB_HASH_MISMATCH')||
+     !detail.includes('UxmlPsi116SchemaMapper.js')||
+     !await badPage.locator('[data-download-working]').isDisabled()||
+     await badPage.locator('[data-download-fix]').count()||
+     !await badPage.locator('[data-auto-fix-all]').isDisabled())
+     throw Error('Tampered XCU reader did not fail closed: '+detail);
+   result.uxmlUiTamper='PASS: visible hash refusal, zero hub Auto-fix/export';
+   // The same Worker must remain usable for the legacy direct route.
+   await badPage.locator('[data-uxml-toggle]').uncheck();
+   await badPage.locator('[data-analyze]').click();
+   await badPage.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'),null,{timeout:120000});
+   result.uxmlUiDirectFallback='PASS: direct PSI116 still available';
+ } finally { await badContext.close(); }
  if(pageErrors.length)throw Error('Browser errors: '+pageErrors.join(' | '));
  result.status='PASS';
-}catch(e){result.status='FAIL';result.error=String(e);throw e;}
+}catch(e){
+ result.status='FAIL';result.error=String(e);
+ // Public synthetic diagnostic: never include file contents or private data.
+ result.uxmlUiDebug=await page.evaluate(()=>({
+   parity:document.querySelector('[data-uxml-parity]')?.dataset?.parity,
+   parityWhy:document.querySelector('[data-uxml-differences]')?.textContent?.slice(0,900),
+   analysisStatus:document.querySelector('[data-status]')?.textContent?.slice(0,900),
+   progress:document.querySelector('[data-progress]')?.textContent?.slice(0,900),
+   opsStatus:document.querySelector('[data-ops-status]')?.textContent?.slice(0,900),
+   opsCount:document.querySelectorAll('[data-ops-rows] [data-op-id]').length,
+   busy:document.querySelector('main')?.getAttribute('aria-busy'),
+ }));
+ throw e;
+}
 finally{
  result.pageErrors=pageErrors;
  await writeFile(path.join(sourceRoot,'preview-test-results.json'),JSON.stringify(result,null,2)+'\n');

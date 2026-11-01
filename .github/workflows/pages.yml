@@ -38,6 +38,7 @@ jobs:
           test -f dist/converters/psi116_topology_resolver/__init__.py
           test -f dist/.nojekyll
           echo "Pinned runtime binary checks PASS"
+          bash tools/fetch-uxml-reader.sh dist
       - uses: actions/setup-node@v4
         with:
           node-version: '22'

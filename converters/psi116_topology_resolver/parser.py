@@ -85,6 +85,14 @@ def read_psi116_xml(source: str | Path, *, source_name: str | None = None) -> Ps
         source_text = str(source)
         resolved_source_name = source_name or "<memory>"
     root = ET.fromstring(source_text)
+    # Serialize Node source receipts in the same stable namespace form at
+    # initial analysis and pre-Final replay. _serialize() registers the default
+    # PSI116 namespace when building corrected XML; without the same initial
+    # registration, operation.before uses <ns0:Node> on the first pass but
+    # <Node xmlns="..."> on replay, falsely failing byte-exact receipt custody.
+    namespace = _namespace(root)
+    if namespace:
+        ET.register_namespace("", namespace)
     branches: list[BranchRecord] = []
     for branch_index, branch_element in enumerate(_iter_named(root, "Branch")):
         branch_name = _child_text(branch_element, "Branchname")
