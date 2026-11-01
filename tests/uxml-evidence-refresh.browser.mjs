@@ -142,11 +142,13 @@ async function finishAndCheck(page,mode,kind){
    kind+': native validation and fix count missing from overview');
  assert.match(await resultPanel.locator('[data-what-left="review"]').textContent(),
    /Needs your review \(\d+\)/);
- assert.match(await resultPanel.locator('[data-what-left="preserve"]').textContent(),
-   /Preserved by rule — no action \(\d+\)/);
- assert.match(await resultPanel.locator('[data-what-left="information"]').textContent(),
-   /Informational \/ other remaining \(\d+\)/);
- assert.equal(await resultPanel.locator('[data-auto-fix],[data-apply-second],[data-queue-apply],[data-close-joint]').count(),0);
+ assert.match(await resultPanel.locator('[data-what-left="auto"]').textContent(),
+    /Auto fixes available \(\d+\)/);
+  assert.match(await resultPanel.locator('[data-what-left="preserve"]').textContent(),
+    /No action needed: kept by rule \(\d+\)/);
+  assert.match(await resultPanel.locator('[data-what-left="information"]').textContent(),
+    /Informational \/ evidence-only \(\d+\)/);
+  assert.equal(await resultPanel.locator('[data-auto-fix],[data-apply-second],[data-queue-apply],[data-close-joint]').count(),0);
  const message=await page.locator('[data-evidence-proof]').textContent();
  if(mode==='PASS'){
    assert.match(message,/Connection evidence verified for working revision 1/);
@@ -299,9 +301,37 @@ test('UI clarity: direct synthetic Auto-fix surfaces revision, native checks and
    assert.match(summary,/^Revision 1: 1 fixes applied · \d+\/\d+ checks passed$/);
    const m=summary.match(/(\d+)\/(\d+) checks passed/);
    assert.equal(m[1],m[2],'native checks must all pass, not a guessed count');
-   assert.match(await page.locator('[data-what-left="review"]').textContent(),/\(\d+\)/);
-   assert.match(await page.locator('[data-what-left="preserve"]').textContent(),/\(\d+\)/);
-   assert.equal(await page.locator('[data-trial-current]').isEnabled(),true);
+   // Compare overview counts with independently rendered resolver dispositions,
+    // not with trialGroup() (a group-assignment mutant must fail).
+    const cards=await page.locator('[data-finding-id]').evaluateAll(els=>els.map(el=>({
+      id:el.dataset.findingId,
+      kind:['manual','auto','keep','evidence'].find(k=>
+        el.querySelector('.audit-resolution')?.classList.contains(k))||'other',
+    })));
+    assert.ok(cards.length>0,'post-fix synthetic findings must be present');
+    const groupByKind={manual:'review',auto:'auto',keep:'preserve',
+      evidence:'information',other:'information'};
+    const expected={review:[],auto:[],preserve:[],information:[]};
+    for(const card of cards)expected[groupByKind[card.kind]].push(card.id);
+    const labels={review:'Needs your review',auto:'Auto fixes available',
+      preserve:'No action needed: kept by rule',information:'Informational / evidence-only'};
+    const filters={review:'manual',auto:'auto',preserve:'keep',information:'information'};
+    for(const kind of Object.keys(expected)){
+      const button=page.locator('[data-what-left="'+kind+'"]');
+      assert.equal(await button.textContent(),labels[kind]+' ('+expected[kind].length+')',
+        kind+': exact post-fix count from independently classified finding cards');
+      assert.equal(await button.isDisabled(),expected[kind].length===0);
+      if(!expected[kind].length)continue;
+      await button.click();
+      assert.equal(await page.locator('[data-audit-filter="'+filters[kind]+'"]').getAttribute('aria-pressed'),
+        'true',kind+': group must activate its exact filter');
+      assert.equal(await button.getAttribute('aria-pressed'),'true');
+      const shown=await page.locator('[data-finding-id]').evaluateAll(
+        els=>els.map(el=>el.dataset.findingId));
+      assert.deepEqual(shown.sort(),[...expected[kind]].sort(),
+        kind+': group must show only its own source findings');
+    }
+    assert.equal(await page.locator('[data-trial-current]').isEnabled(),true);
    assert.equal(await page.locator('[data-trial-result] [data-approve],[data-trial-result] [data-apply]').count(),0);
    assert.deepEqual(errors,[]);
  }finally{await page.close();}
