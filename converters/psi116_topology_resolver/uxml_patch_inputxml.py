@@ -28,7 +28,7 @@ from .transaction import (
     _preflight, _selected_actions, _validate_transaction,
 )
 from .uxml_adapter import (
-    UxmlPsi116Error, _caesar_original_rows, _record_key, resolve_from_uxml,
+    UxmlPsi116Error, _caesar_int, _caesar_original_rows, _record_key, resolve_from_uxml,
 )
 
 SCHEMA = "uxml-edit-ops/v1"
@@ -241,7 +241,7 @@ def _get_actions(uxml: dict, payload: dict, result) -> tuple[TransactionPolicy, 
     need(len({(i, f) for i, f, _, _ in writes}) == len(writes),
          "INPUT_XML_CONFLICTING_SOURCE_FIELD_WRITES")
     # No silently unrenumbered occurrence anywhere in the original file.
-    old_sources = Counter((int(float(v)), idx, fld)
+    old_sources = Counter((_caesar_int(v, "SOURCE_NODE"), idx, fld)
         for idx, c in enumerate(components)
         for fld in ("FROM_NODE", "TO_NODE")
         for v in [c["rawAttributes"]["inputXml"]["sourceAttributes"].get(fld)]
@@ -272,7 +272,7 @@ def patch_inputxml(original: Path, uxml: dict, payload: dict,
         need(refs.get(source_ref["recordKey"]) == source_ref,
              "INPUT_XML_ORIGINAL_RECORD_IDENTITY_MISMATCH")
         start, end, literal = span_attrs[index][field]
-        need(int(float(literal)) == old and float(literal) == old,
+        need(_caesar_int(literal, "PATCH_FIELD") == old,
              "INPUT_XML_ORIGINAL_NODE_FIELD_DRIFT")
         replacements.append((start, end, _format_like(literal, new)))
     replacements.sort()
@@ -306,17 +306,24 @@ def patch_inputxml(original: Path, uxml: dict, payload: dict,
     need(after_attrs == expected, "INPUT_XML_OTHER_SOURCE_ATTRIBUTE_CHANGED")
     # Native transaction validation is used unchanged, with source-bound
     # ALIAS_NODE_NUMBER receipts. This also verifies all selected findings.
+    action_by_absorbed = {}
+    for action in actions:
+        for node in action.absorbed_node_numbers:
+            need(node not in action_by_absorbed,
+                 "INPUT_XML_OVERLAPPING_ABSORBED_ACTIONS_REFUSED")
+            action_by_absorbed[node] = action
     operations = tuple(AppliedOperation(
-        operation_id=f"OP-{n:06d}", action_id=actions[0].action_id,
+        operation_id=f"OP-{n:06d}", action_id=action_by_absorbed[old].action_id,
         disposition="ALIAS_COINCIDENT_NODE", operation="ALIAS_NODE_NUMBER",
-        branch_name="", source_node_number=old, retained_node_number=new,
-        before=old, after=new, authority=actions[0].authority,
+        branch_name=action_by_absorbed[old].branch_name,
+        source_node_number=old, retained_node_number=new,
+        before=old, after=new, authority=action_by_absorbed[old].authority,
         source_xml_sha256=sha256(data).hexdigest())
         for n, (_, _, old, new) in enumerate(writes, 1))
     native = _validate_transaction(result, after, actions, operations)
-    before_identifiers = {int(float(r.attrib[f])) for r in rows
+    before_identifiers = {_caesar_int(r.attrib[f], "BEFORE_NODE") for r in rows
                           for f in ("FROM_NODE", "TO_NODE")}
-    after_identifiers = {int(float(r.attrib[f])) for r in patched_rows
+    after_identifiers = {_caesar_int(r.attrib[f], "AFTER_NODE") for r in patched_rows
                          for f in ("FROM_NODE", "TO_NODE")}
     expected_ids = set(before_identifiers)
     for _, _, old, new in writes:
