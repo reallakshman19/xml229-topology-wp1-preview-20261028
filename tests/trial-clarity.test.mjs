@@ -48,26 +48,27 @@ test('native validation counts require passed checks, never fabricate 9/9',()=>{
   assert.equal(trialValidationSummary([],null),'validation checks not available');
 });
 test('disabled action shows exact hub/direct reason without modifying disabled property',()=>{
-  const button={disabled:true,hasAttribute:x=>x==='data-preview-short'};
+  const button={disabled:true,hasAttribute:x=>x==='data-select-short'};
   const state={hubEnabled:true,busy:false,batchRunning:false,plan:{}};
   const why=trialDisabledReason(button,state);
   assert.match(why,/Universal XML parity must be EQUAL before short-element changes/);
   assert.equal(button.disabled,true);
 });
 
-test('while short hub preview runs every disabled control names the active preview',()=>{
-  const state={busy:true,activeJob:'preview',batchRunning:false,plan:{},hubEnabled:true};
-  for(const name of ['short-hub-preview','preview-short','auto-fix-all',
-                      'analyze','download-working','trial-current','trial-evidence']){
+test('disabled controls name direct short Apply and preserve other jobs',()=>{
+  const state={busy:false,batchRunning:true,activeJob:'short-bulk',
+    plan:{},hubEnabled:true,hubParity:{status:'EQUAL'}};
+  for(const name of ['run-short-drop','select-short','auto-fix-all',
+                     'analyze','download-working','trial-current','trial-evidence']){
     const button={disabled:true,hasAttribute:x=>x==='data-'+name};
     assert.equal(trialDisabledReason(button,state),
-      'Finish or cancel the active preview first.',name);
+      'Finish or cancel the active short-element Apply first.',name);
   }
-  const cancel={disabled:false,hasAttribute:x=>x==='data-cancel'};
-  assert.equal(trialDisabledReason(cancel,state),'');
-  state.activeJob=null;
-  const button={disabled:true,hasAttribute:x=>x==='data-preview-short'};
+  state.batchRunning=false;state.activeJob=null;
+  const button={disabled:true,hasAttribute:x=>x==='data-run-short-drop'};
   assert.equal(trialDisabledReason(button,state),
-    'Finish or cancel the active validation first.',
-    'other in-flight validation retains its original wording');
+    'Select at least one eligible short element to Apply.');
+  state.busy=true;state.manualQueueRunning=true;
+  assert.equal(trialDisabledReason(button,state),
+    'Finish or cancel the active manual repair queue first.');
 });
