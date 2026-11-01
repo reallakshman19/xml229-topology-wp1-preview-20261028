@@ -611,11 +611,24 @@ test('hub second-item DIFFERENT never exposes intermediate download',
     await previewCurrentShort(page);
     assert.equal(await page.locator('[data-download-working]').isDisabled(),true);
     await page.evaluate(()=>{
-      const button=document.querySelector('[data-download-working]');
+      const working=document.querySelector('[data-download-working]');
+      const panel=document.querySelector('[data-fix-result]');
       window.__downloadEnabledTransitions=[];
-      const audit=()=>window.__downloadEnabledTransitions.push(!button.disabled);
+      window.__downloadFixEverAdded=false;
+      const audit=records=>{
+        window.__downloadEnabledTransitions.push(!working.disabled);
+        if(records.some(record=>[...record.addedNodes].some(node=>
+          node.nodeType===1&&(
+            node.matches?.('[data-download-fix]')||
+            node.querySelector?.('[data-download-fix]')))))
+          window.__downloadFixEverAdded=true;
+        if(panel.querySelector('[data-download-fix]'))
+          window.__downloadFixEverAdded=true;
+      };
       window.__downloadObserver=new MutationObserver(audit);
-      window.__downloadObserver.observe(button,{attributes:true,attributeFilter:['disabled']});
+      window.__downloadObserver.observe(working,
+        {attributes:true,attributeFilter:['disabled']});
+      window.__downloadObserver.observe(panel,{childList:true,subtree:true});
     });
     await page.locator('[data-run-short-drop]').click();
     await page.waitForFunction(()=>document.querySelector('[data-progress]')
@@ -632,7 +645,9 @@ test('hub second-item DIFFERENT never exposes intermediate download',
       return window.__downloadEnabledTransitions;
     });
     assert.ok(transitions.every(enabled=>enabled===false),
-      'download must stay disabled even transiently during mid-batch mismatch');
+      'working download must stay disabled even transiently during mismatch');
+    assert.equal(await page.evaluate(()=>window.__downloadFixEverAdded),false,
+      'corrected-file download button must never appear, even briefly');
     assert.match(await page.locator('[data-uxml-differences]').textContent(),
       /UXML_SHORT_PARITY_DIFFERENT/);
     assert.deepEqual(errors,[]);
