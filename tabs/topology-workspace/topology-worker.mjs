@@ -3,6 +3,21 @@
  */
 import {runXmlCii2019StandaloneEngine} from '../../converters/xml-cii-2019-standalone/engine.js';
 import {loadPinnedPsi116Reader} from './uxml-browser-reader.mjs';
+let bulkPinnedReaderPromise=null;
+function pinnedReaderForJob(job){
+  // One fully verified XCU module instance per live Worker during a bulk
+  // lease. A fresh Worker always verifies all five immutable blobs again.
+  // Each item STILL hashes and maps its distinct source and runs native EQUAL.
+  if(job.options?.topologyBulkSession!==true)return loadPinnedPsi116Reader();
+  if(!bulkPinnedReaderPromise){
+    bulkPinnedReaderPromise=loadPinnedPsi116Reader().catch(error=>{
+      bulkPinnedReaderPromise=null;
+      throw error;
+    });
+  }
+  return bulkPinnedReaderPromise;
+}
+
 async function sourceHash(sourceText){
  const encoded=new TextEncoder().encode(sourceText);
  const hash=await crypto.subtle.digest('SHA-256',encoded);
@@ -31,7 +46,7 @@ self.onmessage=async ({data})=>{
       if(sha!==job.sourceRawSha256)throw Error('UXML_SOURCE_BYTE_SHA_MISMATCH');
       // Revalidate every load, and allow retries after any failed fetch/import.
       const readerStarted=speed?performance.now():0;
-      const reader=await loadPinnedPsi116Reader();
+      const reader=await pinnedReaderForJob(job);
       if(speed)phases.hubReaderLoadMs=performance.now()-readerStarted;
       const mapStarted=speed?performance.now():0;
       const uxmlDocument=reader.read(job.sourceText,sha);
