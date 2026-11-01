@@ -83,6 +83,7 @@ test('336 generated PSI116 occurrences: real Worker/Pyodide one short-drop with 
       topologyBulkSpeedProfile:true}}:job;
     const t=performance.now();
     const result=await client.run(input);
+    if(!profile)window.__bulkSpeedLastParity=result.topologyUxmlParity;
     if(profile)timings.push({workerRoundTripMs:performance.now()-t,
                              ...result.topologyBulkTiming,
                              parity:result.topologyUxmlParity?.status,
@@ -99,6 +100,7 @@ test('336 generated PSI116 occurrences: real Worker/Pyodide one short-drop with 
   ticks.initialAnalysisMs=performance.now()-analyzeStarted;
   const initialState=await page.evaluate(()=>({
    state:window.__bulkSpeedProbe.workspace.getState(),
+   lastParity:window.__bulkSpeedLastParity,
    status:document.querySelector('[data-status]')?.textContent,
    progress:document.querySelector('[data-progress]')?.textContent,
    parity:document.querySelector('[data-uxml-parity]')?.textContent,
