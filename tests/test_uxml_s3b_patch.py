@@ -35,32 +35,53 @@ class InputXmlS3BPatch(unittest.TestCase):
         return json.loads(p.stdout)
 
     def synthetic_source(self) -> str:
-        """Derive a three-route alias falsifier from the real Workspace replay pair.
+        """Five physical pipe segments, one nonadjacent coincident source node.
 
-        Keep original SIF type=5 OLET authority, immutable two other source
-        PIPINGELEMENTs, with an independent coincident pipe start ID 21.
+        Source is derived from the real Workspace InputXML synthetic fixture's
+        PIPINGELEMENT lexical template. No source SIF/BEND is manufactured.
+        Different source REF_NO values keep distinct pipe occurrences so the
+        unchanged resolver can authorize a same-route nonadjacent alias.
         """
         src=(self.xcu/"tests/fixtures/uxml-s3-synthetic.workspace.input.xml").read_text()
         elements=re.findall(r"<PIPINGELEMENT\b.*?</PIPINGELEMENT>",src,re.S)
         self.assertEqual(len(elements),6)
-        third=elements[5]
-        attr_values={
-            "FROM_NODE":("100.000000","21.000000"),
-            "TO_NODE":("110.000000","31.000000"),
-            "FROM_X":("1000.000000","100.000000"),
-            "TO_X":("1100.000000","100.000000"),
-            "DELTA_X":("100.000000","-1.010100"),
-            "DELTA_Z":("-1.010100","200.000000"),
-            "TO_Z":("0.000000","200.000000"),
-        }
-        for name,(before,after) in attr_values.items():
-            token=f'{name}="{before}"'
-            self.assertEqual(third.count(token),1,(name,third[:200]))
-            third=third.replace(token,f'{name}="{after}"')
+        template=elements[5]
+        coords=[
+            (10,20,(0,0,0),(100,0,0)),
+            (20,30,(100,0,0),(150,100,0)),
+            (30,35,(150,100,0),(200,50,0)),
+            (35,40,(200,50,0),(100,0,0)),
+            (40,50,(100,0,0),(300,0,0)),
+        ]
+        generated=[]
+        for ix,(start,end,p,q) in enumerate(coords):
+            edge=template
+            attrs={
+                "FROM_NODE":f"{start:.6f}",
+                "TO_NODE":f"{end:.6f}",
+                **{f"FROM_{axis}":f"{value:.6f}" for axis,value in zip("XYZ",p)},
+                **{f"TO_{axis}":f"{value:.6f}" for axis,value in zip("XYZ",q)},
+                **{f"DELTA_{axis}":f"{value:.6f}" if value else "-1.010100"
+                   for axis,value in zip("XYZ",(q[axis]-p[axis] for axis in range(3)))},
+            }
+            for field,val in attrs.items():
+                edge,replacements=re.subn(
+                    r'\b'+field+r'="[^"]*"',
+                    lambda match, field=field,val=val:field+'="'+val+'"',
+                    edge,count=1)
+                self.assertEqual(replacements,1,field)
+            edge=edge.replace("FROM_NAME=\"RESTART\"","FROM_NAME=\"\"").replace(
+                "TO_NAME=\"RESTART-END\"","TO_NAME=\"\"")
+            edge=edge.replace(' NAME="RESTART-END"',f' NAME="PIPE-{ix}"')
+            edge=edge.replace(" LINE_ID=\"S3-RESTART\"",
+                              f' LINE_ID="S3B-ALIAS" REF_NO="SEG-{ix}"')
+            generated.append(edge)
         start=src.index("<PIPINGELEMENT")
         end=src.index("</PIPINGMODEL>")
-        header=src[:start].replace('NUMELT="6"','NUMELT="3"')
-        return header+"\n".join((elements[0],elements[5],third))+"\n"+src[end:]
+        header=src[:start].replace('NUMELT="6"','NUMELT="5"')
+        header=header.replace('NUMBEND="1"','NUMBEND="0"')
+        header=header.replace('NUMISECT="1"','NUMISECT="0"')
+        return header+"\n".join(generated)+"\n"+src[end:]
 
     def fixture(self, base: Path):
         original=base/"original.input.xml"
@@ -73,7 +94,7 @@ class InputXmlS3BPatch(unittest.TestCase):
         self.assertEqual(len(aliases),1,
                          [(a.disposition,a.status,a.message) for a in result.fix_actions])
         alias=aliases[0]
-        self.assertEqual((alias.owner_node_number,alias.absorbed_node_numbers),(20,(21,)))
+        self.assertEqual((alias.owner_node_number,alias.absorbed_node_numbers),(20,(40,)))
         node_by_key={r.key:r for branch in result.document.branches for r in branch.nodes}
         finding_by_id={f.finding_id:f for f in result.findings}
         keys=sorted({key for fid in alias.finding_ids
@@ -117,23 +138,23 @@ class InputXmlS3BPatch(unittest.TestCase):
             self.assertEqual(report["summary"]["blockingFailureCount"],0)
             self.assertEqual(report["summary"]["passedCheckCount"],
                              report["summary"]["checkCount"])
-            self.assertEqual(report["editCount"],1)
-            self.assertEqual(report["editedOriginalRecords"],[2])
+            self.assertEqual(report["editCount"],2)
+            self.assertEqual(report["editedOriginalRecords"],[3,4])
             p,out,validation=self.run_cli(original,hub,payload,base)
             self.assertEqual(p.returncode,0,p.stdout+p.stderr)
             self.assertEqual(p.stdout.strip(),"EQUAL")
             self.assertEqual(out.read_bytes(),patched)
             self.assertEqual(json.loads(validation.read_text()),report)
             self.assertEqual(original.read_bytes(),prior,"original must never be overwritten")
-            # The sole permitted replacement: third element FROM_NODE=21 -> 20.
-            self.assertEqual(
-                patched,
-                prior.replace(b'FROM_NODE="21.000000"',b'FROM_NODE="20.000000"'))
+            # Exactly two source attributes carry physical node 40 across a route.
+            self.assertEqual(patched,prior.replace(
+                b'TO_NODE="40.000000"',b'TO_NODE="20.000000"').replace(
+                b'FROM_NODE="40.000000"',b'FROM_NODE="20.000000"'))
             before=re.findall(rb"<PIPINGELEMENT\b.*?</PIPINGELEMENT>",prior,re.S)
             after=re.findall(rb"<PIPINGELEMENT\b.*?</PIPINGELEMENT>",patched,re.S)
             self.assertEqual(len(before),len(after))
-            self.assertEqual(before[:2],after[:2],"every untouched record is byte-identical")
-            self.assertNotEqual(before[2],after[2])
+            self.assertEqual(before[:3],after[:3],"every untouched record is byte-identical")
+            self.assertNotEqual(before[3:],after[3:])
             self.assertIn("SELECTED_FINDINGS_RESOLVED",
                           [c["code"] for c in report["checks"]])
             fresh=base/"fresh.input.xml"
@@ -186,7 +207,7 @@ class InputXmlS3BPatch(unittest.TestCase):
                              "INPUT_XML_COMPONENT_SOURCE_REF_MISMATCH"))
             changed=root/"tampered.input.xml"
             changed.write_bytes(immutable.replace(
-                b'FROM_NODE="21.000000"',b'FROM_NODE="22.000000"'))
+                b'FROM_NODE="40.000000"',b'FROM_NODE="41.000000"'))
             variants.append(("stale-file-bytes",hub,payload,changed,
                              "INPUT_XML_STALE_ORIGINAL_SHA256"))
             for name,bad_hub,bad_ops,src,reason in variants:
