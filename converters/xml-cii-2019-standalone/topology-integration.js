@@ -52,8 +52,12 @@ def compare_hub_values(path, left, right, differences):
     elif left != right:
         differences.append(path + ": direct=" + repr(left) + " uxml=" + repr(right))
 
+import time as _speed_time
+_speed_started = _speed_time.perf_counter()
+_speed_marks = {}
 cfg = ResolverConfig()
 result = resolve_psi116(Path(job_topology_input_path))
+_speed_marks['pyResolveMs'] = (_speed_time.perf_counter() - _speed_started) * 1000
 hub_doc = json.loads(job_topology_uxml_json)
 hub_parity = {"status": "OFF", "differences": []}
 ops_preview = None
@@ -70,6 +74,7 @@ if hub_doc is not None:
     except Exception as exc:
         hub_parity = {"status": "DIFFERENT",
                       "differences": ["/uxmlReader: "+type(exc).__name__+": "+str(exc)]}
+_speed_marks['pyHubParityMs'] = (_speed_time.perf_counter() - _speed_started) * 1000 - _speed_marks['pyResolveMs']
 # This is an inspection projection only. export_edit_ops remains the one
 # authority for which operations exist; no transaction is executed here.
 if hub_doc is not None and hub_parity["status"] == "EQUAL" and not job_generate_topofix:
@@ -117,6 +122,7 @@ if job_generate_topofix:
                                  joint_repairs=tuple(json.loads(job_joint_repairs_json))),
         config=cfg,
     )
+    _speed_marks['pyTransactionMs'] = (_speed_time.perf_counter() - _speed_started) * 1000 - sum(_speed_marks.values())
     transaction = direct_transaction
     if hub_doc is not None and hub_parity["status"] == "EQUAL":
         # This is the complete S2 Auto-only patch route: UXML -> edit ops ->
@@ -148,6 +154,7 @@ if job_generate_topofix:
         except Exception as exc:
             hub_parity = {"status": "DIFFERENT",
                           "differences": ["/patchBack: "+type(exc).__name__+": "+str(exc)]}
+    _speed_marks['pyPatchCompareMs'] = (_speed_time.perf_counter() - _speed_started) * 1000 - sum(_speed_marks.values())
     Path(job_topology_transaction_path).write_text(
         json.dumps(transaction.transaction_payload(), indent=2, sort_keys=True) + "\\n",
         encoding="utf-8",
@@ -191,6 +198,8 @@ if job_generate_topofix:
             json.dumps(after.fix_plan_payload(cfg), indent=2, sort_keys=True) + "\\n", encoding="utf-8"
         )
 
+_speed_marks['pyValidationRecheckMs'] = (_speed_time.perf_counter() - _speed_started) * 1000 - sum(_speed_marks.values())
+status['bulkTimings'] = _speed_marks if globals().get('job_bulk_speed_profile', False) else None
 status["opsPreview"] = ops_preview if hub_parity["status"] == "EQUAL" else None
 status["hubParity"] = hub_parity
 Path(job_topology_status_path).write_text(
@@ -299,6 +308,8 @@ export async function runPsi116TopologyStage(pyodide, job, inputPath, jobDir, st
   };
   const paths = Object.fromEntries(Object.entries(names).map(([key, name]) => [key, `${jobDir}/${name}`]));
 
+  const speed=options.topologyBulkSpeedProfile===true;
+  const packageMs=performance.now();
   pyodide.globals.set('job_topology_input_path', inputPath);
   pyodide.globals.set('job_topology_findings_path', paths.findings);
   pyodide.globals.set('job_topology_plan_path', paths.plan);
@@ -317,10 +328,17 @@ export async function runPsi116TopologyStage(pyodide, job, inputPath, jobDir, st
   pyodide.globals.set('job_connection_preview_json', JSON.stringify(options.topologyConnectionPreview || null));
   pyodide.globals.set('job_short_elements_json', JSON.stringify(options.topologyShortElementRequests || []));
   pyodide.globals.set('job_short_preview_json', JSON.stringify(options.topologyShortPreviewRequests || []));
+  pyodide.globals.set('job_bulk_speed_profile', speed);
+  const pythonStart=performance.now();
   await pyodide.runPythonAsync(TOPOLOGY_SNIPPET);
+  const pythonElapsed=performance.now()-pythonStart;
 
   const status = JSON.parse(readOptional(pyodide, paths.status) || '{}');
   const topologyUxmlParity = status.hubParity || null;
+  const topologyBulkTiming = speed?{
+    pythonTopologyMs:pythonElapsed,
+    ...status.bulkTimings,
+  }:null;
   const topologyOperationsPreview = status.opsPreview || null;
   const topologyFindingsText = readOptional(pyodide, paths.findings);
   const topologyFixPlanText = readOptional(pyodide, paths.plan);
@@ -340,6 +358,19 @@ export async function runPsi116TopologyStage(pyodide, job, inputPath, jobDir, st
   if (useTopoFixForCii && !topoFixCommitted) {
     const reasonText = rejectReasons.length ? `: ${rejectReasons.join(', ')}` : '.';
     throw new Error(`Committed TopoFix XML is required before it can be used for CII conversion${reasonText}`);
+  }
+
+  // Pre-Final BULK only: every requested sidecar has already been read into
+  // this result and validated by Python. Remove ephemeral Pyodide scratch
+  // files so 89 validated revisions can reuse one warm Worker safely.
+  // This path NEVER runs for native CII, Final, preview, or ordinary jobs.
+  if(options.topologyBulkSession===true && job.topologyPreFinalOnly===true &&
+     useTopoFixForCii===false){
+    for(const name of pyodide.FS.readdir(jobDir)){
+      if(name==='.'||name==='..')continue;
+      pyodide.FS.unlink(jobDir+'/'+name);
+    }
+    pyodide.FS.rmdir(jobDir);
   }
 
   stdout.push(`PSI116 topology analysis wrote ${names.findings} and ${names.plan}.`);
@@ -367,6 +398,7 @@ export async function runPsi116TopologyStage(pyodide, job, inputPath, jobDir, st
     topoFixPreFinalHandoffName: topoFixCommitted ? names.handoff : '',
     topoFixCommitted,
     topologyUxmlParity,
+    topologyBulkTiming,
     topologyOperationsPreview,
     ciiInputSource: useTopoFixForCii ? 'topofix' : 'original',
     topologySummary: {

@@ -20,6 +20,10 @@ export async function runShortBulk({
   let current={...source},rows=shortElements;
   const applied=[],skipped=[],requested=[...selectedIds];
   let latest=null,completed=0,stopReason='COMPLETE',stopMessage='',failedId=null;
+  const lease=hubEnabled&&typeof runEngine.beginBulkSession==='function'&&
+    typeof runEngine.endBulkSession==='function';
+  if(lease)runEngine.beginBulkSession();
+  try{
   for(const id of requested){
     if(!isCurrent()){stopReason='CANCELLED';break;}
     const row=rows.find(r=>r.id===id);
@@ -39,7 +43,8 @@ export async function runShortBulk({
         sourceKind:'xml',sourceText:current.sourceText,sourceName:current.name,topologyPreFinalOnly:true,
         options:{outputMode:'enriched-only',analyzeTopology:true,generateTopoFix:true,
           useTopoFixForCii:false,topologyActionIds:[id],
-          topologyShortElementRequests:[request],topologyUxmlPreview:hubEnabled},
+          topologyShortElementRequests:[request],topologyUxmlPreview:hubEnabled,
+          topologyBulkSession:hubEnabled,topologyBulkSpeedProfile:hubEnabled},
         sourceRawSha256:current.rawSha256||current.sourceSha256,
       });
       if(!isCurrent()){stopReason='CANCELLED';break;}
@@ -95,7 +100,8 @@ export async function runShortBulk({
       const elapsedMs=Date.now()-itemStartedMs;
       applied.push({id,sourceSha256:current.sourceSha256,fixedSha256:fixedSha,
         request,selectedElement:row,transaction:txn,validation,
-        lineage:compactLineage,preFinal,elapsedMs,hubRoute:hubEnabled});
+        lineage:compactLineage,preFinal,elapsedMs,hubRoute:hubEnabled,
+        bulkTiming:result.topologyBulkTiming||null});
       current={...current,sourceText:result.topoFixXmlText,
         sourceSha256:fixedSha,rawSha256:fixedSha};
       rows=findings.shortElements;
@@ -118,6 +124,9 @@ export async function runShortBulk({
         :reason;
       break; // Fail closed: do not silently skip a failed authoritative transaction.
     }
+  }
+  }finally{
+    if(lease)runEngine.endBulkSession();
   }
   return {originSha256:source.sourceSha256,latest,applied,skipped,requested,
     completed,failedId,pendingIds:requested.slice(completed+(failedId?1:0)),
