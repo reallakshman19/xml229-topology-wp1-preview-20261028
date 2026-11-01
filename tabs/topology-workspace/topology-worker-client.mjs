@@ -5,10 +5,6 @@ export function createTopologyWorkerClient({
   WorkerCtor=globalThis.Worker,
   workerUrl=new URL('./topology-worker.mjs',import.meta.url),
   jobTimeoutMs=180000,
-  // The first Python preview group includes reader load, EQUAL parity and
-  // source analysis; after it, only genuine native progress renews the timer.
-  previewFirstProgressTimeoutMs=600000, // 10 minutes
-  previewInactivityTimeoutMs=300000,     // 5 minutes
 }={}) {
   let worker=null;
   let sequence=0;
@@ -37,21 +33,6 @@ export function createTopologyWorkerClient({
       if(worker!==created || !data || !Number.isSafeInteger(data.id)) return;
       const task=pending.get(data.id);
       if(!task) return;
-      if(data.type==='PROGRESS'){
-        // A progress message can only refresh its own read-only preview job.
-        // It cannot complete the job or publish operations/Apply authority.
-        if(task.previewTotal>0&&Number.isSafeInteger(data.completed)&&
-           data.total===task.previewTotal&&data.completed>task.lastProgress&&
-           data.completed<=data.total){
-          task.lastProgress=data.completed;
-          clearTimeout(task.timeout);
-          task.timeout=setTimeout(()=>reset(
-            'TOPOLOGY_WORKER_TIMEOUT: no progress; original and last validated revision retained.'),
-            previewInactivityTimeoutMs);
-          task.onProgress?.(data.completed,data.total);
-        }
-        return;
-      }
       pending.delete(data.id);
       clearTimeout(task.timeout);
       if(data.type==='RESULT') task.resolve(data.result);
@@ -72,7 +53,7 @@ export function createTopologyWorkerClient({
     worker=created;
     return worker;
   }
-  function run(job,{onProgress}={}) {
+  function run(job) {
     if(disposed) return Promise.reject(Error('TOPOLOGY_WORKER_DISPOSED'));
     if(job?.sourceKind!=='xml' || job.topologyPreFinalOnly!==true ||
        job.options?.analyzeTopology!==true || job.options?.useTopoFixForCii===true) {
@@ -83,14 +64,8 @@ export function createTopologyWorkerClient({
       try {target=ensureWorker();}
       catch(error) {reject(error);return;}
       const id=++sequence;
-      const previewTotal=Array.isArray(job?.options?.topologyShortPreviewRequests)
-        ?job.options.topologyShortPreviewRequests.length:0;
-      const firstMs=previewTotal?previewFirstProgressTimeoutMs:jobTimeoutMs;
-      const timeout=setTimeout(()=>reset(previewTotal?
-        'TOPOLOGY_WORKER_TIMEOUT: first preview progress absent; original and last validated revision retained.':
-        'TOPOLOGY_WORKER_TIMEOUT: no result; original and last validated revision retained.'),firstMs);
-      pending.set(id,{resolve,reject,timeout,previewTotal,lastProgress:0,
-        onProgress:previewTotal&&typeof onProgress==='function'?onProgress:null});
+      const timeout=setTimeout(()=>reset('TOPOLOGY_WORKER_TIMEOUT: no result; original and last validated revision retained.'),jobTimeoutMs);
+      pending.set(id,{resolve,reject,timeout});
       try {target.postMessage({type:'RUN',id,job});}
       catch(error){reset('TOPOLOGY_WORKER_SEND_FAILED: '+(error?.message||String(error)));}
     });
