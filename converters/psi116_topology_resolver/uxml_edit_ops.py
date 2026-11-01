@@ -383,6 +383,15 @@ def _short_canonical_operation(uxml: dict, result: ResolutionResult,
                         "edits": edits}]}
 
 
+def _preview_short_native_transaction(before: ResolutionResult,
+                                      policy: TransactionPolicy,
+                                      config: ResolverConfig) -> TopoFixTransactionResult:
+    """Existing native transaction on a disposable read-only preview slice.
+
+    The original-source apply route does not use slices or this helper.
+    """
+    return apply_topofix_transaction(before, policy=policy, config=config)
+
 def export_edit_ops(
     uxml: dict, *, policy: TransactionPolicy | None = None,
     source_name: str = "<memory>", config: ResolverConfig | None = None,
