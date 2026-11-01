@@ -686,6 +686,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   // Paginate so one click never constructs an unbounded DOM tree.
   const SHORT_PREVIEW_PAGE_SIZE=24;
   function renderShortPreview(){
+    // Selection only: no separate hub short-op preview or approval gate.
     const p=state.shortPreview,panel=query(root,'[data-short-preview]');
     if(!p||!state.source||p.sha!==state.source.sourceSha256){panel.textContent='';return;}
     const rows=state.shortElements,total=rows.length;
@@ -694,67 +695,39 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     const start=p.page*SHORT_PREVIEW_PAGE_SIZE;
     const visible=rows.slice(start,start+SHORT_PREVIEW_PAGE_SIZE);
     const eligible=rows.filter(r=>r.eligible).length;
-    const hubReady=!state.hubEnabled||shortHubPreviewCurrent();
-    const report=state.shortHubReport;
-    const reported=!!(state.hubEnabled&&report&&report.ids===shortSelectionKey()&&
-      report.sha===state.source.sourceSha256&&report.epoch===state.epoch&&
-      report.revision===state.revision);
-    const refusedHtml=reported&&report.refusedCount?
-      '<section data-short-refusals aria-label="Refused short operations">'+
-      '<p><strong>'+report.readyCount+' ready / '+report.refusedCount+
-        ' refused</strong> · Refused items are never Apply operations.</p>'+
-      '<button type="button" data-short-deselect-refused>Deselect refused ('+
-        report.refusedCount+')</button><ul>'+
-      report.refused.map(item=>'<li data-short-refused="'+esc(item.id)+'">'+
-        '<strong>'+esc(item.id)+'</strong> · '+esc(item.plainReason)+
-        ' <code>'+esc(item.code)+'</code> '+
-        '<button type="button" data-short-refused-locate="'+esc(item.id)+
-        '">Locate original records</button></li>').join('')+
-      '</ul></section>':'';
-    panel.innerHTML='<h3>Drop elements ≤6 mm, then close</h3>'+
-      '<p role="status">PREVIEW ONLY · '+total+' measured candidates · '+eligible+
-      ' eligible under source checks · working XML unchanged. Select source owners, then explicitly Apply.</p>'+
+    const hubReady=!state.hubEnabled||
+      (state.hubParity?.status==='EQUAL'&&analysisProofCurrent());
+    panel.innerHTML='<h3>Select short elements ≤6 mm</h3>'+
+      '<p role="status">'+total+' measured candidates · '+eligible+
+      ' eligible under source checks. Select owners, then Apply. '+
+      'Each hub transaction independently checks canonical UXML operation authority, '+
+      'loss contract, original source and native validation before retaining a revision.</p>'+
       '<p data-short-selection-count>'+p.selected.size+' selected · page '+(p.page+1)+' of '+pages+'</p>'+
-      '<button data-select-gaskets>Select eligible gaskets (all pages)</button>'+
+      '<button data-select-gaskets '+(state.busy||state.batchRunning?'disabled':'')+
+        '>Select eligible gaskets (all pages)</button>'+
       '<ul>'+visible.map((r,i)=>'<li><label><input type="checkbox" data-short-index="'+(start+i)+'" '+
-        (!r.eligible?'disabled ':'')+(p.selected.has(r.id)?'checked ':'')+'>'+
+        (!r.eligible||state.busy||state.batchRunning?'disabled ':'')+
+        (p.selected.has(r.id)?'checked ':'')+'>'+
         esc(r.componentType+' · '+Number(r.lengthMm).toFixed(3)+' mm'+
         (r.lengthBasis==='SOURCE_STRAIGHT_TWO_PORT_SPAN'?'':' source span; physical length unverified')+
         ' · '+r.componentRefNo+' · '+r.recordCount+' records · weight '+r.weightRemoved)+
         '</label><small>'+esc((r.nodeKeys||[]).join(', ')+' · '+
         (r.eligible?'Length basis: straight port spacing':r.reason||'Manual review'))+
         '</small></li>').join('')+'</ul>'+
-      '<div class="short-preview-pagination"><button data-short-prev '+(!p.page?'disabled':'')+'>Previous</button>'+
-      '<button data-short-next '+(p.page>=pages-1?'disabled':'')+'>Next</button></div>'+
-      (state.hubEnabled?'<button data-short-hub-preview '+(!p.selected.size||state.busy?'disabled':'')+
-        '>Preview selected UXML edit operations ('+p.selected.size+')</button>'+
-        '<p data-short-hub-status role="status">'+esc(state.shortHubProgress?
-           'Previewing '+state.shortHubProgress.completed+' of '+state.shortHubProgress.total+
-             ' short elements'+(state.shortHubProgress.etaSeconds===null?
-             (state.shortHubProgress.completed===0?' · estimating after first group':''):
-             ' · Estimated time remaining: ~'+
-             (state.shortHubProgress.etaSeconds>=60?
-               Math.ceil(state.shortHubProgress.etaSeconds/60)+' min':
-               Math.max(1,state.shortHubProgress.etaSeconds)+' sec')+' (approximate)')+
-             ' · Cancel available; no Apply before completion.':
-           state.shortHubPreviewError||
-          (reported?report.readyCount+' ready / '+report.refusedCount+
-             ' refused'+(hubReady?' · UXML operation preview verified for exact current selection.':
-               ' · Deselect refused, then re-preview before Apply.'):
-           hubReady?'UXML operation preview verified for exact current selection.':
-             'Select source owners, then preview exact UXML edit operations before Apply.'))+
-        '</p>'+refusedHtml:'')+
-      (total?'<button data-run-short-drop '+(!p.selected.size||!hubReady?'disabled':'')+
-        '>Apply all '+p.selected.size+' selected &amp; close</button>':
+      '<div class="short-preview-pagination"><button data-short-prev '+
+        (!p.page||state.busy||state.batchRunning?'disabled':'')+'>Previous</button>'+
+      '<button data-short-next '+
+        (p.page>=pages-1||state.busy||state.batchRunning?'disabled':'')+'>Next</button></div>'+
+      (total?'<button data-run-short-drop '+
+        (!p.selected.size||!hubReady||state.busy||state.batchRunning?'disabled':'')+
+        '>Apply '+p.selected.size+' selected &amp; close</button>':
         '<p>No measurable two-port elements at ≤6 mm.</p>')+
-      '<p>One source-bound transaction and recheck per element. Cancel at any point; only validated revisions are retained.</p>';
+      '<p>Cancel retains the last validated revision. Refused owners are reported individually and never written.</p>';
     explainDisabledActions();
   }
   function previewShortElements(){
     if(!state.source||!state.plan||state.busy||state.batchRunning)return;
     state.shortPreview={sha:state.source.sourceSha256,epoch:state.epoch,page:0,selected:new Set()};
-    state.shortHubPreview=null;state.shortHubPreviewError=null;
-    state.shortHubReport=null;
     renderShortPreview();
     query(root,'[data-short-preview]').scrollIntoView({block:'nearest'});
   }
