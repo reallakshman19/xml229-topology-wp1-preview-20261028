@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mergeShortHubPreviewChunks,SHORT_HUB_PREVIEW_CHUNK_SIZE}
+import {mergeShortHubPreviewChunks,SHORT_HUB_PREVIEW_PROGRESS_INTERVAL}
   from '../tabs/topology-workspace/short-preview-chunks.mjs';
 import {assessShortPreview} from '../tabs/topology-workspace/short-preview-model.mjs';
 import {assertOperationsPreview} from '../tabs/topology-workspace/uxml-operations-view.mjs';
@@ -29,9 +29,9 @@ function chunk(ids,accepted,refused=[],nonshort=[baseline]){
     shortPreview:{selectedIds:ids,acceptedIds:accepted,refused},
     ops}};
 }
-test('4 items per cancellable Worker chunk, never an unbounded single 89-item job',()=>{
-  assert.equal(SHORT_HUB_PREVIEW_CHUNK_SIZE,4);
-  assert.equal(Math.ceil(89/SHORT_HUB_PREVIEW_CHUNK_SIZE),23);
+test('single Worker preview reports once per four completed owners, regardless of selection size',()=>{
+  assert.equal(SHORT_HUB_PREVIEW_PROGRESS_INTERVAL,4);
+  assert.equal(Math.ceil(89/SHORT_HUB_PREVIEW_PROGRESS_INTERVAL),23);
 });
 test('source-bound aggregation: accepted/refused, untouched distinct records and canonical row order',()=>{
   const a='SHORT:0:1',b='SHORT:0:2',c='SHORT:0:3';
