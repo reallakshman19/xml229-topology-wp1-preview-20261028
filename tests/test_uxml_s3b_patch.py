@@ -83,9 +83,9 @@ class InputXmlS3BPatch(unittest.TestCase):
         header=header.replace('NUMISECT="1"','NUMISECT="0"')
         return header+"\n".join(generated)+"\n"+src[end:]
 
-    def fixture(self, base: Path):
+    def fixture(self, base: Path, source: str | None = None):
         original=base/"original.input.xml"
-        original.write_bytes(self.synthetic_source().encode("utf8"))
+        original.write_bytes((source if source is not None else self.synthetic_source()).encode("utf8"))
         hub=self.read(original)
         result=resolve_from_uxml(hub)
         aliases=[a for a in result.fix_actions
@@ -220,6 +220,28 @@ class InputXmlS3BPatch(unittest.TestCase):
                     self.assertFalse(out.exists(),name)
                     self.assertFalse(report.exists(),name)
                     self.assertEqual(original.read_bytes(),immutable)
+
+    def test_source_sif_class_b_node_owner_reference_is_refused_without_output(self):
+        """Changing FROM_NODE must never strand a source SIF at its old owner."""
+        with tempfile.TemporaryDirectory(prefix="uxml-s3b-classb-") as td:
+            base=Path(td)
+            source=self.synthetic_source()
+            elements=re.findall(r"<PIPINGELEMENT\b.*?</PIPINGELEMENT>",source,re.S)
+            self.assertEqual(len(elements),5)
+            modified=elements[-1].replace("</PIPINGELEMENT>",
+                '<SIF NODE="40.000000" TYPE="5.000000"/>\n</PIPINGELEMENT>')
+            self.assertNotEqual(modified,elements[-1])
+            source=source.replace(elements[-1],modified)
+            original,hub,payload=self.fixture(base,source)
+            old=original.read_bytes()
+            trial=base/"refusal"
+            trial.mkdir()
+            p,out,validation=self.run_cli(original,hub,payload,trial)
+            self.assertEqual(p.returncode,1,p.stdout+p.stderr)
+            self.assertIn("INPUT_XML_CLASS_B_SIF_OWNER_TOUCH_REFUSED",p.stdout)
+            self.assertFalse(out.exists())
+            self.assertFalse(validation.exists())
+            self.assertEqual(original.read_bytes(),old)
 
     def test_public_inputxml_only_findings_still_run_without_cross_run_join(self):
         for name,count in (("GREInputxml.xml",100),("PLB314Inputxml.xml",53)):
