@@ -2,17 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {runShortBulk} from '../tabs/topology-workspace/short-bulk.mjs';
 
-function driver(n,{cancelAt=Infinity,failAt=Infinity}={}){
+function driver(n,{cancelAt=Infinity,failAt=Infinity,hubEnabled=false,differentAt=Infinity}={}){
   const selectedIds=Array.from({length:n},(_,i)=>'SHORT:'+i);
   const source={name:'original.xml',sourceText:'xml|h0',sourceSha256:'h0'};
   const initial=selectedIds.map(id=>({id,eligible:true,sourceSha256:'h0',nodeKeys:[id+':S1',id+':S2']}));
   let count=0,active=true,checkpoints=0,progress=0;
   const hash=async xml=>xml.startsWith('xml|')?xml.split('|').at(-1):'full-lineage-sha';
+  const oldRawSha=k=>k===1?'h0':'h'+(k-1);
   async function runEngine(job){
     count++;
     assert.equal(job.options.topologyShortElementRequests.length,1,'one atomic owner');
     assert.equal(job.topologyPreFinalOnly,true);
     assert.equal(job.options.useTopoFixForCii,false);
+    assert.equal(job.options.topologyUxmlPreview,hubEnabled);
+    assert.equal(job.sourceRawSha256,oldRawSha(count));
     assert.equal(job.sourceText,'xml|h'+(count-1));
     if(count===failAt)return {ok:false,error:'SHORT_ELEMENT_RECONNECTION_NOT_QUALIFIED'};
     const old='h'+(count-1),next='h'+count,id=job.options.topologyActionIds[0];
@@ -30,6 +33,8 @@ function driver(n,{cancelAt=Infinity,failAt=Infinity}={}){
       sourceOccurrenceMap:Array.from({length:1654},(_,i)=>({sourceNodeOrdinal:i}))};
     return {ok:true,outputKind:'topology-sidecars',acceptedFinalTransferred:false,
       nativeCiiReleaseAuthorized:false,ciiText:null,enrichedText:'',topoFixCommitted:true,
+      topologyUxmlParity:{status:count===differentAt?'DIFFERENT':'EQUAL',
+        differences:count===differentAt?['/synthetic: perturbed UXML']:[]},
       topoFixXmlText:'xml|'+next,topoFixTransactionText:JSON.stringify(txn),
       topoFixValidationText:JSON.stringify(validation),
       topoFixLineageText:JSON.stringify(lineage),
@@ -39,6 +44,7 @@ function driver(n,{cancelAt=Infinity,failAt=Infinity}={}){
       topoFixPostPlanText:JSON.stringify({source:{sha256:next},actions:[]})};
   }
   const run=()=>runShortBulk({source,shortElements:initial,selectedIds,runEngine,hash,
+    hubEnabled,
     isCurrent:()=>active,onCheckpoint:()=>{checkpoints++;if(checkpoints===cancelAt)active=false;},
     onProgress:()=>{progress++;}});
   return {run,get count(){return count;},get checkpoints(){return checkpoints;},get progress(){return progress;}};
@@ -49,6 +55,10 @@ test('89 of 89 requested owners run headlessly with source-bound reanalysis and 
  assert.equal(r.completed,89);assert.equal(r.pendingIds.length,0);
  assert.equal(r.currentEligible,0);assert.equal(r.latest.source.sourceSha256,'h89');
  assert.equal(d.count,89);assert.equal(d.checkpoints,89);
+ const elapsed=r.applied.map(item=>item.elapsedMs);
+ assert.equal(elapsed.length,89);
+ assert.ok(elapsed.every(n=>Number.isInteger(n)&&n>=0));
+ console.info('SYNTHETIC_SHORT_BULK_PER_ITEM_ELAPSED_MS: '+elapsed.join(','));
  for(const p of r.applied){
    assert.equal(p.lineage.sourceOccurrenceMap,undefined);
    assert.equal(p.lineage.sourceOccurrenceMapCount,1654);
@@ -65,4 +75,22 @@ test('engine rejection retains last completed transaction and marks outstanding 
  assert.equal(r.stopReason,'TRANSACTION_FAILED');assert.equal(r.failedId,'SHORT:2');
  assert.equal(r.applied.length,2);assert.equal(r.pendingIds.length,86);
  assert.equal(r.latest.source.sourceSha256,'h2');
+});
+
+test('hub short items require EQUAL before staging any source changes',async()=>{
+ const d=driver(2,{hubEnabled:true,differentAt:1});
+ const result=await d.run();
+ assert.equal(result.stopReason,'TRANSACTION_FAILED');
+ assert.match(result.stopMessage,/UXML_SHORT_PARITY_DIFFERENT/);
+ assert.equal(result.applied.length,0);
+ assert.equal(result.latest,null);
+ assert.equal(result.pendingIds.length,1);
+});
+test('hub short items stay serial and each carries fresh raw source custody',async()=>{
+ const d=driver(2,{hubEnabled:true});
+ const result=await d.run();
+ assert.equal(result.stopReason,'COMPLETE');
+ assert.equal(result.applied.length,2);
+ assert.ok(result.applied.every(p=>p.hubRoute===true));
+ assert.equal(result.latest.source.rawSha256,'h2');
 });

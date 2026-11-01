@@ -21,6 +21,7 @@ from .transaction import (
     _build_locator_index, _finding_node_keys, _parse_clone, _selected_actions,
     apply_topofix_transaction,
 )
+from .short_elements import short_elements
 from .uxml_adapter import resolve_from_uxml
 from .uxml_compare import _diff
 
@@ -36,6 +37,7 @@ FIELD_TOUCHES = {
     "CLOSE_CONFIRMED_PIPE_JOINT": frozenset({"NodeNumber", "Position"}),
     "CLOSE_PORT_CONNECTION": frozenset({"NodeNumber", "Position"}),
     "CLOSE_CONFIRMED_PORT_CONNECTION": frozenset({"NodeNumber", "Position"}),
+    "DROP_SHORT_ELEMENT": frozenset({"*", "NodeNumber", "Position"}),
 }
 
 
@@ -75,8 +77,22 @@ def _enforce_today_auto_policy(minimum_confidence: object,
 def _policy_from_json(value: object) -> TransactionPolicy:
     _require(isinstance(value, dict) and set(value) == POLICY_FIELDS,
              "UXML_EDIT_POLICY_SCHEMA_INVALID")
-    _require(value["joint_repairs"] == [] and value["short_element_requests"] == [],
+    _require(value["joint_repairs"] == [],
              "UXML_MANUAL_REPAIR_NOT_AUTHORIZED")
+    short = value["short_element_requests"]
+    _require(isinstance(short, list) and len(short) <= 1,
+             "UXML_SHORT_EXACT_ONE_REQUEST_REQUIRED")
+    if short:
+        request = short[0]
+        _require(isinstance(request, dict) and
+                 set(request) == {"id", "sourceSha256", "nodeKeys"} and
+                 isinstance(request["id"], str) and request["id"].startswith("SHORT:") and
+                 isinstance(request["sourceSha256"], str) and
+                 isinstance(request["nodeKeys"], list) and bool(request["nodeKeys"]) and
+                 all(isinstance(key, str) and key for key in request["nodeKeys"]),
+                 "UXML_SHORT_REQUEST_SCHEMA_INVALID")
+        _require(value["selected_action_ids"] == [request["id"]],
+                 "UXML_SHORT_REQUEST_SELECTION_MISMATCH")
     _require(type(value["apply_all_safe"]) is bool and
              type(value["require_no_blocking_plan_actions"]) is bool and
              type(value["minimum_confidence"]) in (float, int) and
@@ -95,6 +111,7 @@ def _policy_from_json(value: object) -> TransactionPolicy:
         minimum_confidence=value["minimum_confidence"],
         apply_all_safe=False,
         require_no_blocking_plan_actions=value["require_no_blocking_plan_actions"],
+        short_element_requests=tuple(short),
     )
     if policy.selected_action_ids:
         policy.validate()
@@ -244,6 +261,92 @@ def _loss_veto(uxml: Mapping[str, Any], result: ResolutionResult,
                         raise UxmlPatchError("UXML_LOSS_CONTRACT_FIELD_TOUCH:" + key + ":" + path)
 
 
+def _short_canonical_operation(uxml: dict, result: ResolutionResult,
+                               policy: TransactionPolicy,
+                               config: ResolverConfig) -> dict:
+    """Exactly one explicit owner; native copy-only transaction supplies effects."""
+    _require(not policy.joint_repairs and not policy.apply_all_safe and
+             len(policy.short_element_requests) == len(policy.selected_action_ids) == 1,
+             "UXML_SHORT_EXACT_ONE_REQUEST_REQUIRED")
+    request = policy.short_element_requests[0]
+    _require(isinstance(request, dict) and
+             set(request) == {"id", "sourceSha256", "nodeKeys"} and
+             isinstance(request.get("id"), str) and
+             isinstance(request.get("nodeKeys"), (list, tuple)),
+             "UXML_SHORT_REQUEST_SCHEMA_INVALID")
+    sha = _source_sha(uxml)
+    _require(request["sourceSha256"] == sha and
+             policy.selected_action_ids == (request["id"],),
+             "UXML_SHORT_REQUEST_SOURCE_OR_SELECTION_DRIFT")
+    row = next((r for r in short_elements(result.document, config)
+                if r["id"] == request["id"]), None)
+    _require(row is not None and row["eligible"] and
+             list(request["nodeKeys"]) == row["nodeKeys"] and
+             row["sourceSha256"] == sha, "UXML_SHORT_NOT_ELIGIBLE_OR_WITNESS_DRIFT")
+    # Only the existing native short_element routine can remove and reclose
+    # an owner. This is a disposable in-memory clone, never an output write.
+    try:
+        transaction = apply_topofix_transaction(result, policy=policy, config=config)
+    except (ValueError, KeyError) as exc:
+        raise UxmlPatchError("UXML_SHORT_NATIVE_REFUSED:" + type(exc).__name__) from exc
+    _require(transaction.committed and transaction.fixed_xml is not None,
+             "UXML_SHORT_NATIVE_TRANSACTION_REJECTED")
+    edits = []
+    for change in transaction.operations:
+        _require(change.action_id == request["id"] and
+                 change.operation in {"REMOVE_SELECTED_SHORT_ELEMENT_RECORD", "CLOSE_COMPONENT_PORT"},
+                 "UXML_SHORT_UNEXPECTED_MUTATION_KIND")
+        if change.operation == "REMOVE_SELECTED_SHORT_ELEMENT_RECORD":
+            _require(change.source_node_key in row["nodeKeys"],
+                     "UXML_SHORT_OWNER_DELETE_TARGET_MISMATCH")
+            edits.append({"recordKey": change.source_node_key,
+                          "field": "Source record", "before": "Present", "after": "Removed"})
+        else:
+            _require(isinstance(change.before, dict) and isinstance(change.after, dict) and
+                     set(change.before) == set(change.after) == {"NodeNumber", "Position"},
+                     "UXML_SHORT_PORT_FIELDS_INVALID")
+            for field in ("NodeNumber", "Position"):
+                if change.before[field] != change.after[field]:
+                    edits.append({"recordKey": change.source_node_key, "field": field,
+                                  "before": change.before[field], "after": change.after[field]})
+    _require({e["recordKey"] for e in edits if e["field"] == "Source record"} ==
+             set(row["nodeKeys"]), "UXML_SHORT_DELETE_SET_MISMATCH")
+    edits.sort(key=lambda e: (e["recordKey"], e["field"]))
+    targets = sorted({e["recordKey"] for e in edits})
+    refs = _source_refs_by_key(uxml, sha)
+    _require(bool(targets) and all(key in refs for key in targets),
+             "UXML_SHORT_SOURCE_REF_NOT_FOUND")
+    records = {n.key: n for branch in result.document.branches for n in branch.nodes}
+    paths = _source_record_paths(result.document.source_text, result)
+    losses = uxml.get("lossContract")
+    _require(isinstance(losses, list), "UXML_LOSS_CONTRACT_MISSING")
+    touched = {key: set() for key in targets}
+    for edit in edits:
+        touched[edit["recordKey"]].add("*" if edit["field"] == "Source record"
+                                        else edit["field"])
+    for key, fields in touched.items():
+        _require(key in records and key in paths,
+                 "UXML_SHORT_ORIGINAL_RECORD_NOT_FOUND:" + key)
+        _require(records[key].connection_type != "CLOS", "UXML_CLOS_WRITE_HELD:" + key)
+        for loss in losses:
+            _require(isinstance(loss, dict) and isinstance(loss.get("details"), dict) and
+                     isinstance(loss["details"].get("sourcePath"), str),
+                     "UXML_LOSS_CONTRACT_INVALID")
+            loss_path, node_path = loss["details"]["sourcePath"], paths[key]
+            if loss_path != node_path and not loss_path.startswith(node_path + "/"):
+                continue
+            if "*" in fields or any(loss_path.startswith(node_path + "/" + field + "[")
+                                    for field in fields):
+                raise UxmlPatchError("UXML_LOSS_CONTRACT_FIELD_TOUCH:" + key)
+    return {"opId": "UXML-OP-" + request["id"], "kind": "DROP_SHORT_ELEMENT",
+            "sourceActionId": request["id"], "fileSha256": sha, "targets": targets,
+            "params": [{"request": {"id": row["id"], "sourceSha256": sha,
+                                    "nodeKeys": list(row["nodeKeys"])},
+                        "leftKey": row["leftKey"], "rightKey": row["rightKey"],
+                        "lengthBasis": row["lengthBasis"], "lengthMm": row["lengthMm"],
+                        "edits": edits}]}
+
+
 def export_edit_ops(
     uxml: dict, *, policy: TransactionPolicy | None = None,
     source_name: str = "<memory>", config: ResolverConfig | None = None,
@@ -255,10 +358,14 @@ def export_edit_ops(
              "UXML_EDIT_POLICY_TYPE_INVALID")
     _enforce_today_auto_policy(requested.minimum_confidence,
                                requested.require_no_blocking_plan_actions)
-    _require(not requested.joint_repairs and not requested.short_element_requests,
-             "UXML_MANUAL_REPAIR_NOT_AUTHORIZED")
+    _require(not requested.joint_repairs, "UXML_MANUAL_REPAIR_NOT_AUTHORIZED")
     result = resolve_from_uxml(uxml, config, source_name=source_name)
     sha = _source_sha(uxml)
+    if requested.short_element_requests:
+        op = _short_canonical_operation(uxml, result, requested, config)
+        return {"schema": EDIT_OP_SCHEMA, "sourceFormat": "PSI116",
+                "fileSha256": sha, "policy": json.loads(json.dumps(asdict(requested))),
+                "ops": [op]}
     candidates = _selected_actions(result, requested)
     actions = [a for a in candidates if a.disposition in MUTATING_DISPOSITIONS]
     _require(all(a.status == "PROPOSED" and not a.blockers and
@@ -297,7 +404,7 @@ def export_edit_ops(
 
 
 def _validate_ops(uxml: dict, payload: Mapping[str, Any],
-                  result: ResolutionResult) -> TransactionPolicy:
+                  result: ResolutionResult, config: ResolverConfig) -> TransactionPolicy:
     _require(isinstance(payload, dict) and set(payload) == PAYLOAD_FIELDS and
              payload.get("schema") == EDIT_OP_SCHEMA and
              payload.get("sourceFormat") == "PSI116",
@@ -309,6 +416,16 @@ def _validate_ops(uxml: dict, payload: Mapping[str, Any],
     supplied = payload.get("ops")
     _require(isinstance(supplied, list), "UXML_EDIT_OPS_LIST_REQUIRED")
     refs = _source_refs_by_key(uxml, sha)
+    if policy.short_element_requests:
+        _require(len(supplied) == 1 and isinstance(supplied[0], dict) and
+                 set(supplied[0]) == EDIT_OP_FIELDS,
+                 "UXML_SHORT_EXACT_ONE_OP_REQUIRED")
+        op = supplied[0]
+        _require(op.get("kind") == "DROP_SHORT_ELEMENT", "UXML_SHORT_KIND_REFUSED")
+        canonical = _short_canonical_operation(uxml, result, policy, config)
+        _require(op == canonical, "UXML_SHORT_TARGETS_OR_PARAMS_DIFFER_FROM_AUTHORITY")
+        _require(all(key in refs for key in op["targets"]), "UXML_SHORT_SOURCE_REF_NOT_FOUND")
+        return policy
     by_id = {a.action_id: a for a in result.fix_actions}
     selected = []
     observed_ids = []
@@ -372,7 +489,7 @@ def apply_edit_ops(
     result = resolve_from_uxml(uxml, config, source_name=str(original_path))
     _require(result.document.source_text.encode("utf-8") == data,
              "UXML_ORIGINAL_BYTES_MISMATCH")
-    policy = _validate_ops(uxml, payload, result)
+    policy = _validate_ops(uxml, payload, result, config)
     if not payload["ops"]:
         return None
 
@@ -398,6 +515,26 @@ def apply_edit_ops(
     # Do not reinterpret any FixAction, reconstruct any normalized XML, or
     # bypass native validation. Existing transaction.py has sole write authority.
     return apply_topofix_transaction(result, policy=policy, config=config)
+
+
+
+def compare_hub_patch(direct: TopoFixTransactionResult,
+                      patched: TopoFixTransactionResult | None) -> list[str]:
+    """Fail-closed parity witness for the Worker before it can emit fixed XML.
+
+    Complete transaction/validation payloads and the corrected XML bytes
+    must agree; a missing or rejected patched transaction is not EQUAL.
+    """
+    if patched is None or not patched.committed or patched.fixed_xml is None:
+        return ["/patchBack: UXML_PATCH_NOT_COMMITTED"]
+    differences: list[str] = []
+    _diff("/transaction", direct.transaction_payload(),
+          patched.transaction_payload(), differences)
+    _diff("/validation", direct.validation_payload(),
+          patched.validation_payload(), differences)
+    if direct.fixed_xml != patched.fixed_xml:
+        differences.append("/fixedXml: PATCH_BYTES_DIFFER_FROM_DIRECT")
+    return differences
 
 
 def compare_patch_to_direct(original: str | Path, uxml: dict,

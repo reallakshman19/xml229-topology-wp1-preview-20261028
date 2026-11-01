@@ -80,7 +80,7 @@ async function openInjected(mode){
      import('/tabs/topology-workspace/topology-worker-client.mjs')]);
    root.id='xml229-topology-workspace';
    const client=createTopologyWorkerClient();
-   let committed=false;
+   let committed=false,shortTransactions=0;
    const stages=[];
    const runEngine=async job=>{
      if(mode==='DELAY_ANALYSIS'&&!job.options?.generateTopoFix){
@@ -93,6 +93,17 @@ async function openInjected(mode){
      stages.push(job.options?.generateTopoFix?'TRANSACTION':
        committed?'POST_PUBLISH_RECHECK':'READ_ONLY_ANALYSIS');
      if(job.options?.generateTopoFix&&result?.topoFixCommitted===true)committed=true;
+     if(job.options?.generateTopoFix&&job.options?.topologyShortElementRequests?.length){
+       shortTransactions++;
+       if(mode==='HUB_SHORT_DIFF'||
+          (mode==='HUB_SHORT_DIFF_SECOND'&&shortTransactions===2)){
+         // Perturb only the returned synthetic parity, not native Worker
+         // transaction bytes. The product must never release this revision.
+         return {...result,topoFixCommitted:false,topoFixXmlText:'',
+           topologyUxmlParity:{status:'DIFFERENT',
+             differences:['/synthetic-hub-short: UXML_PATCH_BYTES_DIFFERENT']}};
+       }
+     }
      if(committed&&!job.options?.generateTopoFix&&mode==='REVISION_RACE'){
        // The real Worker has already returned a valid read-only recheck.
        // Hold the wrapper's result until the browser advances the simulated
@@ -308,9 +319,10 @@ test('UI clarity: hub-only short-drop explanation, review Next/Previous and reta
    assert.equal(await page.locator('[data-download-resolutions] + .action-unavailable-reason').count(),1);
    const short=page.locator('[data-preview-short]');
    assert.equal(await short.isDisabled(),true);
-   assert.match(await short.getAttribute('title'),/Runs on the direct route only/);
+   assert.match(await short.getAttribute('title'),
+     /Universal XML parity must be EQUAL before short-element changes/);
    assert.match(await page.locator('[data-preview-short] + .action-unavailable-reason').textContent(),
-     /Untick Universal XML route to use it/);
+     /Universal XML parity must be EQUAL before short-element changes/);
    await page.locator('[data-uxml-toggle]').uncheck();
    assert.equal(await short.isEnabled(),true);
    assert.equal(await short.getAttribute('title'),null);
@@ -432,6 +444,214 @@ test('UI clarity: disabled Cancel reason disappears on actual analysis start',
    assert.equal(await cancel.getAttribute('title'),'No active operation to cancel.');
    assert.deepEqual(errors,[]);
  }finally{await page.close();}
+});
+
+
+const hubShortXML=shortXML.replace('<PipeStressExport>',
+  '<PipeStressExport xmlns="http://aveva.com/pipeStress116.xsd">');
+
+async function prepareHubShort(page){
+  await page.locator('[data-file]').setInputFiles({
+    name:'synthetic-hub-gasket.xml',mimeType:'application/xml',
+    buffer:Buffer.from(hubShortXML,'utf8')
+  });
+  await page.waitForFunction(()=>document.querySelector('[data-occ-summary]')
+    ?.textContent?.includes('6 of 6'));
+  await page.locator('[data-uxml-toggle]').check();
+  await page.locator('[data-analyze]').click();
+  await page.waitForFunction(()=>document.querySelector('[data-uxml-parity]')
+    ?.dataset?.parity==='EQUAL'&&document.querySelector('[data-status]')
+    ?.textContent?.includes('Authoritative topology analysis complete.'),
+    null,{timeout:120000});
+  const short=page.locator('[data-preview-short]');
+  assert.equal(await short.isEnabled(),true,'EQUAL hub must enable short drop preview');
+  assert.equal(await short.getAttribute('title'),null);
+  await short.click();
+  await page.locator('[data-select-gaskets]').click();
+  assert.equal(await page.locator('[data-short-index]:checked').count(),1);
+  const apply=page.locator('[data-run-short-drop]');
+  assert.equal(await apply.isDisabled(),true,
+    'hub requires exact selected operations preview before explicit Apply');
+  assert.match(await apply.getAttribute('title'),/Preview the selected UXML short-drop operations/);
+  await page.locator('[data-short-hub-preview]').click();
+  await page.waitForFunction(()=>document.querySelector('[data-short-hub-status]')
+    ?.textContent?.includes('verified for exact current selection'),
+    null,{timeout:120000});
+  assert.equal(await apply.isEnabled(),true);
+  assert.equal(await apply.getAttribute('title'),null);
+  const op=page.locator('[data-ops-rows] [data-op-id]')
+    .filter({hasText:'Drop selected short component and close ports'});
+  assert.equal(await op.count(),1,'read-only Operations preview must show short delete+close');
+  assert.match(await op.textContent(),/Source record: Present → Removed/);
+  assert.equal(await page.locator('[data-download-working]').isDisabled(),true,
+    'preview never writes a corrected source before Apply');
+}
+
+test('hub short-drop EQUAL: selected preview, source patch, validated download',
+ {timeout:240000},async()=>{
+  const {page,errors}=await openInjected('PASS');
+  try{
+    await prepareHubShort(page);
+    await page.locator('[data-run-short-drop]').click();
+    await page.waitForFunction(()=>document.querySelector('[data-progress]')
+      ?.textContent?.includes('BULK COMPLETE')&&
+      document.querySelector('main')?.getAttribute('aria-busy')==='false',
+      null,{timeout:120000});
+    const current=await page.evaluate(()=>window.__evidenceFixture.workspace.getState());
+    assert.equal(current.revision,1);
+    assert.equal(current.hubParity,'EQUAL');
+    assert.equal(await page.locator('[data-download-working]').isEnabled(),true);
+    assert.deepEqual(errors,[]);
+  }finally{await page.close();}
+});
+
+test('hub short-drop DIFFERENT: no corrected download or source publication',
+ {timeout:240000},async()=>{
+  const {page,errors}=await openInjected('HUB_SHORT_DIFF');
+  try{
+    await prepareHubShort(page);
+    await page.locator('[data-run-short-drop]').click();
+    await page.waitForFunction(()=>document.querySelector('[data-progress]')
+      ?.textContent?.includes('UXML_SHORT_PARITY_DIFFERENT')&&
+      document.querySelector('main')?.getAttribute('aria-busy')==='false',
+      null,{timeout:120000});
+    const current=await page.evaluate(()=>window.__evidenceFixture.workspace.getState());
+    assert.equal(current.revision,0);
+    assert.equal(current.hubParity,'DIFFERENT');
+    assert.equal(await page.locator('[data-download-working]').isDisabled(),true);
+    assert.equal(await page.locator('[data-download-fix]').count(),0);
+    assert.match(await page.locator('[data-uxml-differences]').textContent(),
+      /UXML_SHORT_PARITY_DIFFERENT/);
+    assert.deepEqual(errors,[]);
+  }finally{await page.close();}
+});
+
+
+const hubTwoShortXML='<PipeStressExport xmlns="http://aveva.com/pipeStress116.xsd">'+
+ '<Branch><Branchname>TWO-SYNTH</Branchname>'+
+ node(10,'PIPE','P',1,0)+node(20,'PIPE','P',2,100)+
+ node(-1,'GASK','SHORT-A',1,100)+node(30,'RIGID','SHORT-A',2,103)+
+ node(-1,'FLAN','F',1,103)+node(40,'RIGID','F',2,189)+
+ node(-1,'PIPE','M',1,189)+node(70,'PIPE','M',2,300)+
+ node(-1,'GASK','SHORT-B',1,300)+node(80,'RIGID','SHORT-B',2,303)+
+ node(-1,'FLAN','G',1,303)+node(90,'RIGID','G',2,389)+
+ '</Branch></PipeStressExport>';
+
+async function prepareTwoShort(page){
+  await page.locator('[data-file]').setInputFiles({
+    name:'synthetic-two-gaskets.xml',mimeType:'application/xml',
+    buffer:Buffer.from(hubTwoShortXML,'utf8')
+  });
+  await page.waitForFunction(()=>document.querySelector('[data-occ-summary]')
+    ?.textContent?.includes('12 of 12'),null,{timeout:30000});
+  await page.locator('[data-uxml-toggle]').check();
+  await page.locator('[data-analyze]').click();
+  await page.waitForFunction(()=>document.querySelector('[data-uxml-parity]')
+    ?.dataset?.parity==='EQUAL'&&document.querySelector('[data-status]')
+    ?.textContent?.includes('Authoritative topology analysis complete.'),
+    null,{timeout:120000});
+  await page.locator('[data-preview-short]').click();
+  const candidates=page.locator('[data-short-index]:not([disabled])');
+  assert.ok(await candidates.count()>=2,
+    'two independent selected synthetic owners must qualify');
+  assert.equal(await page.locator('[data-run-short-drop]').isDisabled(),true);
+}
+
+async function previewCurrentShort(page){
+  await page.locator('[data-short-hub-preview]').click();
+  await page.waitForFunction(()=>document.querySelector('[data-short-hub-status]')
+    ?.textContent?.includes('verified for exact current selection'),
+    null,{timeout:120000});
+  assert.equal(await page.locator('[data-run-short-drop]').isEnabled(),true);
+}
+
+test('hub preview selection change invalidates Apply and requires re-preview',
+  {timeout:240000},async()=>{
+  const {page,errors}=await openInjected('PASS');
+  try{
+    await prepareTwoShort(page);
+    const eligible=page.locator('[data-short-index]:not([disabled])');
+    await eligible.nth(0).check();
+    await previewCurrentShort(page);
+    const firstOps=await page.locator('[data-ops-rows] [data-op-id]')
+      .filter({hasText:'Drop selected short component'}).count();
+    assert.equal(firstOps,1);
+    await eligible.nth(1).check();
+    const apply=page.locator('[data-run-short-drop]');
+    assert.equal(await apply.isDisabled(),true);
+    assert.match(await apply.getAttribute('title'),
+      /Preview the selected UXML short-drop operations/);
+    assert.match(await page.locator('[data-run-short-drop] + .action-unavailable-reason')
+      .textContent(),/Preview the selected UXML short-drop operations/);
+    const before=await page.evaluate(()=>window.__evidenceFixture.stages
+      .filter(s=>s==='TRANSACTION').length);
+    // Dispatch a synthetic click to ensure the handler (not merely disabled
+    // browser semantics) refuses a stale source/selection authorization.
+    await page.evaluate(()=>document.querySelector('[data-run-short-drop]')
+      .dispatchEvent(new MouseEvent('click',{bubbles:true})));
+    assert.equal(await page.evaluate(()=>window.__evidenceFixture.stages
+      .filter(s=>s==='TRANSACTION').length),before);
+    assert.match(await page.locator('[data-fix-result]').textContent(),
+      /UXML_SHORT_PREVIEW_OR_PARITY_REQUIRED/);
+    await previewCurrentShort(page);
+    assert.equal(await apply.getAttribute('title'),null);
+    assert.equal(await page.locator('[data-ops-rows] [data-op-id]')
+      .filter({hasText:'Drop selected short component'}).count(),2);
+    assert.deepEqual(errors,[]);
+  }finally{await page.close();}
+});
+
+test('hub second-item DIFFERENT never exposes intermediate download',
+  {timeout:300000},async()=>{
+  const {page,errors}=await openInjected('HUB_SHORT_DIFF_SECOND');
+  try{
+    await prepareTwoShort(page);
+    await page.locator('[data-select-gaskets]').click();
+    assert.equal(await page.locator('[data-short-index]:checked').count(),2);
+    await previewCurrentShort(page);
+    assert.equal(await page.locator('[data-download-working]').isDisabled(),true);
+    await page.evaluate(()=>{
+      const working=document.querySelector('[data-download-working]');
+      const panel=document.querySelector('[data-fix-result]');
+      window.__downloadEnabledTransitions=[];
+      window.__downloadFixEverAdded=false;
+      const audit=records=>{
+        window.__downloadEnabledTransitions.push(!working.disabled);
+        if(records.some(record=>[...record.addedNodes].some(node=>
+          node.nodeType===1&&(
+            node.matches?.('[data-download-fix]')||
+            node.querySelector?.('[data-download-fix]')))))
+          window.__downloadFixEverAdded=true;
+        if(panel.querySelector('[data-download-fix]'))
+          window.__downloadFixEverAdded=true;
+      };
+      window.__downloadObserver=new MutationObserver(audit);
+      window.__downloadObserver.observe(working,
+        {attributes:true,attributeFilter:['disabled']});
+      window.__downloadObserver.observe(panel,{childList:true,subtree:true});
+    });
+    await page.locator('[data-run-short-drop]').click();
+    await page.waitForFunction(()=>document.querySelector('[data-progress]')
+      ?.textContent?.includes('UXML_SHORT_PARITY_DIFFERENT')&&
+      document.querySelector('main')?.getAttribute('aria-busy')==='false',
+      null,{timeout:180000});
+    const state=await page.evaluate(()=>window.__evidenceFixture.workspace.getState());
+    assert.equal(state.revision,1,'first validated owner may remain as a private working copy');
+    assert.equal(state.hubParity,'DIFFERENT');
+    assert.equal(await page.locator('[data-download-working]').isDisabled(),true);
+    assert.equal(await page.locator('[data-download-fix]').count(),0);
+    const transitions=await page.evaluate(()=>{
+      window.__downloadObserver.disconnect();
+      return window.__downloadEnabledTransitions;
+    });
+    assert.ok(transitions.every(enabled=>enabled===false),
+      'working download must stay disabled even transiently during mismatch');
+    assert.equal(await page.evaluate(()=>window.__downloadFixEverAdded),false,
+      'corrected-file download button must never appear, even briefly');
+    assert.match(await page.locator('[data-uxml-differences]').textContent(),
+      /UXML_SHORT_PARITY_DIFFERENT/);
+    assert.deepEqual(errors,[]);
+  }finally{await page.close();}
 });
 
 test.after(async()=>{

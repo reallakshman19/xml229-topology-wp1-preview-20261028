@@ -149,6 +149,7 @@ class UxmlPreviewReadOnlyContract(unittest.TestCase):
                 "job_topology_plan_path": str(paths["plan"]),
                 "job_topology_status_path": str(paths["status"]),
                 "job_connection_preview_json": "null",
+                "job_short_preview_json": "[]",
             }
             with patch(
                 "psi116_topology_resolver.uxml_operations_preview.build_operation_preview",

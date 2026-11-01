@@ -1,9 +1,9 @@
-"""UXML-PREVIEW: presentation-only projection of the *published* S2 edit ops.
+"""UXML-PREVIEW: read-only projection of pinned S2 edit ops.
 
-No new transaction, mutation or approval route. Uses export_edit_ops as the
-exclusive list of proposed Auto-eligible operations, and reads original source
-record semantics to describe the exact fields that S2's existing transaction
-would edit. Unknown or unrepresentable operations fail closed.
+Auto-eligible proposals use the existing read-only field projection. A
+separately selected short-owner preview derives its exact field changes from
+a copy-only native transaction; it never writes corrected XML to disk or
+authorizes Apply. Unknown or unrepresentable operations fail closed.
 """
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ NAMES = {
     "SAFE_DROP_PIPE_GEOMETRY": "Remove dispensable pipe record",
     "REMOVE_FALSE_RIGID": "Clear incorrect rigid flag",
     "CLOSE_PORT_CONNECTION": "Close compatible connection ports",
+    "DROP_SHORT_ELEMENT": "Drop selected short component and close ports",
 }
 class OperationsPreviewError(ValueError):
     """A missing exact change witness is never a blank 'safe' row."""
@@ -60,6 +61,17 @@ def _preview_fields(op: dict, action: Any, records: dict[str, Any]) -> list[dict
                 if before != after:
                     changes.append({"recordKey": record.key, "field": "NodeNumber",
                                     "before": before, "after": after})
+    elif kind == "DROP_SHORT_ELEMENT":
+        params = op.get("params")
+        _need(isinstance(params, list) and len(params) == 1 and
+              isinstance(params[0], dict) and isinstance(params[0].get("edits"), list),
+              "UXML_PREVIEW_SHORT_EFFECTS_INVALID")
+        for edit in params[0]["edits"]:
+            _need(isinstance(edit, dict) and
+                  set(edit) == {"recordKey", "field", "before", "after"} and
+                  edit["recordKey"] in op["targets"],
+                  "UXML_PREVIEW_SHORT_EFFECT_TARGET_INVALID")
+            changes.append(dict(edit))
     elif kind == "REMOVE_FALSE_RIGID":
         _need(len(op["targets"]) == 1, "UXML_PREVIEW_RIGID_TARGET_AMBIGUOUS")
         record = records[op["targets"][0]]
@@ -116,7 +128,8 @@ def _preview_fields(op: dict, action: Any, records: dict[str, Any]) -> list[dict
 
 def build_operation_preview(uxml: dict, *,
                             source_name: str = "<memory>",
-                            config: ResolverConfig | None = None) -> dict:
+                            config: ResolverConfig | None = None,
+                            short_requests: list[dict] | None = None) -> dict:
     """Read-only; one preview row for each actual export_edit_ops/v1 op.
 
     No XML clone is modified; no transaction is started or outputs written.
@@ -124,6 +137,20 @@ def build_operation_preview(uxml: dict, *,
     """
     config = config or ResolverConfig()
     payload = export_edit_ops(uxml, source_name=source_name, config=config)
+    short_requests = short_requests or []
+    _need(isinstance(short_requests, list) and
+          len({r.get("id") for r in short_requests if isinstance(r, dict)}) ==
+          len(short_requests), "UXML_PREVIEW_DUPLICATE_SHORT_SELECTION")
+    short_ops = []
+    for request in short_requests:
+        _need(isinstance(request, dict) and isinstance(request.get("id"), str),
+              "UXML_PREVIEW_SHORT_REQUEST_INVALID")
+        one = export_edit_ops(uxml, policy=TransactionPolicy(
+            selected_action_ids=(request["id"],), short_element_requests=(request,)),
+            source_name=source_name, config=config)
+        _need(len(one["ops"]) == 1 and one["ops"][0]["kind"] == "DROP_SHORT_ELEMENT",
+              "UXML_PREVIEW_SHORT_KIND_INVALID")
+        short_ops.extend(one["ops"])
     _need(payload.get("schema") == "uxml-edit-ops/v1",
           "UXML_PREVIEW_OP_SCHEMA_MISMATCH")
     resolved = resolve_from_uxml(uxml, config, source_name=source_name)
@@ -143,14 +170,17 @@ def build_operation_preview(uxml: dict, *,
                     refs_by_key[key] = ref
 
     rows, edited_keys = [], set()
-    for op in payload["ops"]:
+    all_ops = payload["ops"] + short_ops
+    for op in all_ops:
         _need(op["kind"] in NAMES, "UXML_PREVIEW_REVIEW_OPERATION_REFUSED")
         action = actions.get(op["sourceActionId"])
-        _need(action is not None and
-              action.disposition == op["kind"] and
-              action.status == "PROPOSED" and not action.blockers and
-              action.confidence >= TransactionPolicy().minimum_confidence,
-              "UXML_PREVIEW_POLICY_WITNESS_MISMATCH")
+        if op["kind"] == "DROP_SHORT_ELEMENT":
+            _need(action is None, "UXML_PREVIEW_SHORT_NOT_SEPARATE_AUTHORITY")
+        else:
+            _need(action is not None and action.disposition == op["kind"] and
+                  action.status == "PROPOSED" and not action.blockers and
+                  action.confidence >= TransactionPolicy().minimum_confidence,
+                  "UXML_PREVIEW_POLICY_WITNESS_MISMATCH")
         _need(all(key in records and key in refs_by_key for key in op["targets"]),
               "UXML_PREVIEW_MISSING_SOURCE_REF")
         changes = _preview_fields(op, action, records)
@@ -166,11 +196,15 @@ def build_operation_preview(uxml: dict, *,
                 for key in op["targets"]
             ],
             "changes": changes,
-            "policyReason": "PROPOSED; no action blockers; confidence " +
-                            format(action.confidence, ".3g") +
-                            " >= " + format(TransactionPolicy().minimum_confidence, ".3g") +
-                            "; S2 sourceRefs/loss-contract checked. " +
-                            "Execution still requires native validation.",
+            "policyReason": ("Explicit qualified ≤6 mm owner; sourceRefs, exact deletes, "
+                             "port edits and loss-contract checked on the current source. "
+                             "Later bulk items requalify against their new revision."
+                             if op["kind"] == "DROP_SHORT_ELEMENT" else
+                             "PROPOSED; no action blockers; confidence " +
+                             format(action.confidence, ".3g") +
+                             " >= " + format(TransactionPolicy().minimum_confidence, ".3g") +
+                             "; S2 sourceRefs/loss-contract checked. " +
+                             "Execution still requires native validation."),
         })
     by_kind = dict(sorted(Counter(row["kind"] for row in rows).items()))
     _need(len(edited_keys) <= len(records), "UXML_PREVIEW_RECORD_COUNT_INVALID")
@@ -178,7 +212,7 @@ def build_operation_preview(uxml: dict, *,
         "schema": SCHEMA,
         "sourceSha256": payload["fileSha256"],
         "summary": {
-            "totalOps": len(payload["ops"]),
+            "totalOps": len(all_ops),
             "byKind": by_kind,
             "sourceRecordCount": len(records),
             "untouchedRecordCount": len(records) - len(edited_keys),
