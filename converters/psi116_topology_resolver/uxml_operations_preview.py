@@ -262,7 +262,8 @@ class _ShortPreviewSourceScope:
 def build_operation_preview(uxml: dict, *,
                             source_name: str = "<memory>",
                             config: ResolverConfig | None = None,
-                            short_requests: list[dict] | None = None) -> dict:
+                            short_requests: list[dict] | None = None,
+                            _resolved=None) -> dict:
     """Read-only; one row per canonical source-qualified edit operation.
 
     A disposable native transaction may run on a proven isolated source slice,
@@ -273,7 +274,11 @@ def build_operation_preview(uxml: dict, *,
     config = config or ResolverConfig()
     # Resolve the exact full original source ONCE per read-only job, and reuse
     # its sourceRefs, record paths and eligibility for each selected owner.
-    resolved = resolve_from_uxml(uxml, config, source_name=source_name)
+    resolved = (_resolved if _resolved is not None
+                else resolve_from_uxml(uxml, config, source_name=source_name))
+    _need(resolved.document.source_sha256 == _source_sha(uxml) and
+          resolved.document.source_path == source_name,
+          "UXML_PREVIEW_RESOLVED_SOURCE_DRIFT")
     payload = export_edit_ops(uxml, source_name=source_name, config=config,
                               _preview_result=resolved)
     short_requests = short_requests or []
