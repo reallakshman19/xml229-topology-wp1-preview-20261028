@@ -51,6 +51,6 @@ test('disabled action shows exact hub/direct reason without modifying disabled p
   const button={disabled:true,hasAttribute:x=>x==='data-preview-short'};
   const state={hubEnabled:true,busy:false,batchRunning:false,plan:{}};
   const why=trialDisabledReason(button,state);
-  assert.match(why,/Runs on the direct route only.*Untick Universal XML route/);
+  assert.match(why,/Universal XML parity must be EQUAL before short-element changes/);
   assert.equal(button.disabled,true);
 });
