@@ -137,3 +137,36 @@ test('one preview job streams only validated progress, keeps job pending and can
   assert.deepEqual(observed,[[4,9],[8,9],[9,9]]);
   c.dispose();
 });
+
+test('preview uses longer first-progress allowance, then an inactivity watchdog',async()=>{
+  const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+  const job={...validJob,options:{...validJob.options,
+    topologyShortPreviewRequests:[{id:'SYN-1'},{id:'SYN-2'}]}};
+  const c=createTopologyWorkerClient({WorkerCtor:FakeWorker,
+    jobTimeoutMs:15,previewFirstProgressTimeoutMs:250,
+    previewInactivityTimeoutMs:120});
+  const observed=[];
+  const pending=c.run(job,{onProgress:(completed,total)=>observed.push([completed,total])});
+  const w=FakeWorker.instances.at(-1),id=w.sent.at(-1).id;
+  // An ordinary 15ms watchdog would have terminated this job by now.
+  await delay(50);
+  assert.equal(w.terminated,false,'first preview group gets 250ms, not 15ms');
+  w.emit('message',{type:'PROGRESS',id,completed:1,total:2});
+  await delay(45);
+  w.emit('message',{type:'PROGRESS',id,completed:2,total:2});
+  w.emit('message',{type:'RESULT',id,result:{ok:true,complete:true}});
+  assert.deepEqual(await pending,{ok:true,complete:true});
+  assert.deepEqual(observed,[[1,2],[2,2]]);
+  c.dispose();
+
+  const idle=createTopologyWorkerClient({WorkerCtor:FakeWorker,
+    jobTimeoutMs:15,previewFirstProgressTimeoutMs:250,
+    previewInactivityTimeoutMs:40});
+  const stalled=idle.run(job);
+  const second=FakeWorker.instances.at(-1),secondId=second.sent.at(-1).id;
+  second.emit('message',{type:'PROGRESS',id:secondId,completed:1,total:2});
+  await assert.rejects(stalled,/no progress/);
+  assert.equal(second.terminated,true,
+    'progress resets inactivity timeout, but a stalled preview still fails closed');
+  idle.dispose();
+});
