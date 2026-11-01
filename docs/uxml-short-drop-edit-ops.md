@@ -87,3 +87,31 @@ arbitrary closure targets, altered params, source SHA drift, UXML loss path,
 CLOS write and parity mismatch are refused with named reasons. Tests use only
 synthetic PSI116 and the verified pinned XCU reader. No Owner record, name,
 coordinate, source hash or source filename is committed to GitHub.
+
+
+## Deleted owner raw-only children — source-bound exception (1 Nov 2026)
+
+Only `DROP_SHORT_ELEMENT` uses this exception. When the native short-owner
+transaction deletes a complete original source record, each lossContract entry
+with the **exact** code
+`PSI116_RAW_SOURCE_ONLY_NOT_SEMANTICALLY_CARRIED` and a strict descendant
+`sourcePath` of that deleted record is **removed with the original record**.
+The op carries sorted unique `removedWithRecord: [{recordKey, field}]` entries.
+The read-only Operations preview labels these
+**Removed with the deleted element: SIF, InsulationThickness, ...**
+and also includes source-linked entries in the visible JSON/CSV exports.
+
+This is **not** permission to reconstruct or silently discard raw data on
+retained records: a loss at the deleted record's path itself, any other loss
+code beneath a deleted owner, or a loss on a retained record's edited
+`Position`/`NodeNumber` remains an immediate
+`UXML_LOSS_CONTRACT_FIELD_TOUCH` refusal. `_loss_veto` for every other
+disposition, the pinned XCU reader, policy, threshold and CLOS barriers stay
+unchanged. The patched XML is still produced exclusively by the existing
+native transaction writer and must compare byte-for-byte with the direct
+native route for the same explicit short request. This is not engineering
+acceptance or a review-only Apply authorization.
+
+Synthetic tests explicitly exercise three guard mutants and source nonmutation,
+native patch/direct byte equality, read-only preview disclosure and Chromium
+rendering. No private Owner file or findings are included.
