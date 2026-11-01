@@ -9,7 +9,7 @@ async function digestXml(text) {
 }
 
 export async function runShortBulk({
-  source,shortElements,selectedIds,runEngine,
+  source,shortElements,selectedIds,runEngine,hubEnabled=false,
   isCurrent=()=>true,onCheckpoint=()=>{},onProgress=()=>{},
   hash=digestXml,
 }){
@@ -31,15 +31,22 @@ export async function runShortBulk({
       continue;
     }
     try{
+      const itemStartedMs=Date.now();
       onProgress({completed,total:requested.length,applied:applied.length,skipped:skipped.length,
         currentEligible:rows.filter(r=>r.eligible).length,id,status:'APPLYING'});
       const request={id:row.id,sourceSha256:current.sourceSha256,nodeKeys:[...row.nodeKeys]};
       const result=await runEngine({
         sourceKind:'xml',sourceText:current.sourceText,sourceName:current.name,topologyPreFinalOnly:true,
         options:{outputMode:'enriched-only',analyzeTopology:true,generateTopoFix:true,
-          useTopoFixForCii:false,topologyActionIds:[id],topologyShortElementRequests:[request]},
+          useTopoFixForCii:false,topologyActionIds:[id],
+          topologyShortElementRequests:[request],topologyUxmlPreview:hubEnabled},
+        sourceRawSha256:current.rawSha256||current.sourceSha256,
       });
       if(!isCurrent()){stopReason='CANCELLED';break;}
+      if(hubEnabled&&result?.topologyUxmlParity?.status!=='EQUAL')
+        throw Error('UXML_SHORT_PARITY_'+
+          String(result?.topologyUxmlParity?.status||'UNAVAILABLE')+
+          ': '+(result?.topologyUxmlParity?.differences||[]).join(' | '));
       if(result?.ok!==true || result.outputKind!=='topology-sidecars'||
          result.acceptedFinalTransferred!==false||
          result.nativeCiiReleaseAuthorized!==false||
@@ -85,10 +92,12 @@ export async function runShortBulk({
       const compactLineage={...lineageHeader,
         fullLineageSha256,
         sourceOccurrenceMapCount:Array.isArray(fullMap)?fullMap.length:0};
+      const elapsedMs=Date.now()-itemStartedMs;
       applied.push({id,sourceSha256:current.sourceSha256,fixedSha256:fixedSha,
         request,selectedElement:row,transaction:txn,validation,
-        lineage:compactLineage,preFinal});
-      current={...current,sourceText:result.topoFixXmlText,sourceSha256:fixedSha};
+        lineage:compactLineage,preFinal,elapsedMs,hubRoute:hubEnabled});
+      current={...current,sourceText:result.topoFixXmlText,
+        sourceSha256:fixedSha,rawSha256:fixedSha};
       rows=findings.shortElements;
       latest={source:current,findings,plan};
       completed++;
@@ -97,7 +106,8 @@ export async function runShortBulk({
       onCheckpoint({originSha256:source.sourceSha256,latest,
         applied:[...applied],skipped:[...skipped],requested,completed});
       onProgress({completed,total:requested.length,applied:applied.length,skipped:skipped.length,
-        currentEligible:rows.filter(r=>r.eligible).length,id,status:'VALIDATED'});
+        currentEligible:rows.filter(r=>r.eligible).length,id,status:'VALIDATED',
+        elapsedMs});
     }catch(error){
       if(!isCurrent()){stopReason='CANCELLED';break;}
       stopReason='TRANSACTION_FAILED';
