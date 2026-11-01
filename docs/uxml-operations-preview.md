@@ -18,9 +18,12 @@ direct-vs-UXML topology parity. No XCU module is tracked in TopoFix.
 the new \`uxml_operations_preview.py\` is a **pure read-only projection**
 of each returned op, not a new patcher. It reads the original source-field
 text from XCU-linked source records, and derives the displayed field changes
-from the exact existing proposed-change witnesses. No transaction is run,
+from the exact existing proposed-change witnesses. For ordinary Auto operations, no transaction is run,
 original XML rewritten, output XML generated, policy loosened or approvals
-recorded. The Python resolver/transaction engine is unchanged.
+recorded. The separately selected `DROP_SHORT_ELEMENT` read-only
+projection uses the existing native transaction on a disposable in-memory
+copy to obtain exact deletion and closure-field witnesses; it never emits
+corrected XML or authorizes Apply. See `docs/uxml-short-drop-edit-ops.md`. The Python resolver/transaction engine is unchanged.
 
 The returned internal metadata has schema \`uxml-operations-preview/v1\`,
 original-source SHA for volatile custody, an operation array, and summary.
