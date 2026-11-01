@@ -75,7 +75,7 @@ def pinned_reader(path: Path, root: Path) -> dict:
         need(blob == expected, "INPUT_XML_PINNED_XCU_BLOB_MISMATCH:" + relative)
     tool = root / "tools" / "inputxml-to-uxml.mjs"
     try:
-        p = subprocess.run(["node", str(tool), str(path)],
+        p = subprocess.run(["node", str(tool), str(path.resolve())],
                            cwd=root, capture_output=True, text=True, timeout=60)
     except FileNotFoundError as exc:
         raise InputXmlPatchError("INPUT_XML_PINNED_NODE_RUNTIME_REQUIRED") from exc
