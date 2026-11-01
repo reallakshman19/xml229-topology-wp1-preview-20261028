@@ -59,7 +59,7 @@ test('one real Worker preview session: ETA, Cancel then restarted Worker re-prev
         import('/tabs/topology-workspace/workspace-app.mjs'),
         import('/tabs/topology-workspace/topology-worker-client.mjs')]);
       const fixture={previewJobs:[],progress:[],workerCount:0,
-        holdSecond:true,holding:false,reject:null};
+        holdSecond:true,holding:false,releaseLate:null,lateDelivered:false};
       const NativeWorker=window.Worker;
       class CountedWorker extends NativeWorker{
         constructor(...args){super(...args);fixture.workerCount++;}
@@ -77,17 +77,15 @@ test('one real Worker preview session: ETA, Cancel then restarted Worker re-prev
         // synthetic harness. Cancel must discard it and force Worker restart.
         if(part.length&&fixture.holdSecond&&fixture.previewJobs.length===2){
           fixture.holding=true;
-          await new Promise((resolve,reject)=>{fixture.reject=reject;});
+          await new Promise(resolve=>{
+            // Deliver a VALID late RESULT even after Cancel. This must fail
+            // when previewToken is removed from the workspace current() guard.
+            fixture.releaseLate=()=>{fixture.lateDelivered=true;fixture.holding=false;resolve();};
+          });
         }
         return result;
       };
-      const cancelEngine=()=>{
-        if(fixture.reject){
-          const reject=fixture.reject;fixture.reject=null;
-          fixture.holding=false;reject(Error('SYNTHETIC_PREVIEW_CANCELLED'));
-        }
-        client.cancel();
-      };
+      const cancelEngine=()=>client.cancel();
       fixture.client=client;
       fixture.workspace=mountTopologyWorkspace(root,{runEngine,cancelEngine});
       window.__scaleFixture=fixture;
@@ -139,6 +137,13 @@ test('one real Worker preview session: ETA, Cancel then restarted Worker re-prev
     assert.equal(await page.locator('[data-short-index]:checked').count(),5);
     assert.equal(await page.locator('[data-run-short-drop]').isDisabled(),true);
     assert.equal(await page.locator('[data-download-working]').isDisabled(),true);
+    await page.evaluate(()=>window.__scaleFixture.releaseLate());
+    await page.waitForTimeout(120);
+    assert.equal(await page.evaluate(()=>window.__scaleFixture.lateDelivered),true);
+    assert.match(await page.locator('[data-short-hub-status]').textContent(),/CANCELLED/,
+      'late valid RESULT must not overwrite a cancelled preview');
+    assert.equal(await page.locator('[data-run-short-drop]').isDisabled(),true,
+      'late valid RESULT cannot resurrect Apply after Cancel');
 
     // After hard Worker termination, re-preview must spawn a NEW Worker and
     // independently requalify pinned reader/parity and every native owner.
