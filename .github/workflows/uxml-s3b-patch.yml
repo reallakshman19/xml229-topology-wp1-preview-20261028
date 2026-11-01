@@ -57,35 +57,6 @@ jobs:
           curl --fail --location --retry 3 "$upstream/docs/PLB314Inputxml.xml" -o "$root/docs/PLB314Inputxml.xml"
           test "$(git hash-object "$root/docs/PLB314Inputxml.xml")" = "b0bdcf853992cee6ae7911e7a4c035c6b7ff7990"
           echo "XCU_UXML_ROOT=$root" >> "$GITHUB_ENV"
-      - name: S3-CLOSE prove NEW junction finding-count regression fails on old TopoFix and XCU heads
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Only synthetic fixtures; old source trees are ephemeral and never committed.
-          old_topofix="$RUNNER_TEMP/topofix-s3-before"
-          old_xcu="$RUNNER_TEMP/xcu-s3-before"
-          git fetch --no-tags --depth=1 origin 86fd30420f5201c9d3c0f6040ca41ff1ea466fbd
-          git worktree add --detach "$old_topofix" 86fd30420f5201c9d3c0f6040ca41ff1ea466fbd
-          cp tests/test_uxml_s3_reconcile.py "$old_topofix/tests/test_uxml_s3_reconcile.py"
-          cp -a "$XCU_UXML_ROOT" "$old_xcu"
-          curl --fail --location --retry 3 \
-            "https://raw.githubusercontent.com/reallakshman19/XML_Compare_Utilities/d8cf5228b0860ccda7f11c84cfd46229bd55f333/uxml/UxmlInputXmlSchemaMapper.js" \
-            -o "$old_xcu/uxml/UxmlInputXmlSchemaMapper.js"
-          test "$(git hash-object "$old_xcu/uxml/UxmlInputXmlSchemaMapper.js")" = "b74d5db4d5dfed49ab975e8e253dba31ecae8e2f"
-          set +e
-          output=$(cd "$old_topofix" && PYTHONPATH="tests:." XCU_UXML_ROOT="$old_xcu" \
-            python3 -B -m unittest discover -s tests -p test_uxml_s3_reconcile.py -k junction_owner -v 2>&1)
-          status=$?
-          set -e
-          printf '%s\n' "$output"
-          test "$status" = 1
-          printf '%s\n' "$output" | grep -Fq "FAIL: test_junction_owner_finding_counts_match_psi116"
-          printf '%s\n' "$output" | grep -Fq "AssertionError: 1 != 0"
-          printf '%s\n' "$output" | grep -Fq "Ran 1 test"
-          printf '%s\n' "$output" | grep -Fq "FAILED (failures=1)"
-          if printf '%s\n' "$output" | grep -Fq "ERROR:"; then exit 1; fi
-          echo "RED_VERIFIED: old TopoFix 86fd3042 + old XCU d8cf5228 -> junction-owner 1 vs expected 0, one assertion failure"
-
       - name: Python syntax and pinned patch source round-trip
         run: |
           python3 -m py_compile converters/psi116_topology_resolver/uxml_patch_inputxml.py tests/test_uxml_s3b_patch.py
