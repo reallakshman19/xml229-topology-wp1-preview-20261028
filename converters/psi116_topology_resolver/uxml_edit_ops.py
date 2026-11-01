@@ -21,6 +21,7 @@ from .transaction import (
     _build_locator_index, _finding_node_keys, _parse_clone, _selected_actions,
     apply_topofix_transaction,
 )
+from .short_elements import short_elements
 from .uxml_adapter import resolve_from_uxml
 from .uxml_compare import _diff
 
@@ -36,6 +37,7 @@ FIELD_TOUCHES = {
     "CLOSE_CONFIRMED_PIPE_JOINT": frozenset({"NodeNumber", "Position"}),
     "CLOSE_PORT_CONNECTION": frozenset({"NodeNumber", "Position"}),
     "CLOSE_CONFIRMED_PORT_CONNECTION": frozenset({"NodeNumber", "Position"}),
+    "DROP_SHORT_ELEMENT": frozenset({"*", "NodeNumber", "Position"}),
 }
 
 
@@ -75,8 +77,22 @@ def _enforce_today_auto_policy(minimum_confidence: object,
 def _policy_from_json(value: object) -> TransactionPolicy:
     _require(isinstance(value, dict) and set(value) == POLICY_FIELDS,
              "UXML_EDIT_POLICY_SCHEMA_INVALID")
-    _require(value["joint_repairs"] == [] and value["short_element_requests"] == [],
+    _require(value["joint_repairs"] == [],
              "UXML_MANUAL_REPAIR_NOT_AUTHORIZED")
+    short = value["short_element_requests"]
+    _require(isinstance(short, list) and len(short) <= 1,
+             "UXML_SHORT_EXACT_ONE_REQUEST_REQUIRED")
+    if short:
+        request = short[0]
+        _require(isinstance(request, dict) and
+                 set(request) == {"id", "sourceSha256", "nodeKeys"} and
+                 isinstance(request["id"], str) and request["id"].startswith("SHORT:") and
+                 isinstance(request["sourceSha256"], str) and
+                 isinstance(request["nodeKeys"], list) and bool(request["nodeKeys"]) and
+                 all(isinstance(key, str) and key for key in request["nodeKeys"]),
+                 "UXML_SHORT_REQUEST_SCHEMA_INVALID")
+        _require(value["selected_action_ids"] == [request["id"]],
+                 "UXML_SHORT_REQUEST_SELECTION_MISMATCH")
     _require(type(value["apply_all_safe"]) is bool and
              type(value["require_no_blocking_plan_actions"]) is bool and
              type(value["minimum_confidence"]) in (float, int) and
@@ -95,6 +111,7 @@ def _policy_from_json(value: object) -> TransactionPolicy:
         minimum_confidence=value["minimum_confidence"],
         apply_all_safe=False,
         require_no_blocking_plan_actions=value["require_no_blocking_plan_actions"],
+        short_element_requests=tuple(short),
     )
     if policy.selected_action_ids:
         policy.validate()
