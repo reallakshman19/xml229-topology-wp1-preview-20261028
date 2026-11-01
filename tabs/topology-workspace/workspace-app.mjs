@@ -380,7 +380,8 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   }
   function downloadBatchReport(){
     const fix=state.fix;
-    if(!fix?.report||fix.sourceSha256!==state.source?.sourceSha256||!hubCanRelease(true))return;
+    if(state.busy||state.batchRunning||!fix?.report||
+       fix.sourceSha256!==state.source?.sourceSha256||!hubCanRelease(true))return;
     const filename=(state.source.name.replace(/\\.xml$/i,'')||'input')+
       '.autofix-batch-report.json';
     const url=URL.createObjectURL(new Blob([JSON.stringify(fix.report,null,2)],
@@ -390,7 +391,8 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     window.setTimeout(()=>URL.revokeObjectURL(url),1000);
   }
   function downloadFix(){
-    if(!state.fix||state.fix.sourceSha256!==state.source?.sourceSha256||!hubCanRelease(true))return;
+    if(state.busy||state.batchRunning||!state.fix||
+       state.fix.sourceSha256!==state.source?.sourceSha256||!hubCanRelease(true))return;
     const blob=new Blob([state.fix.xml],{type:'application/xml;charset=utf-8'});
     const url=URL.createObjectURL(blob);
     const anchor=document.createElement('a');
@@ -399,7 +401,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     window.setTimeout(()=>URL.revokeObjectURL(url),1000);
   }
   function downloadCurrent(history=false){
-    if(!state.source||!state.revision||!hubCanRelease())return;
+    if(state.busy||state.batchRunning||!state.source||!state.revision||!hubCanRelease())return;
     const body=history?JSON.stringify({schema:'topofix-working-history/v1',
       originalSha256:state.original.sourceSha256,currentSha256:state.source.sourceSha256,
       revision:state.revision,repairs:state.history},null,2):state.source.sourceText;
@@ -1217,7 +1219,9 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       button.disabled=state.busy||state.batchRunning||
         (state.hubEnabled&&(state.hubParity?.status!=='EQUAL'||!button.hasAttribute('data-auto-fix'))));
     getNodes(root,'[data-download-working],[data-download-history]').forEach(button=>
-      button.disabled=state.busy||!state.revision||!hubCanRelease());
+      button.disabled=state.busy||state.batchRunning||!state.revision||!hubCanRelease());
+    getNodes(root,'[data-download-fix],[data-download-batch-report]').forEach(button=>
+      button.disabled=state.busy||state.batchRunning||!hubCanRelease(true));
     explainDisabledActions();
   }
   function select(ids,add=false) {
