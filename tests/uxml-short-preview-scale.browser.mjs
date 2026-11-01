@@ -1,6 +1,7 @@
-/** Real Chromium + real pinned Worker: five synthetic short owners in two
- * cancellable read-only preview jobs. User cancellation must keep the exact
- * source and selection, never grant partial Apply.
+/** Real Chromium + pinned Worker: a SINGLE source-bound preview job emits
+ * four-owner progress and ETA; cancellation invalidates the partial evidence,
+ * the next attempt starts a new Worker and requalifies the exact source.
+ * Public synthetic source only. No native engine/policy test hooks.
  */
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
@@ -28,7 +29,7 @@ const syntheticXML='<PipeStressExport xmlns="http://aveva.com/pipeStress116.xsd"
    '</Branch>';
  }).join('')+'</PipeStressExport>';
 
-test('five real Worker owners: progress 4/5, exact aggregated Apply gate and late cancel',
+test('one real Worker preview session: ETA, Cancel then restarted Worker re-preview',
  {timeout:360000},async()=>{
   const server=createServer(async(req,res)=>{
     try{
@@ -57,28 +58,37 @@ test('five real Worker owners: progress 4/5, exact aggregated Apply gate and lat
       const [{mountTopologyWorkspace},{createTopologyWorkerClient}]=await Promise.all([
         import('/tabs/topology-workspace/workspace-app.mjs'),
         import('/tabs/topology-workspace/topology-worker-client.mjs')]);
-      const client=createTopologyWorkerClient();
-      const fixture={chunkSizes:[],holdSecond:true,release:null,reject:null,client};
-      const runEngine=async job=>{
+      const fixture={previewJobs:[],progress:[],workerCount:0,
+        holdSecond:true,holding:false,reject:null};
+      const NativeWorker=window.Worker;
+      class CountedWorker extends NativeWorker{
+        constructor(...args){super(...args);fixture.workerCount++;}
+      }
+      const client=createTopologyWorkerClient({WorkerCtor:CountedWorker});
+      const runEngine=async (job,{onProgress}={})=>{
         const part=job.options?.topologyShortPreviewRequests||[];
-        if(part.length){
-          fixture.chunkSizes.push(part.length);
-          if(fixture.holdSecond&&fixture.chunkSizes.length%2===0){
-            await new Promise((resolve,reject)=>{
-              fixture.release=resolve;fixture.reject=reject;
-            });
-          }
+        if(part.length)fixture.previewJobs.push(part.length);
+        const result=await client.run(job,{onProgress:(completed,total)=>{
+          onProgress?.(completed,total);
+          fixture.progress.push({completed,total,
+            status:document.querySelector('[data-short-hub-status]')?.textContent||''});
+        }});
+        // Hold the second completed Worker result only in this injected
+        // synthetic harness. Cancel must discard it and force Worker restart.
+        if(part.length&&fixture.holdSecond&&fixture.previewJobs.length===2){
+          fixture.holding=true;
+          await new Promise((resolve,reject)=>{fixture.reject=reject;});
         }
-        return client.run(job);
+        return result;
       };
       const cancelEngine=()=>{
         if(fixture.reject){
-          const reject=fixture.reject;
-          fixture.reject=null;fixture.release=null;
-          reject(Error('SYNTHETIC_PREVIEW_CANCELLED'));
+          const reject=fixture.reject;fixture.reject=null;
+          fixture.holding=false;reject(Error('SYNTHETIC_PREVIEW_CANCELLED'));
         }
         client.cancel();
       };
+      fixture.client=client;
       fixture.workspace=mountTopologyWorkspace(root,{runEngine,cancelEngine});
       window.__scaleFixture=fixture;
       await fixture.workspace.load(new File([xml],'public-synthetic-five.xml',
@@ -93,45 +103,63 @@ test('five real Worker owners: progress 4/5, exact aggregated Apply gate and lat
     await page.locator('[data-select-gaskets]').click();
     assert.equal(await page.locator('[data-short-index]:checked').count(),5);
     await page.locator('[data-short-hub-preview]').click();
-    await page.waitForFunction(()=>window.__scaleFixture.chunkSizes.length===2,null,
-      {timeout:120000});
-    assert.deepEqual(await page.evaluate(()=>window.__scaleFixture.chunkSizes),[4,1]);
-    assert.match(await page.locator('[data-short-hub-status]').textContent(),/Previewing 4 of 5/);
-    assert.equal(await page.locator('[data-cancel]').isEnabled(),true);
-    assert.equal(await page.locator('[data-run-short-drop]').isDisabled(),true);
-    assert.match(await page.locator('[data-short-hub-preview]').getAttribute('title'),
-      /Finish or cancel the active preview first/);
-    await page.evaluate(()=>window.__scaleFixture.release());
     await page.waitForFunction(()=>document.querySelector('[data-short-hub-status]')
       ?.textContent?.includes('5 ready / 0 refused'),null,{timeout:120000});
+    const first=await page.evaluate(()=>({
+      sizes:window.__scaleFixture.previewJobs,
+      progress:window.__scaleFixture.progress,
+      workerCount:window.__scaleFixture.workerCount}));
+    assert.deepEqual(first.sizes,[5],
+      'one Worker preview job per full selection, never one analysis per four');
+    assert.deepEqual(first.progress.map(p=>[p.completed,p.total]),[[4,5],[5,5]]);
+    assert.match(first.progress[0].status,/Previewing 4 of 5/);
+    assert.match(first.progress[0].status,/Estimated time remaining: ~/);
+    assert.ok(first.workerCount>=1);
     assert.equal(await page.locator('[data-run-short-drop]').isEnabled(),true);
     assert.equal(await page.locator('[data-ops-rows] [data-op-id]')
       .filter({hasText:'Drop selected short component'}).count(),5);
-    assert.equal(await page.locator('[data-download-working]').isDisabled(),true,
-      'preview cannot grant a corrected download');
+    assert.equal(await page.locator('[data-download-working]').isDisabled(),true);
 
-    // Selection change revokes Apply. A second preview is cancelled between
-    // chunks and a delayed/rejected response must not revive Apply.
+    // Revocation by source-bound selection change must hold until new analysis.
     await page.locator('[data-short-index="0"]').uncheck();
     await page.locator('[data-short-index="0"]').check();
     assert.equal(await page.locator('[data-run-short-drop]').isDisabled(),true);
     await page.locator('[data-short-hub-preview]').click();
-    await page.waitForFunction(()=>window.__scaleFixture.chunkSizes.length===4,null,
+    await page.waitForFunction(()=>window.__scaleFixture.holding===true,null,
       {timeout:120000});
-    assert.match(await page.locator('[data-short-hub-status]').textContent(),/Previewing 4 of 5/);
+    assert.deepEqual(await page.evaluate(()=>window.__scaleFixture.previewJobs),[5,5]);
+    assert.equal(await page.locator('[data-cancel]').isEnabled(),true);
+    assert.equal(await page.locator('[data-run-short-drop]').isDisabled(),true);
+    assert.match(await page.locator('[data-short-hub-preview]').getAttribute('title'),
+      /Finish or cancel the active preview first/);
     await page.locator('[data-cancel]').click();
     await page.waitForFunction(()=>document.querySelector('main')
-      ?.getAttribute('aria-busy')==='false',null,{timeout:10000});
+      ?.getAttribute('aria-busy')==='false',null,{timeout:15000});
     assert.match(await page.locator('[data-short-hub-status]').textContent(),/CANCELLED/);
     assert.equal(await page.locator('[data-short-index]:checked').count(),5);
     assert.equal(await page.locator('[data-run-short-drop]').isDisabled(),true);
     assert.equal(await page.locator('[data-download-working]').isDisabled(),true);
-    assert.equal((await page.evaluate(()=>window.__scaleFixture.workspace.getState())).revision,0);
+
+    // After hard Worker termination, re-preview must spawn a NEW Worker and
+    // independently requalify pinned reader/parity and every native owner.
+    await page.locator('[data-short-hub-preview]').click();
+    await page.waitForFunction(()=>document.querySelector('[data-short-hub-status]')
+      ?.textContent?.includes('5 ready / 0 refused'),null,{timeout:120000});
+    const final=await page.evaluate(()=>({
+      previewJobs:window.__scaleFixture.previewJobs,
+      workerCount:window.__scaleFixture.workerCount,
+      revision:window.__scaleFixture.workspace.getState().revision,
+      progress:window.__scaleFixture.progress}));
+    assert.deepEqual(final.previewJobs,[5,5,5]);
+    assert.ok(final.workerCount>first.workerCount,
+      'cancel terminates Worker, retry creates and verifies a fresh instance');
+    assert.equal(final.revision,0,'read-only preview never advances revision');
+    assert.equal(await page.locator('[data-run-short-drop]').isEnabled(),true);
+    assert.equal(await page.locator('[data-download-working]').isDisabled(),true);
     assert.deepEqual(errors,[]);
-    console.log('SYNTHETIC_SHORT_PREVIEW_CHUNK_BROWSER_PASS '+JSON.stringify({
-      selected:5,chunkSizes:[4,1,4,1],cancelledWithoutApply:true,
-      originalSourceUnchanged:true,pageErrors:errors,
-    }));
+    console.log('SYNTHETIC_SINGLE_PREVIEW_WORKER_RESTART_PASS '+JSON.stringify({
+      selected:5,jobSizes:final.previewJobs,progressEvents:final.progress.length,
+      freshWorkerAfterCancel:true,revision:final.revision,pageErrors:errors}));
   }finally{
     await page.close();await browser.close();await new Promise(done=>server.close(done));
   }
