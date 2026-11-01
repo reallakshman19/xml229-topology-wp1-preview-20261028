@@ -112,13 +112,15 @@ class InterconnectedBaseline(unittest.TestCase):
             accepted={op["sourceActionId"] for op in optimized["ops"] if op["kind"]=="DROP_SHORT_ELEMENT"}
             refused={row["id"]:row["code"] for row in optimized["shortPreview"]["refused"]}
             current=[]
+            # One full-source authority for this entire current-preview pass.
+            # The real builder is measured separately above.
+            resolved=resolve_from_uxml(uxml,cfg,source_name=str(source))
+            scope=_ShortPreviewSourceScope(uxml,resolved,cfg)
+            by_id={r["id"]:r for r in scope.rows}
             for req in request:
                 if req["id"] in accepted:
-                    # Compare complete canonical op in the source-bound fast
-                    # context independently, not merely preview row fields.
-                    resolved=resolve_from_uxml(uxml,cfg,source_name=str(source))
-                    scope=_ShortPreviewSourceScope(uxml,resolved,cfg)
-                    by_id={r["id"]:r for r in scope.rows}
+                    # Compare complete canonical operation in the cache-backed
+                    # source context, not merely rendered preview row fields.
                     policy=TransactionPolicy(selected_action_ids=(req["id"],),
                                              short_element_requests=(req,))
                     call=lambda p=policy:export_edit_ops(
