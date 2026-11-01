@@ -681,6 +681,74 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   }
   function autoFix(actionId){return runFix([actionId],'single');}
 
+  function shortSelectionKey(){
+    return JSON.stringify([...(state.shortPreview?.selected||[])].sort());
+  }
+  function shortHubPreviewCurrent(){
+    const p=state.shortPreview,h=state.shortHubPreview;
+    return !!(p&&h&&state.hubEnabled&&state.hubParity?.status==='EQUAL'&&
+      h.epoch===state.epoch&&h.revision===state.revision&&
+      h.sha===state.source?.sourceSha256&&p.sha===h.sha&&
+      h.ids===shortSelectionKey()&&p.selected.size>0);
+  }
+  function invalidateShortHubPreview(){
+    state.shortHubPreview=null;state.shortHubPreviewError=null;
+    if(state.hubEnabled){
+      state.opsPreview=null;
+      state.opsPreviewError='SHORT_SELECTION_CHANGED_REPREVIEW_REQUIRED';
+      opsPanel.render();
+    }
+  }
+  async function previewSelectedUxmlShortOps(){
+    const p=state.shortPreview,source=state.source;
+    if(!state.hubEnabled||!p||!source||state.busy||state.batchRunning||
+       !state.plan||state.hubParity?.status!=='EQUAL'||!analysisProofCurrent()||
+       p.sha!==source.sourceSha256||p.epoch!==state.epoch)return;
+    const ids=[...p.selected].sort(),idKey=shortSelectionKey();
+    const requests=ids.map(id=>{
+      const row=state.shortElements.find(item=>item.id===id);
+      return row?.eligible&&row.sourceSha256===source.sourceSha256
+        ?{id:row.id,sourceSha256:row.sourceSha256,nodeKeys:[...row.nodeKeys]}:null;
+    });
+    if(!requests.length||requests.some(item=>!item)){
+      state.shortHubPreviewError='SHORT_SELECTION_NOT_QUALIFIED_ON_CURRENT_SOURCE';
+      renderShortPreview();return;
+    }
+    const generation=state.epoch,revision=state.revision;
+    state.busy=true;state.shortHubPreview=null;state.shortHubPreviewError=null;
+    renderShortPreview();refresh();
+    updateStatus('Read-only UXML edit-ops preview for '+ids.length+
+      ' explicitly selected short elements. No XML changes applied.');
+    try{
+      const job=readOnlyAnalysisJob(source);
+      job.options.topologyShortPreviewRequests=requests;
+      const result=await runEngine(job);
+      if(generation!==state.epoch||state.source!==source||
+         revision!==state.revision||!state.hubEnabled||
+         idKey!==shortSelectionKey())return;
+      recordHubResult(result,source.rawSha256);
+      if(state.hubParity?.status!=='EQUAL')
+        throw Error('UXML_SHORT_PREVIEW_PARITY_'+state.hubParity?.status+': '+
+          (state.hubParity?.differences||[]).join(' | '));
+      const rows=state.opsPreview?.ops?.filter(op=>op.kind==='DROP_SHORT_ELEMENT')||[];
+      if(rows.length!==ids.length||
+         JSON.stringify(rows.map(op=>op.sourceActionId).sort())!==JSON.stringify(ids))
+        throw Error('UXML_SHORT_PREVIEW_SELECTED_OPS_MISMATCH');
+      state.shortHubPreview={sha:source.sourceSha256,epoch:generation,revision,ids:idKey};
+      updateStatus('Read-only UXML preview verified '+ids.length+
+        ' selected short-element operation(s). Separate explicit Apply required.');
+    }catch(error){
+      if(generation!==state.epoch)return;
+      state.shortHubPreview=null;
+      state.shortHubPreviewError='UXML_SHORT_PREVIEW_BLOCKED: '+String(error?.message||error);
+      updateStatus(state.shortHubPreviewError);
+    }finally{
+      if(generation===state.epoch){
+        state.busy=false;renderShortPreview();refresh();
+      }
+    }
+  }
+
   // This preview is only a view of source-qualified data already received.
   // Paginate so one click never constructs an unbounded DOM tree.
   const SHORT_PREVIEW_PAGE_SIZE=24;
