@@ -82,7 +82,8 @@ if hub_doc is not None and hub_parity["status"] == "EQUAL" and not job_generate_
         from psi116_topology_resolver.uxml_operations_preview import build_operation_preview
         ops_preview = build_operation_preview(
             hub_doc, source_name=str(job_topology_input_path), config=cfg,
-            short_requests=json.loads(job_short_preview_json))
+            short_requests=json.loads(job_short_preview_json),
+            _resolved=adapted)
     except Exception as exc:
         # Presentation failure is NEVER topology or patch-back parity failure.
         # Preserve the verified hub route and its existing Auto-fix admission.
