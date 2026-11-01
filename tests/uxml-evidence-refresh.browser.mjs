@@ -90,6 +90,32 @@ async function openInjected(mode){
        });
      }
      const result=await client.run(job);
+     const shortPreviewRequests=job.options?.topologyShortPreviewRequests||[];
+     if(!job.options?.generateTopoFix&&shortPreviewRequests.length===3&&
+        (mode==='HUB_SHORT_PARTIAL'||mode==='HUB_SHORT_BUILDER_CODE')){
+       if(mode==='HUB_SHORT_BUILDER_CODE')
+         return {...result,topologyOperationsPreview:{
+           error:'UXML_OPS_PREVIEW_BUILDER_FAILURE:UXML_PREVIEW_SYNTHETIC_BUILDER_REFUSED'}};
+       // Only the READ-ONLY Worker response is altered: the Python pinned
+       // 3-owner loss-contract test proves the real source refusal semantics.
+       const preview=structuredClone(result.topologyOperationsPreview);
+       if(!preview||preview.shortPreview?.acceptedIds?.length!==3)
+         throw Error('SYNTHETIC_PARTIAL_SETUP_REQUIRES_THREE_ACCEPTED_OPS');
+       const reject=shortPreviewRequests[1].id;
+       preview.ops=preview.ops.filter(op=>op.sourceActionId!==reject);
+       preview.summary.totalOps=preview.ops.length;
+       preview.summary.byKind=Object.fromEntries(
+         [...new Set(preview.ops.map(op=>op.kind))].map(k=>[
+           k,preview.ops.filter(op=>op.kind===k).length]));
+       const changed=new Set(preview.ops.flatMap(op=>op.changes.map(c=>c.recordKey)));
+       preview.summary.untouchedRecordCount=preview.summary.sourceRecordCount-changed.size;
+       preview.shortPreview={
+         selectedIds:shortPreviewRequests.map(x=>x.id),
+         acceptedIds:shortPreviewRequests.filter(x=>x.id!==reject).map(x=>x.id),
+         refused:[{id:reject,code:'UXML_LOSS_CONTRACT_FIELD_TOUCH:SYNTHETIC_OWNER'}],
+       };
+       return {...result,topologyOperationsPreview:preview};
+     }
      stages.push(job.options?.generateTopoFix?'TRANSACTION':
        committed?'POST_PUBLISH_RECHECK':'READ_ONLY_ANALYSIS');
      if(job.options?.generateTopoFix&&result?.topoFixCommitted===true)committed=true;
@@ -650,6 +676,96 @@ test('hub second-item DIFFERENT never exposes intermediate download',
       'corrected-file download button must never appear, even briefly');
     assert.match(await page.locator('[data-uxml-differences]').textContent(),
       /UXML_SHORT_PARITY_DIFFERENT/);
+    assert.deepEqual(errors,[]);
+  }finally{await page.close();}
+});
+
+
+const hubThreeShortXML=hubTwoShortXML.replace('</PipeStressExport>',
+  '<Branch><Branchname>THIRD-SYNTH</Branchname>'+
+  node(110,'PIPE','U',1,900)+node(120,'PIPE','U',2,1000)+
+  node(-1,'GASK','SHORT-C',1,1000)+node(130,'RIGID','SHORT-C',2,1003)+
+  node(-1,'FLAN','H',1,1003)+node(140,'RIGID','H',2,1089)+
+  '</Branch></PipeStressExport>');
+
+async function prepareThreeShort(page){
+  await page.locator('[data-file]').setInputFiles({
+    name:'synthetic-three-gaskets.xml',mimeType:'application/xml',
+    buffer:Buffer.from(hubThreeShortXML,'utf8')
+  });
+  await page.waitForFunction(()=>document.querySelector('[data-occ-summary]')
+    ?.textContent?.includes('18 of 18'),null,{timeout:30000});
+  await page.locator('[data-uxml-toggle]').check();
+  await page.locator('[data-analyze]').click();
+  await page.waitForFunction(()=>document.querySelector('[data-uxml-parity]')
+    ?.dataset?.parity==='EQUAL'&&document.querySelector('[data-status]')
+    ?.textContent?.includes('Authoritative topology analysis complete.'),
+    null,{timeout:120000});
+  await page.locator('[data-preview-short]').click();
+  await page.locator('[data-select-gaskets]').click();
+  assert.equal(await page.locator('[data-short-index]:checked').count(),3,
+    'three independent synthetic owners must qualify before partial preview');
+}
+
+test('partial preview: 3 selected / 2 ready / 1 refused, locate and re-preview',
+ {timeout:240000},async()=>{
+  const {page,errors}=await openInjected('HUB_SHORT_PARTIAL');
+  try{
+    await prepareThreeShort(page);
+    await page.locator('[data-short-hub-preview]').click();
+    await page.waitForFunction(()=>document.querySelector('[data-short-hub-status]')
+      ?.textContent?.includes('2 ready / 1 refused'),
+      null,{timeout:120000});
+    const apply=page.locator('[data-run-short-drop]');
+    assert.equal(await apply.isDisabled(),true);
+    assert.match(await apply.getAttribute('title'),
+      /Preview the selected UXML short-drop operations/);
+    const refusal=page.locator('[data-short-refused]');
+    assert.equal(await refusal.count(),1);
+    const refusedId=await refusal.getAttribute('data-short-refused');
+    assert.match(await refusal.textContent(),
+      /UXML_LOSS_CONTRACT_FIELD_TOUCH:SYNTHETIC_OWNER/);
+    assert.match(await refusal.textContent(),/cannot safely preserve/);
+    assert.equal(await page.locator('[data-ops-rows] [data-op-id]')
+      .filter({hasText:'Drop selected short component'}).count(),2);
+    assert.equal(await page.locator('[data-ops-rows] [data-op-id]')
+      .filter({hasText:refusedId}).count(),0,'refused cannot become a preview op');
+    await refusal.locator('[data-short-refused-locate]').click();
+    assert.match(await page.locator('[data-hits]').textContent(),
+      /exact original occurrence\(s\) highlighted/);
+    await page.locator('[data-short-deselect-refused]').click();
+    assert.equal(await page.locator('[data-short-index]:checked').count(),2);
+    assert.equal(await apply.isDisabled(),true,
+      'deselecting refused invalidates the old preview');
+    assert.equal(await page.locator('[data-short-refusals]').count(),0);
+    await page.locator('[data-short-hub-preview]').click();
+    await page.waitForFunction(()=>document.querySelector('[data-short-hub-status]')
+      ?.textContent?.includes('2 ready / 0 refused'),
+      null,{timeout:120000});
+    assert.equal(await apply.isEnabled(),true,
+      'only a fresh exact selected-accepted preview may enable Apply');
+    assert.equal(await page.locator('[data-ops-rows] [data-op-id]')
+      .filter({hasText:'Drop selected short component'}).count(),2);
+    assert.deepEqual(errors,[]);
+  }finally{await page.close();}
+});
+
+test('global builder failure shows named code, never generic selected-ops mismatch',
+ {timeout:240000},async()=>{
+  const {page,errors}=await openInjected('HUB_SHORT_BUILDER_CODE');
+  try{
+    await prepareThreeShort(page);
+    await page.locator('[data-short-hub-preview]').click();
+    await page.waitForFunction(()=>document.querySelector('[data-short-hub-status]')
+      ?.textContent?.includes('UXML_PREVIEW_SYNTHETIC_BUILDER_REFUSED'),
+      null,{timeout:120000});
+    const status=await page.locator('[data-short-hub-status]').textContent();
+    assert.match(status,/UXML_OPS_PREVIEW_BUILDER_FAILURE:UXML_PREVIEW_SYNTHETIC_BUILDER_REFUSED/);
+    assert.doesNotMatch(status,/UXML_SHORT_PREVIEW_SELECTED_OPS_MISMATCH/);
+    assert.equal(await page.locator('[data-run-short-drop]').isDisabled(),true);
+    assert.equal(await page.locator('[data-ops-rows] [data-op-id]').count(),0);
+    assert.match(await page.locator('[data-ops-status]').textContent(),
+      /UXML_PREVIEW_SYNTHETIC_BUILDER_REFUSED/);
     assert.deepEqual(errors,[]);
   }finally{await page.close();}
 });
