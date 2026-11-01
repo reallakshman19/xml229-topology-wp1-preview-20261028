@@ -1,0 +1,44 @@
+name: UXML bulk speed synthetic browser timing and regressions
+on:
+  pull_request:
+    paths:
+      - 'tabs/topology-workspace/short-bulk.mjs'
+      - 'tabs/topology-workspace/topology-worker.mjs'
+      - 'tabs/topology-workspace/topology-worker-client.mjs'
+      - 'converters/xml-cii-2019-standalone/topology-integration.js'
+      - 'tests/uxml-bulk-speed.browser.mjs'
+      - 'tests/short-bulk.test.mjs'
+      - 'docs/CODER-CHECKPOINT-BULK-SPEED.md'
+      - '.github/workflows/uxml-bulk-speed.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  browser-synthetic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Existing short-bulk serial and parity tests
+        run: node --test tests/short-bulk.test.mjs
+      - name: Assemble isolated browser with verified immutable runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/vendor/pyodide
+          tar --exclude='./.git' --exclude='./.github' --exclude='./dist' -cf - . | tar -xf - -C dist
+          root='https://raw.githubusercontent.com/reallakshman19/3D_Converters/cba348152faa9c2077d5c91a5f85b4b81d2e8e25'
+          curl --fail --location --retry 3 "$root/vendor/pyodide/pyodide.asm.wasm" -o dist/vendor/pyodide/pyodide.asm.wasm
+          curl --fail --location --retry 3 "$root/vendor/pyodide/python_stdlib.zip" -o dist/vendor/pyodide/python_stdlib.zip
+          test "$(git hash-object dist/vendor/pyodide/pyodide.asm.wasm)" = 27b9cadfe2f52a4f76ada365cba6d891848838bd
+          test "$(git hash-object dist/vendor/pyodide/python_stdlib.zip)" = e4c642f5824d41f36bf99aa9c761a2576620fa7c
+          bash tools/fetch-uxml-reader.sh dist
+      - name: Install browser runner
+        run: |
+          npm install --no-save --ignore-scripts --package-lock=false playwright@1.52.0
+          npx playwright install --with-deps chromium
+      - name: Benchmark original-byte source-bound bulk one real Worker item
+        run: node --test tests/uxml-bulk-speed.browser.mjs
