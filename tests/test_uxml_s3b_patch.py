@@ -198,8 +198,8 @@ class InputXmlS3BPatch(unittest.TestCase):
             altered["lossContract"].append({
                 "details":{"path":"/CAESARII/PIPINGMODEL/PIPINGELEMENT[3]",
                            "field":"@TO_NODE","raw":"40.000000"}})
-            variants.append(("loss-field",altered,payload,original,
-                             "INPUT_XML_LOSS_CONTRACT_FIELD_TOUCH"))
+            variants.append(("forged-loss-field",altered,payload,original,
+                             "INPUT_XML_UXML_NOT_FROM_PINNED_ORIGINAL"))
             altered=deepcopy(hub)
             altered["lossContract"]=[]
             variants.append(("forged-loss-ledger",altered,payload,original,
