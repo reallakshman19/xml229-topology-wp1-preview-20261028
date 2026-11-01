@@ -1399,6 +1399,28 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     }
     else if(target.hasAttribute('data-preview-short'))previewShortElements();
     else if(target.hasAttribute('data-short-hub-preview'))previewSelectedUxmlShortOps();
+    else if(target.hasAttribute('data-short-refused-locate')){
+      const row=state.shortElements.find(x=>x.id===target.dataset.shortRefusedLocate);
+      const ids=(row?.nodeKeys||[]).map(key=>state.scene?.byKey.get(key)?.id)
+        .filter(Boolean);
+      if(ids.length){
+        select(ids);canvas.focus(ids);
+        displayMessage('Refused short-element owner: '+row.id+
+          ' · '+ids.length+' exact original occurrence(s) highlighted.');
+        query(root,'[data-canvas]')?.scrollIntoView({block:'center'});
+      }else displayMessage('No exact source occurrence is available; location not guessed.');
+    }
+    else if(target.hasAttribute('data-short-deselect-refused')){
+      const report=state.shortHubReport,p=state.shortPreview;
+      if(!report||!p||report.ids!==shortSelectionKey()||
+         report.sha!==state.source?.sourceSha256||
+         report.epoch!==state.epoch||report.revision!==state.revision||
+         !state.hubEnabled)return;
+      const removed=report.refused.filter(x=>p.selected.delete(x.id)).length;
+      invalidateShortHubPreview();renderShortPreview();
+      updateStatus(removed+' refused owner(s) deselected. '+
+        'Re-preview the remaining exact selection before Apply.');
+    }
     else if(target.hasAttribute('data-select-gaskets')){
       const p=state.shortPreview;if(!p)return;
       for(const r of state.shortElements)if(r.eligible&&r.componentType==='GASK')p.selected.add(r.id);
@@ -1509,7 +1531,8 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     if(event.target.matches('[data-uxml-toggle]')){
       if(state.busy||state.batchRunning){event.target.checked=state.hubEnabled;return;}
       state.hubEnabled=event.target.checked;state.hubParity=null;clearEvidenceProof('EVIDENCE_ANALYSIS_REQUIRED');state.opsPreview=null;state.opsPreviewError=null;
-      state.shortHubPreview=null;state.shortHubPreviewError=null;state.shortPreview=null;
+      state.shortHubPreview=null;state.shortHubPreviewError=null;
+      state.shortHubReport=null;state.shortPreview=null;
       query(root,'[data-short-preview]').textContent='';
       opsPanel.reset();
       renderHubParity();renderActions();refresh();
