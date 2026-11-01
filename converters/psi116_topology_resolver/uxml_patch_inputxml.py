@@ -37,8 +37,8 @@ POLICY_FIELDS = frozenset(asdict(TransactionPolicy()))
 PAYLOAD_FIELDS = frozenset({"schema", "sourceFormat", "fileSha256", "policy", "ops"})
 OP_FIELDS = frozenset({"opId", "kind", "sourceActionId", "fileSha256", "targets", "params"})
 # Quoted XML values may contain >. Parse the tag without interpreting those as ends.
-TAG = re.compile(rb'<PIPINGELEMENT\b(?:"[^"]*"|'\''[^'\'']*'\''|[^"'\''>])*>', re.I)
-FIELD = re.compile(rb'\s+(FROM_NODE|TO_NODE)\s*=\s*(["'\''])(.*?)\2', re.S)
+TAG = re.compile(rb"""<PIPINGELEMENT\b(?:"[^"]*"|'[^']*'|[^"'>])*>""", re.I)
+FIELD = re.compile(rb"""\s+(FROM_NODE|TO_NODE)\s*=\s*(["'])(.*?)\2""", re.S)
 
 
 class InputXmlPatchError(ValueError):
