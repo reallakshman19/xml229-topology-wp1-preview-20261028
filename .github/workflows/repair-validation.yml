@@ -49,11 +49,17 @@ jobs:
           (cd tests && python3 -B -m unittest test_uxml_psi116_s2 -v)
           python3 -B -m unittest discover -s tests -v
           (cd tests && python3 -B -m unittest discover -v)
+          UXML_SCALE_BENCHMARK=1 python3 -B -m unittest discover -s tests -p test_uxml_short_preview_scale.py -v 2>&1 | tee /tmp/topofix-synthetic-short-preview-scale.log
+          if grep -Fq 'skipped' /tmp/topofix-synthetic-short-preview-scale.log; then
+            echo 'SYNTHETIC_SHORT_PREVIEW_SCALE_SKIP_REFUSED' >&2
+            exit 1
+          fi
       - name: Full Chromium and Pyodide repair journey
         run: |
           npm install --no-save --ignore-scripts --package-lock=false playwright@1.52.0
           npx playwright install --with-deps chromium
           node --test tests/uxml-evidence-refresh.browser.mjs
+          node --test tests/uxml-short-preview-scale.browser.mjs
           node --test tests/uxml-operations-preview.browser.mjs
           node --test tests/uxml-ui-different.browser.mjs
           node tests/audit-browser.mjs
