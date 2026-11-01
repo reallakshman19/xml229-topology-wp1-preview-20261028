@@ -7,6 +7,7 @@ import {eligibleActions,previewBatchPlan,explicitlyRejectedActionIds} from './ba
 import {runValidatedPasses} from './batch-runner.mjs';
 import {assertOperationsPreview} from './uxml-operations-view.mjs';
 import {assessShortPreview} from './short-preview-model.mjs';
+import {mergeShortHubPreviewChunks,SHORT_HUB_PREVIEW_CHUNK_SIZE} from './short-preview-chunks.mjs';
 import {createOperationsPreviewPanel} from './uxml-operations-panel.mjs';
 import {runShortBulk} from './short-bulk.mjs';
 import {secondPassHTML} from './second-pass.mjs';
@@ -52,7 +53,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   cancelEngine ||= ownedWorker?()=>ownedWorker.cancel():()=>{};
   const state={epoch:0,source:null,original:null,revision:0,applied:0,history:[],resolutions:[],shortElements:[],shortPreview:null,scene:null,plan:null,findings:[],result:null,
     selected:new Set(),search:'',filter:'all',category:'all',hubEnabled:false,hubParity:null,hubRevision:null,analysisProof:null,evidenceProofReason:'EVIDENCE_ANALYSIS_REQUIRED',opsPreview:null,opsPreviewError:null,shortHubPreview:null,shortHubPreviewError:null,
-     shortHubReport:null,manualPorts:[],secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false,shortBulk:null,manualQueue:[],manualQueueRunning:false,manualQueueCheckpoint:null,manualQueueStatus:''};
+     shortHubReport:null,shortHubProgress:null,activeJob:null,previewToken:0,manualPorts:[],secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false,shortBulk:null,manualQueue:[],manualQueueRunning:false,manualQueueCheckpoint:null,manualQueueStatus:''};
   // The queue lives alongside Second Pass, without changing the engineering audit.
   const queuePanel=document.createElement('section');
   queuePanel.dataset.manualQueue='';
@@ -719,23 +720,52 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       renderShortPreview();return;
     }
     const generation=state.epoch,revision=state.revision;
-    state.busy=true;state.shortHubPreview=null;state.shortHubPreviewError=null;
-    state.shortHubReport=null;renderShortPreview();refresh();
-    updateStatus('Read-only UXML edit-ops preview for '+ids.length+
-      ' explicitly selected short elements. No XML changes applied.');
+    const previewToken=++state.previewToken;
+    const current=()=>previewToken===state.previewToken&&
+      generation===state.epoch&&state.source===source&&
+      revision===state.revision&&state.hubEnabled&&
+      idKey===shortSelectionKey();
+    const progress=completed=>{
+      state.shortHubProgress={completed,total:ids.length};
+      const message='Previewing '+completed+' of '+ids.length+
+        ' short elements · read-only, no XML changes. Cancel is available.';
+      query(root,'[data-progress]').textContent=message;
+      updateStatus(message);
+      renderShortPreview();
+    };
+    state.busy=true;state.activeJob='preview';
+    state.shortHubPreview=null;state.shortHubPreviewError=null;
+    state.shortHubReport=null;
+    progress(0);refresh();
     try{
-      const job=readOnlyAnalysisJob(source);
-      job.options.topologyShortPreviewRequests=requests;
-      const result=await runEngine(job);
-      if(generation!==state.epoch||state.source!==source||
-         revision!==state.revision||!state.hubEnabled||
-         idKey!==shortSelectionKey())return;
-      recordHubResult(result,source.rawSha256);
+      // Each bounded job is cancellable by Worker termination. No partial
+      // preview grants Apply; publish only after all chunks pass exact custody.
+      const chunks=[];
+      let firstResult=null;
+      for(let offset=0;offset<requests.length;offset+=SHORT_HUB_PREVIEW_CHUNK_SIZE){
+        if(!current())return;
+        const part=requests.slice(offset,offset+SHORT_HUB_PREVIEW_CHUNK_SIZE);
+        const job=readOnlyAnalysisJob(source);
+        job.options.topologyShortPreviewRequests=part;
+        const result=await runEngine(job);
+        if(!current())return;
+        if(result?.ok!==true||result?.topologyUxmlParity?.status!=='EQUAL')
+          throw Error('UXML_SHORT_PREVIEW_PARITY_'+
+            (result?.topologyUxmlParity?.status||'UNAVAILABLE'));
+        if(!result.topologyOperationsPreview||
+           result.topologyOperationsPreview.error)
+          throw Error(String(result.topologyOperationsPreview?.error||
+            'UXML_SHORT_PREVIEW_CHUNK_MISSING'));
+        chunks.push({ids:part.map(x=>x.id),preview:result.topologyOperationsPreview});
+        firstResult||=result;
+        progress(Math.min(offset+part.length,ids.length));
+      }
+      if(!current())return;
+      const merged=mergeShortHubPreviewChunks(chunks,ids);
+      recordHubResult({...firstResult,topologyOperationsPreview:merged},source.rawSha256);
       if(state.hubParity?.status!=='EQUAL')
         throw Error('UXML_SHORT_PREVIEW_PARITY_'+state.hubParity?.status+': '+
           (state.hubParity?.differences||[]).join(' | '));
-      // A global preview error must retain its true named builder code; it is
-      // NOT a selection mismatch, nor an implied zero-operation result.
       if(state.opsPreviewError)throw Error(state.opsPreviewError);
       const report=assessShortPreview(state.opsPreview,ids);
       state.shortHubReport={...report,ids:idKey,sha:source.sourceSha256,
@@ -752,13 +782,14 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
           'then re-preview the accepted selection before Apply.');
       }
     }catch(error){
-      if(generation!==state.epoch)return;
+      if(!current())return;
       state.shortHubPreview=null;
       state.shortHubPreviewError='UXML_SHORT_PREVIEW_BLOCKED: '+String(error?.message||error);
       updateStatus(state.shortHubPreviewError);
     }finally{
-      if(generation===state.epoch){
-        state.busy=false;renderShortPreview();refresh();
+      if(previewToken===state.previewToken&&generation===state.epoch){
+        state.busy=false;state.activeJob=null;state.shortHubProgress=null;
+        renderShortPreview();refresh();
       }
     }
   }
@@ -809,7 +840,10 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       '<button data-short-next '+(p.page>=pages-1?'disabled':'')+'>Next</button></div>'+
       (state.hubEnabled?'<button data-short-hub-preview '+(!p.selected.size||state.busy?'disabled':'')+
         '>Preview selected UXML edit operations ('+p.selected.size+')</button>'+
-        '<p data-short-hub-status role="status">'+esc(state.shortHubPreviewError||
+        '<p data-short-hub-status role="status">'+esc(state.shortHubProgress?
+           'Previewing '+state.shortHubProgress.completed+' of '+state.shortHubProgress.total+
+             ' short elements · Cancel available; no Apply before completion.':
+           state.shortHubPreviewError||
           (reported?report.readyCount+' ready / '+report.refusedCount+
              ' refused'+(hubReady?' · UXML operation preview verified for exact current selection.':
                ' · Deselect refused, then re-preview before Apply.'):
@@ -1434,6 +1468,18 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     }
     else if(target.hasAttribute('data-run-short-drop'))dropShortElements();
     else if(target.hasAttribute('data-analyze'))analyze();
+    else if(target.hasAttribute('data-cancel')&&state.activeJob==='preview'){
+      // Hard-terminate the active Worker and invalidate all late chunk results.
+      // Keep current source, selected owners and analysis proof for retry.
+      ++state.previewToken;
+      cancelEngine();
+      state.activeJob=null;state.busy=false;state.shortHubProgress=null;
+      invalidateShortHubPreview();
+      state.shortHubPreviewError='UXML_SHORT_PREVIEW_CANCELLED: selection retained; re-preview before Apply.';
+      renderShortPreview();refresh();
+      query(root,'[data-progress]').textContent='CANCELLED · read-only preview; no XML changed.';
+      updateStatus(state.shortHubPreviewError);
+    }
     else if(target.hasAttribute('data-cancel')&&state.manualQueueRunning){
       const saved=state.manualQueueCheckpoint;
       cancelEngine();state.epoch++;state.busy=false;
