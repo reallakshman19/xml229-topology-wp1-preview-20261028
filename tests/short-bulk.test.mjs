@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {runShortBulk,namedHubOwnerRefusal} from '../tabs/topology-workspace/short-bulk.mjs';
 
 function driver(n,{cancelAt=Infinity,failAt=Infinity,hubEnabled=false,differentAt=Infinity,
-  refusalAt=Infinity,forgedOpAt=Infinity}={}){
+  refusalAt=Infinity,refusalCode='UXML_LOSS_CONTRACT_FIELD_TOUCH',
+  forgedOpAt=Infinity,receiptMutationAt=Infinity,receiptMutation=()=>{}}={}){
   const selectedIds=Array.from({length:n},(_,i)=>'SHORT:'+i);
   const source={name:'original.xml',sourceText:'xml|h0',sourceSha256:'h0'};
   const initial=selectedIds.map(id=>({id,eligible:true,sourceSha256:'h0',nodeKeys:[id+':S1',id+':S2']}));
@@ -28,7 +29,7 @@ function driver(n,{cancelAt=Infinity,failAt=Infinity,hubEnabled=false,differentA
       acceptedFinalTransferred:false,nativeCiiReleaseAuthorized:false,
       topoFixCommitted:false,topoFixXmlText:'',
       topologyUxmlParity:{status:'DIFFERENT',
-        differences:['/patchBack: UxmlPatchError: UXML_LOSS_CONTRACT_FIELD_TOUCH:'+id]}};
+        differences:['/patchBack: UxmlPatchError: '+refusalCode+':'+id]}};
     revision++;
     const remaining=selectedIds.slice(count).map(id=>({
       id,eligible:true,sourceSha256:next,nodeKeys:[id+':S1',id+':S2'],
@@ -48,6 +49,7 @@ function driver(n,{cancelAt=Infinity,failAt=Infinity,hubEnabled=false,differentA
       targets:[id+':S1',id+':S2'],
       params:[{request:{id,sourceSha256:old,nodeKeys:[...request.nodeKeys]}}],
       removedWithRecord:[{recordKey:id+':S1',field:'Weight'}]};
+    if(count===receiptMutationAt)receiptMutation(canonical,{id,old,request});
     return {ok:true,outputKind:'topology-sidecars',acceptedFinalTransferred:false,
       nativeCiiReleaseAuthorized:false,ciiText:null,enrichedText:'',topoFixCommitted:true,
       topologyUxmlAppliedEditOps:count===forgedOpAt?null:[canonical],
@@ -163,7 +165,7 @@ test('hub Apply skips one exact canonical loss refusal, continues on unchanged s
   assert.deepEqual(r.skipped[0],{id:'SHORT:1',
     reason:'UXML_LOSS_CONTRACT_FIELD_TOUCH:SHORT:1',sourceSha256:'h1'});
   assert.equal(r.latest.source.sourceSha256,'h2');
-  assert.equal(d.checkpoints,2,'no write or validated checkpoint for refused owner');
+  assert.equal(d.checkpoints,3,'refusal creates a no-write checkpoint, plus two validated steps');
   assert.equal(r.applied[0].canonicalEditOps[0].removedWithRecord[0].field,'Weight');
   assert.equal(r.applied[1].canonicalEditOps[0].sourceActionId,'SHORT:2');
 });
@@ -210,4 +212,106 @@ test('forged and ineligible selections are separately skipped without a Worker o
     {id:'MISSING:OWNER',reason:'NOT_ELIGIBLE_ON_CURRENT_REVISION'},
     {id:'CLOSED:OWNER',reason:'CLOS_WRITE_HELD'}]);
   assert.equal(r.completed,2);
+});
+
+
+const allowedHubRefusalCodes=[
+  'UXML_LOSS_CONTRACT_FIELD_TOUCH',
+  'UXML_CLOS_WRITE_HELD',
+  'UXML_SHORT_NATIVE_REFUSED',
+  'UXML_SHORT_NOT_ELIGIBLE_OR_WITNESS_DRIFT',
+];
+const heldHubDisagreementCodes=[
+  'UXML_SHORT_TARGETS_OR_PARAMS_DIFFER_FROM_AUTHORITY',
+  'UXML_SHORT_DELETE_SET_MISMATCH',
+  'UXML_SHORT_OWNER_DELETE_TARGET_MISMATCH',
+  'UXML_SHORT_UNEXPECTED_MUTATION_KIND',
+  'UXML_SHORT_PORT_FIELDS_INVALID',
+  'UXML_SHORT_SOURCE_REF_NOT_FOUND',
+  'UXML_SHORT_ORIGINAL_RECORD_NOT_FOUND',
+  'UXML_SHORT_REQUEST_SCHEMA_INVALID',
+  'UXML_SHORT_REQUEST_SELECTION_MISMATCH',
+  'UXML_SHORT_REQUEST_SOURCE_OR_SELECTION_DRIFT',
+  'UXML_SHORT_EXACT_ONE_OP_REQUIRED',
+  'UXML_SHORT_EXACT_ONE_REQUEST_REQUIRED',
+  'UXML_SHORT_NATIVE_TRANSACTION_REJECTED',
+  'UXML_SHORT_KIND_REFUSED',
+];
+const refusalSidecar=code=>({
+  ok:true,topoFixCommitted:false,topoFixXmlText:'',
+  acceptedFinalTransferred:false,nativeCiiReleaseAuthorized:false,
+  topologyUxmlParity:{status:'DIFFERENT',
+    differences:['/patchBack: UxmlPatchError: '+code+':SYNTHETIC_NODE']},
+});
+test('exactly four source-only hub owner codes can be SKIPPED; authority disagreements HOLD',()=>{
+  for(const code of allowedHubRefusalCodes)
+    assert.equal(namedHubOwnerRefusal(refusalSidecar(code)),
+      code+':SYNTHETIC_NODE',code);
+  for(const code of heldHubDisagreementCodes)
+    assert.equal(namedHubOwnerRefusal(refusalSidecar(code)),null,code);
+  for(const altered of [
+    {...refusalSidecar(allowedHubRefusalCodes[0]),
+      topologyUxmlParity:{...refusalSidecar(allowedHubRefusalCodes[0]).topologyUxmlParity,
+        status:'EQUAL'}},
+    {...refusalSidecar(allowedHubRefusalCodes[0]),ok:false},
+    {...refusalSidecar(allowedHubRefusalCodes[0]),
+      topologyUxmlParity:{status:'DIFFERENT',differences:[
+        '/patchBack: UxmlPatchError: UXML_LOSS_CONTRACT_FIELD_TOUCH:X',
+        '/findings: DRIFT']}},
+    {...refusalSidecar(allowedHubRefusalCodes[0]),
+      topologyUxmlParity:{status:'DIFFERENT',differences:[
+        '/patchBack: UxmlPatchError: UXML_LOSS_CONTRACT_FIELD_TOUCH:X\ninjected']}},
+  ])assert.equal(namedHubOwnerRefusal(altered),null,'not a single isolated source veto');
+});
+test('TARGETS_OR_PARAMS disagreement at item 2 revokes parity; revision 1 only',async()=>{
+  const d=driver(3,{hubEnabled:true,refusalAt:2,
+    refusalCode:'UXML_SHORT_TARGETS_OR_PARAMS_DIFFER_FROM_AUTHORITY'});
+  const r=await d.run();
+  assert.equal(r.stopReason,'TRANSACTION_FAILED');
+  assert.equal(r.hubMismatch,true);
+  assert.equal(r.failedId,'SHORT:1');
+  assert.match(r.stopMessage,
+    /UXML_SHORT_PARITY_DIFFERENT: \/patchBack: UxmlPatchError: UXML_SHORT_TARGETS_OR_PARAMS_DIFFER_FROM_AUTHORITY:SHORT:1/);
+  assert.equal(r.applied.length,1);
+  assert.equal(r.skipped.length,0,'a hub authority disagreement is never an owner skip');
+  assert.equal(r.latest.source.sourceSha256,'h1');
+  assert.equal(d.checkpoints,1);
+  assert.deepEqual(r.pendingIds,['SHORT:2']);
+});
+test('refusal checkpoint survives Cancel immediately after no-write second owner',async()=>{
+  const d=driver(3,{hubEnabled:true,refusalAt:2,cancelAt:2});
+  const r=await d.run();
+  assert.equal(r.stopReason,'CANCELLED');
+  assert.equal(r.applied.length,1);
+  assert.equal(r.skipped.length,1);
+  assert.equal(r.completed,2);
+  assert.equal(r.latest.source.sourceSha256,'h1');
+  assert.deepEqual(r.pendingIds,['SHORT:2']);
+  assert.equal(d.count,2,'no third source revision requested after refusal checkpoint');
+  assert.equal(d.checkpoints,2,'a refusal advances checkpoint without writing');
+});
+test('canonical receipt fields: each forged witness is rejected before publication',async()=>{
+  const cases={
+    fileSha256:op=>{op.fileSha256='FORGED_SHA';},
+    opId:op=>{op.opId='UXML-OP-FORGED';},
+    sourceActionId:op=>{op.sourceActionId='FORGED_ACTION';},
+    requestNodeKeys:op=>{op.params[0].request.nodeKeys=['FORGED_NODE'];},
+    requestSourceSha:op=>{op.params[0].request.sourceSha256='FORGED_SHA';},
+    duplicateTargets:op=>{op.targets.push(op.targets[0]);},
+    removedWithRecordOutsideTargets:op=>{
+      op.removedWithRecord[0].recordKey='FORGED_RECORD';},
+  };
+  for(const [name,mutate] of Object.entries(cases)){
+    const d=driver(2,{hubEnabled:true,receiptMutationAt:1,
+      receiptMutation:mutate});
+    const r=await d.run();
+    assert.equal(r.stopReason,'TRANSACTION_FAILED',name);
+    assert.equal(r.hubMismatch,true,name+' must revoke hub parity');
+    assert.match(r.stopMessage,
+      /UXML_SHORT_APPLY_CANONICAL_OP_RECEIPT_MISSING_OR_DRIFT/,name);
+    assert.equal(r.applied.length,0,name+' must not enter applied ledger');
+    assert.equal(r.skipped.length,0,name+' must not be misclassified as skippable');
+    assert.equal(r.latest,null,name+' must not publish source revision');
+    assert.equal(d.checkpoints,0,name+' must not create a checkpoint');
+  }
 });
