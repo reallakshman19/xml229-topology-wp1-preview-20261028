@@ -955,7 +955,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     state.shortBulk=null;refresh();
     const startedAt=Date.now();
     let lastCompleted=0,lastApplied=0,lastSkipped=0,bulkFinished=false,
-      itemInFlight=false;
+      inFlightOwners=0;
     const paintBulkProgress=()=>{
       if(generation!==state.epoch||!state.batchRunning||bulkFinished)return;
       const elapsed=Math.max(0,(Date.now()-startedAt)/1000);
@@ -965,7 +965,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
         '~ETA '+(remaining>=60?Math.ceil(remaining/60)+' min':
           Math.max(1,remaining)+' sec')+' (approximate)';
       query(root,'[data-progress]').textContent=
-        'Applying '+Math.min(ids.length,lastCompleted+(itemInFlight?1:0))+' of '+ids.length+' · '+
+        'Applying '+Math.min(ids.length,lastCompleted+inFlightOwners)+' of '+ids.length+' · '+
         lastApplied+' validated · '+lastSkipped+' skipped · '+eta+
         ' · Cancel available; only validated working revisions retained.';
     };
@@ -980,7 +980,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
         onProgress:step=>{
           if(generation!==state.epoch)return;
           lastCompleted=step.completed;lastApplied=step.applied;lastSkipped=step.skipped;
-          itemInFlight=step.status==='APPLYING';
+          inFlightOwners=step.status==='APPLYING'?Math.max(1,step.inFlightOwners||1):0;
           paintBulkProgress();
         },
       });
