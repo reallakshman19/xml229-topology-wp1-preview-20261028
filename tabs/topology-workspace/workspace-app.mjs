@@ -765,10 +765,26 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     details.appendChild(list);panel.appendChild(details);
   }
 
+  function holdShortHubRelease(reason){
+    if(!state.hubEnabled)return;
+    // Set source-release custody FIRST. Neither a canvas render exception nor
+    // a second publication exception may preserve a stale EQUAL download gate.
+    state.hubParity={status:'DIFFERENT',differences:[String(reason||'SHORT_BULK_HUB_HOLD')]};
+    state.hubRevision=null;
+    state.opsPreview=null;state.opsPreviewError=null;
+    clearEvidenceProof('EVIDENCE_RECHECK_PARITY_NOT_EQUAL');
+    // Rendering is advisory; hard release gates above survive UI exceptions.
+    try{renderHubParity();opsPanel.render();}catch{/* custody already HELD */}
+  }
+
   /** One UI publication for a fully audited sequence (or last validated checkpoint).
    * Never call runFix() or repaint the canvas per selected element.
    */
   async function publishShortBulk(outcome,generation=state.epoch){
+    // Decide and enforce hub authority before ANY working-source mutation.
+    const reason=outcome?.stopReason||'COMPLETE';
+    const hubMismatch=state.hubEnabled&&reason!=='COMPLETE'&&reason!=='CANCELLED';
+    if(hubMismatch)holdShortHubRelease(outcome?.stopMessage||'SHORT_BULK_HUB_HOLD:'+reason);
     if(!outcome||outcome.originSha256!==state.source?.sourceSha256)
       throw Error('SHORT_BULK_ORIGINAL_SOURCE_DRIFT');
     const beforeCount=state.findings.length,applied=outcome.applied||[];
@@ -794,7 +810,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       }
       state.revision+=applied.length;
       state.applied+=applied.length;
-      state.hubRevision=state.hubEnabled?state.revision:null;
+      state.hubRevision=state.hubEnabled&&!hubMismatch?state.revision:null;
       clearEvidenceProof('EVIDENCE_RECHECK_PENDING');
       state.fix={sourceSha256:state.source.sourceSha256,receiptKey:'drop',
         hubRoute:state.hubEnabled,
@@ -821,10 +837,6 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     const checked=done+skipped+failed,unprocessed=Math.max(0,selected-checked);
     const nowEligible=state.shortElements.filter(r=>r.eligible).length;
     if(checked+unprocessed!==selected)throw Error('SHORT_BULK_COUNT_RECONCILIATION_FAILED');
-    const reason=outcome.stopReason||'COMPLETE';
-    // Stop reason, not error spelling, controls the entire hub release gate.
-    // In particular an outer-catch ERROR is a HOLD just like lineage drift.
-    const hubMismatch=state.hubEnabled&&reason!=='COMPLETE'&&reason!=='CANCELLED';
     const message=(reason==='COMPLETE'?'BULK COMPLETE':'BULK STOPPED · '+reason)+
       ' · selected '+selected+' = '+done+' validated + '+skipped+' skipped + '+failed+
       ' failed + '+unprocessed+' unprocessed · eligible on CURRENT XML '+nowEligible+
@@ -833,16 +845,6 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       (hubMismatch?' · last validated checkpoint retained; corrected downloads HELD.':
        done?' · validated XML, source-linked operations and lineage digests downloadable.':
          ' · no XML changed.');
-    if(hubMismatch){
-      // Fail closed BEFORE a status refresh can expose a previous EQUAL
-      // checkpoint, including while an asynchronous evidence recheck runs.
-      state.hubParity={status:'DIFFERENT',differences:[
-        outcome.stopMessage||'SHORT_BULK_HUB_HOLD:'+reason]};
-      state.hubRevision=null;state.opsPreview=null;
-      clearEvidenceProof('EVIDENCE_RECHECK_PARITY_NOT_EQUAL');
-      renderHubParity();
-      opsPanel.render();
-    }
     query(root,'[data-progress]').textContent=message;
     setFixStatus(message,hubMismatch?'rejected':
       reason==='COMPLETE'&&done?'ready':done?'stopped':'rejected','drop');
