@@ -25,6 +25,10 @@ async function sourceHash(sourceText){
 }
 self.onmessage=async ({data})=>{
  const {id,job,type}=data||{};
+ if(type==='SHORT_MEMO_CLEAR'){
+  try{await clearXml229ShortMemo();}catch{/* cleanup cannot publish output */}
+  return;
+ }
  if(type!=='RUN'||!Number.isSafeInteger(id))return;
  try{
   const speed=job?.options?.topologyBulkSpeedProfile===true;
