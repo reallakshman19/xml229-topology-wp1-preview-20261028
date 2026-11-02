@@ -123,7 +123,7 @@ class CanonicalUxmlGroup(unittest.TestCase):
                             UxmlPatchError,"UXML_LOSS_CONTRACT_FIELD_TOUCH"):
                         qualify_short_batch_uxml(
                             path,forged,policy=policy,config=self.cfg)
-            print("A6B_MUTANT_RED:uxml-batch-canonical-witness-skipped:"
+            print("A6B_MUTANT_RED:uxml-batch-canonical-witness-bypassed:"
                   "AssertionError:"+str(killed.exception).splitlines()[-1])
         finally:ctx.cleanup()
 
