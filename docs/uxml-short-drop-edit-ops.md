@@ -65,20 +65,24 @@ item sees only the last committed revision. A mismatching item cannot enter the
 checkpoint. A previous validated checkpoint is retained privately but must be
 reverified before release after a hub mismatch.
 
-## Read-only pre-Apply Operations preview
+## Direct Apply — current workflow (2 Nov 2026)
 
-With hub EQUAL, the Owner selects short elements in the existing ≤6 mm preview,
-then chooses **Preview selected UXML edit operations**. Each selected item is
-separately simulated against the same **current read-only source** for exact
-edit-op projection; this is not a guarantee that its future post-prior-transaction
-revision will remain qualified. The preview lists short ops alongside existing
-Auto ops with exact original keys and field changes. Any selection, source,
-revision, route, parity or epoch change invalidates the short-preview admission.
-A separate explicit **Apply all selected & close** remains required.
+The read-only ≤6 mm panel is a **selection list**, not a separate approval
+stage. With hub parity EQUAL, the Owner selects eligible short elements and
+presses **Apply selected and close** directly. For each owner, Apply still
+performs the native one-request transaction and verifies canonical UXML ops,
+sourceRefs, loss-contract vetoes, the complete original-source patch,
+lineage, post-validation and direct-vs-patch byte parity. Only a fully
+validated checkpoint advances the working revision. Cancel preserves the
+last validated checkpoint; unknown refusal/parity drift is a hub HOLD and
+blocks corrected downloads.
 
-The deliberate pre-Apply simulation may add latency for many selections;
-this assignment records per-item execution milliseconds in synthetic test logs
-and does **not** attempt performance optimization.
+After Apply, open the batch report to inspect original record removal,
+source-linked operations and `removedWithRecord`. There is **no**
+pre-Apply short-op simulation, admission gate or preview button. Option C
+deduplicates deterministic recomputation only when exact input bytes,
+policy, configuration and code tag match; it never groups multiple owners
+into one transaction.
 
 ## Negative obligations
 
