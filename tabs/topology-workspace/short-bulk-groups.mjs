@@ -322,13 +322,16 @@ export async function runIndependentShortBulk({
     checkpoint();notify(id,output.applied.length?'VALIDATED':'REFUSED');
   };
   const runGroup=async ids=>{
-    if(stopReason!=='COMPLETE'||!isCurrent()){stopReason='CANCELLED';return;}
+    if(stopReason!=='COMPLETE')return;
+    if(!isCurrent()){stopReason='CANCELLED';return;}
     if(ids.length===1){await mergeLegacy(ids[0]);return;}
     const rowMap=new Map(rows.map(r=>[r.id,r]));
     const groupRows=ids.map(id=>rowMap.get(id));
     if(groupRows.some(row=>!row?.eligible||row.sourceSha256!==current.sourceSha256)){
       const mid=Math.floor(ids.length/2);
-      await runGroup(ids.slice(0,mid));await runGroup(ids.slice(mid));return;
+      await runGroup(ids.slice(0,mid));
+      if(stopReason==='COMPLETE')await runGroup(ids.slice(mid));
+      return;
     }
     notify(ids[0],'APPLYING',ids.length);
     const reqs=groupRows.map(row=>({id:row.id,sourceSha256:current.sourceSha256,
