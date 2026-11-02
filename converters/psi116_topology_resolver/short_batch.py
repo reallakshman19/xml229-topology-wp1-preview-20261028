@@ -669,7 +669,15 @@ def apply_short_batch_bisect(source: str,owner_ids:Sequence[str],
                         "validation":batch.validation_payload()})
     for group in plan_short_groups(base,list(owner_ids),config):
         recurse(list(group))
-    _require(len(outcomes)==len(owner_ids),"SHORT_BATCH_RUN_OWNER_CENSUS_MISMATCH")
+    _require(len(outcomes)==len(owner_ids) and
+             {entry["id"] for entry in outcomes}==set(owner_ids),
+             "SHORT_BATCH_RUN_OWNER_CENSUS_MISMATCH")
+    # Scheduling may commute non-interacting owners. Reports retain the
+    # user's ORIGINAL selection order; source SHA revision custody remains
+    # attached to each actual committed owner and is never fabricated.
+    order={identifier:index for index,identifier in enumerate(owner_ids)}
+    outcomes.sort(key=lambda entry:order[entry["id"]])
+    skipped.sort(key=lambda entry:order[entry["id"]])
     return BatchRunReceipt(base.document.source_sha256,result_source,
                            tuple(outcomes),tuple(batches),tuple(skipped))
 
