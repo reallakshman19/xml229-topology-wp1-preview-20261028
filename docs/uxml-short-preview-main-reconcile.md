@@ -1,3 +1,5 @@
+> **ARCHIVED HISTORICAL RECONCILIATION (1 Nov 2026):** This document describes PR #25 and the retired pre-Apply short preview. It is retained for provenance only. Do NOT follow its preview/admission instructions. Current merged #32 performs direct Apply; see [uxml-short-drop-edit-ops.md](./uxml-short-drop-edit-ops.md).
+
 # UXML-SHORT-PREVIEW-MAIN-RECONCILE — source-bound reconciliation
 
 **Date:** 1 Nov 2026 · **Scope:** only PR #25 read-only partial-preview integration into actual `main`.
