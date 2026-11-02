@@ -157,6 +157,8 @@ async function scenario({count=5,hub=false,group=true,dense=false,mode='normal',
   await page.locator('[data-select-short]').click();
   const toggle=page.locator('[data-short-independent]');
   assert.equal(await toggle.count(),1);
+  assert.equal(await toggle.isChecked(),false,
+    'A6b dense planner requires comparison toggle OFF by default');
   if(group)await toggle.check();else await toggle.uncheck();
   const checked=await page.evaluate(()=>
     window.__a6bUi.workspace.getState().independentShortGroups);
