@@ -6,6 +6,7 @@ on:
       - 'tabs/topology-workspace/topology-worker.mjs'
       - 'tabs/topology-workspace/topology-worker-client.mjs'
       - 'converters/xml-cii-2019-standalone/topology-integration.js'
+      - 'tests/test_uxml_short_drop_batch_baseline.py'
       - 'tests/uxml-bulk-speed.browser.mjs'
       - 'tests/uxml-bulk-three.browser.mjs'
       - 'tests/short-bulk.test.mjs'
