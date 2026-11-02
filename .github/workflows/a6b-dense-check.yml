@@ -1,0 +1,35 @@
+name: A6b public dense conflict-graph and serial parity
+on:
+  push:
+    branches:
+      - feat/uxml-short-memo-digest-20261102
+  pull_request:
+    paths:
+      - 'converters/psi116_topology_resolver/short_batch.py'
+      - 'tests/test_short_batch_graph.py'
+      - 'tests/bench_short_batch_dense.py'
+      - '.github/workflows/a6b-dense-check.yml'
+permissions:
+  contents: read
+jobs:
+  dense-authority:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Public 2x4 native overlap and graph mutant
+        env:
+          PYTHONPATH: ${{ github.workspace }}/converters
+        run: |
+          set -euo pipefail
+          python3 -B -m unittest discover -s tests -p test_short_batch_graph.py -v
+      - name: Public dense 5 20 89 native serial versus old contiguous versus graph
+        env:
+          PYTHONPATH: ${{ github.workspace }}/converters
+          A6B_DENSE_BENCH: '1'
+        run: |
+          set -euo pipefail
+          python3 -B -m unittest discover -s tests -p bench_short_batch_dense.py -v
