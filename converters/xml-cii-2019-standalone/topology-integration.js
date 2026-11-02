@@ -381,7 +381,12 @@ export async function runPsi116TopologyStage(pyodide, job, inputPath, jobDir, st
   // Every ordinary one-owner run uses a fresh, disposable jobDir identity.
   const shortRequests=Array.isArray(options.topologyShortElementRequests)?
     options.topologyShortElementRequests:[];
-  const memoEnabled=generateTopoFix&&shortRequests.length===1&&
+  // Explicit A6b group uses the SAME full-UXMl+source-bound resolver memo
+  // within this one job: initial hub parity and canonical qualification
+  // share one actual adapter pass. Native vs UXML batch transactions remain
+  // independent; no group transaction result is memoized.
+  const memoEnabled=generateTopoFix&&
+    (shortRequests.length===1||explicitBatch)&&
     options.topologyShortMemo!==false;
   const crossOwnerMemo=memoEnabled&&options.topologyBulkSession===true&&
     typeof options.topologyShortMemoSession==='string'&&
