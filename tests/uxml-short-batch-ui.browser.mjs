@@ -173,8 +173,11 @@ async function scenario({count=5,hub=false,group=true,mode='normal',mutation=nul
    return {mode,hub,group,count,status,message,jobs,elapsedMs,errors};
   }
   assert.match(message,/BULK COMPLETE/,'workspace must finish: '+message);
+  assert.ok(group?jobs.some(j=>j.isBatch):jobs.every(j=>!j.isBatch),
+    'GROUP_TOGGLE_ENGINE_DISPATCH_MISMATCH');
   assert.equal(status.revision,count,'one history revision for every owner');
-  assert.equal(status.historyOwnerEvidenceCount,group?count:0);
+  assert.equal(status.historyOwnerEvidenceCount,group?count:0,
+    'GROUP_OWNER_EVIDENCE_HISTORY_CENSUS');
   assert.equal(status.hubRevision,hub?count:null);
   assert.equal(await page.locator('[data-download-working]').isEnabled(),true);
   const pending=page.waitForEvent('download');
@@ -245,15 +248,19 @@ test('real workspace release-last stays closed during a blocked evidence recheck
  assert.deepEqual(x.errors,[]);
  console.info('A6B_UI_MUTANT_GREEN:hub-revision-release-last=PASS');
 });
-for(const [name,config,verify] of [
+for(const [name,config,verify,needle] of [
  ['toggleIgnored',{count:5,hub:true,group:true,mutation:'toggleIgnored'},
-   x=>assert.ok(x.jobs.some(j=>j.isBatch),'toggle mutant ignored explicit batch')],
+   x=>assert.ok(x.jobs.some(j=>j.isBatch),'GROUP_TOGGLE_ENGINE_DISPATCH_MISMATCH'),
+   'GROUP_TOGGLE_ENGINE_DISPATCH_MISMATCH'],
  ['ownerEvidenceDropped',{count:5,hub:true,group:true,mutation:'ownerEvidenceDropped'},
-   x=>assert.equal(x.status.historyOwnerEvidenceCount,5,'owner evidence missing')],
+   x=>assert.equal(x.status.historyOwnerEvidenceCount,5,
+     'GROUP_OWNER_EVIDENCE_HISTORY_CENSUS'),'GROUP_OWNER_EVIDENCE_HISTORY_CENSUS'],
  ['releaseLastBypassed',{count:5,hub:true,mode:'releaseHold',mutation:'releaseLastBypassed'},
-   x=>assert.equal(x.hubRevisionDuring,null,'early hub release mutation')],
+   x=>assert.equal(x.hubRevisionDuring,null,'GROUP_RELEASE_LAST_BYPASSED'),
+   'GROUP_RELEASE_LAST_BYPASSED'],
  ['cancelStaleAllowed',{count:5,hub:true,mode:'cancelMutant',mutation:'cancelStaleAllowed'},
-   x=>assert.equal(x.revision,0,'in-flight Cancel candidate was published')],
+   x=>assert.equal(x.revision,0,'GROUP_CANCEL_PUBLISHED_IN_FLIGHT'),
+   'GROUP_CANCEL_PUBLISHED_IN_FLIGHT'],
 ]){
  test('KILL actual workspace UI source mutant '+name,{timeout:360000},async()=>{
   let red;
@@ -261,6 +268,7 @@ for(const [name,config,verify] of [
   catch(error){red=error;}
   assert.ok(red instanceof Error,name+' must cause assertion failure');
   assert.equal(red.name,'AssertionError',name+' must be killed by a clean assertion');
-  console.info('A6B_UI_MUTANT_RED:'+name+':AssertionError:'+red.message.split('\n')[0]);
+  assert.match(red.message,new RegExp(needle),name+' must die on the specifically mutated authority');
+  console.info('A6B_UI_MUTANT_RED:'+name+':AssertionError:'+needle);
  });
 }
