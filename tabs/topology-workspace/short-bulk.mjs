@@ -43,6 +43,10 @@ export async function runShortBulk({
     throw Error('SHORT_BULK_INVALID_SELECTION');
   let current={...source},rows=shortElements;
   const applied=[],skipped=[],requested=[...selectedIds];
+  // One unique Worker/Python memo scope for the UI bulk selection.
+  // Completion, ERROR and Cancel clear it through endBulkSession.
+  const shortMemoSession='short:'+source.sourceSha256.slice(0,20)+':'+
+    Date.now().toString(36)+':'+(++memoSessionOrdinal).toString(36);
   let latest=null,completed=0,stopReason='COMPLETE',stopMessage='',failedId=null;
   const lease=hubEnabled&&typeof runEngine.beginBulkSession==='function'&&
     typeof runEngine.endBulkSession==='function';
