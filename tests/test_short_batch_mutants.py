@@ -109,10 +109,17 @@ class ShortBatchSafetyMutants(unittest.TestCase):
             requested=tuple(policy.selected_action_ids)
             if len(requested)>1:
                 attempts.append(requested)
-                rowmap={r["id"]:r for r in short_elements(source.document,config)}
-                subset=requested[:1]
-                p=owner_policy(source,subset,config)
-                return batch._single_attempt(source,subset[0],config)
+                # ACTUAL partial writer: valid native singleton output,
+                # but maliciously returned as a whole-group result.
+                singleton=batch._single_attempt(
+                    source.document.source_text,requested[0],config)
+                return batch.IndependentShortBatchResult(
+                    singleton.source_result,singleton.after_result,
+                    singleton.policy,singleton.selected_actions,
+                    singleton.operations,singleton.checks,
+                    singleton.reject_reasons,singleton.fixed_xml,
+                    singleton.resolver_config,
+                    batch.normalized_owner_evidence(singleton))
             return genuine(source,policy=policy,config=config)
         with patch.object(batch,"apply_independent_short_batch",side_effect=partial):
             result=batch.apply_short_batch_bisect(original,ids,config=self.cfg)
@@ -122,11 +129,20 @@ class ShortBatchSafetyMutants(unittest.TestCase):
         self.assertTrue(all(len(b["ids"])==1 for b in result.successful_batches),
                         "partial group must bisect; never publish a group")
         print("A6B_MUTANT_GREEN:commit-partial-group-refused-and-bisected=PASS")
-        # If the engine falsely accepted the mocked 1-owner transaction as a
-        # 4-owner commit, the required group-wide source/policy evidence count
-        # would fail a clean assertion (not a swallowed exception).
+        # Remove the ACTUAL two census guards, then run the SAME malicious
+        # partial writer: it must return a receipt missing three owners and
+        # the caller's real owner-list assertion must go RED.
+        real_require=batch._require
+        def missing_guards(value,code):
+            if code in ("SHORT_BATCH_OWNER_EVIDENCE_CENSUS_MISMATCH",
+                        "SHORT_BATCH_RUN_OWNER_CENSUS_MISMATCH"):
+                return None
+            return real_require(value,code)
+        with patch.object(batch,"_require",side_effect=missing_guards),\
+             patch.object(batch,"apply_independent_short_batch",side_effect=partial):
+            broken=batch.apply_short_batch_bisect(original,ids,config=self.cfg)
         with self.assertRaises(AssertionError) as killed:
-            self.assertEqual(1,len(ids),
+            self.assertEqual([o["id"] for o in broken.owner_results],ids,
                              "BATCH_COMMIT_PARTIAL_MUTANT_HAS_MISSING_OWNERS")
         print("A6B_MUTANT_RED:commit-partial-instead-of-bisect:AssertionError:"+
               str(killed.exception).splitlines()[-1])
@@ -160,7 +176,29 @@ class ShortBatchSafetyMutants(unittest.TestCase):
                                 for group in outcome.successful_batches),
                             "corrupted batch evidence cannot be published")
             print("A6B_MUTANT_GREEN:"+name+"-refused-and-bisected=PASS")
+            # Execute a named mutation of the REAL accounting gate.
+            # The corrupted group receipt must then violate its own owner
+            # evidence census, not an invented constant-vs-constant check.
+            real_require=batch._require
+            def bypass_census(value,code):
+                if code=="SHORT_BATCH_OWNER_EVIDENCE_CENSUS_MISMATCH":
+                    return None
+                return real_require(value,code)
+            with patch.object(batch,"_require",side_effect=bypass_census),\
+                 patch.object(batch,"apply_independent_short_batch",
+                              side_effect=forged):
+                broken=batch.apply_short_batch_bisect(original,ids,
+                                                       config=self.cfg)
             with self.assertRaises(AssertionError) as killed:
-                self.assertEqual(2,3,"BATCH_"+name+"_ACCEPTED")
+                for receipt in broken.successful_batches:
+                    owners=receipt["transaction"]["batch"]["owners"]
+                    self.assertEqual(len(owners),len(receipt["ids"]),
+                                     "BATCH_"+name+"_ACCEPTED")
+                    for owner in owners:
+                        matched=next(r["evidence"] for r in broken.owner_results
+                                     if r["id"]==owner["id"])
+                        self.assertEqual(owner["removedWeight"],
+                                         matched["removedWeight"],
+                                         "BATCH_"+name+"_ACCEPTED")
             print("A6B_MUTANT_RED:"+name+":AssertionError:"+
                   str(killed.exception).splitlines()[-1])
