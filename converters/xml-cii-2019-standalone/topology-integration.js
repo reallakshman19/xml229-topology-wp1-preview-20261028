@@ -97,6 +97,25 @@ if hub_doc is not None and hub_parity["status"] == "EQUAL" and not job_generate_
 # When EQUAL, publish the UXML-fed Python findings and plan, not the direct copies.
 published = adapted if hub_doc is not None and hub_parity["status"] == "EQUAL" else result
 findings_payload = published.findings_payload(cfg)
+# A6b: give the browser the EXACT native source-footprint graph from a
+# READ-ONLY Analyze. Reordering is forbidden without these source-bound
+# keys; the Apply engine independently recomputes and refuses overlaps.
+# Never compute them from untrusted UXML JSON or a guessed UI radius.
+if not job_generate_topofix:
+    from psi116_topology_resolver.short_batch import owner_footprint
+    native_short_rows = result.findings_payload(cfg).get("shortElements", [])
+    footprints = []
+    for row in native_short_rows:
+        if row.get("eligible") is True:
+            footprints.append({
+                "id": row["id"],
+                "keys": sorted(owner_footprint(result, row, cfg)),
+            })
+    findings_payload["shortBatchPlanning"] = {
+        "schema": "psi116-short-group-footprints/v1",
+        "sourceSha256": result.document.source_sha256,
+        "owners": footprints,
+    }
 preview_request = json.loads(job_connection_preview_json)
 if preview_request:
     from psi116_topology_resolver.manual_connections import preview_connection
