@@ -77,3 +77,47 @@ class DenseNativeBench(unittest.TestCase):
                     "refusalsOld":len(old.skipped),
                     "refusalsGraph":len(actual.skipped)}
             print("A6B_DENSE_QUAL="+json.dumps(result,sort_keys=True),flush=True)
+
+
+    def test_public_high_singleton_share_89(self):
+        """15 x 6 adjacent public owners gives ~80% old singleton groups."""
+        if os.getenv("A6B_DENSE_BENCH")!="1":
+            raise RuntimeError("A6B_DENSE_BENCH=1 required")
+        cfg=ResolverConfig()
+        source=dense_fixture(15,6)
+        before=resolve_psi116(source,cfg)
+        owners=eligible_owners(before,cfg,89)
+        ids=[r["id"] for r in owners]
+        old_groups=contiguous_plan(before,owners,cfg)
+        new_groups=batch.plan_short_groups(before,ids,cfg)
+        hist=size_histogram(old_groups)
+        singleton_share=hist.get(1,0)/len(old_groups)
+        self.assertGreaterEqual(singleton_share,0.78,
+            "DENSE_FIXTURE_MUST_REPRODUCE_OWNER_SINGLETON_SHARE")
+        t=time.perf_counter()
+        serial,expected=serial_reference(source,ids,cfg)
+        serial_ms=round((time.perf_counter()-t)*1000,2)
+        t=time.perf_counter()
+        with patch.object(batch,"plan_short_groups",side_effect=old_plan):
+            old=batch.apply_short_batch_bisect(source,ids,config=cfg)
+        old_ms=round((time.perf_counter()-t)*1000,2)
+        t=time.perf_counter()
+        graph=batch.apply_short_batch_bisect(source,ids,config=cfg)
+        graph_ms=round((time.perf_counter()-t)*1000,2)
+        self.assertFalse(old.skipped,("OLD_REFUSED",old.skipped))
+        self.assertFalse(graph.skipped,("GRAPH_REFUSED",graph.skipped))
+        self.assertEqual(old.fixed_xml,serial,"DENSE_HIGH_SHARE_OLD_BYTES_DRIFT")
+        self.assertEqual(graph.fixed_xml,serial,"DENSE_HIGH_SHARE_GRAPH_BYTES_DRIFT")
+        self.assertEqual(normalized(old),expected,"DENSE_HIGH_SHARE_OLD_EVIDENCE_DRIFT")
+        self.assertEqual(normalized(graph),expected,"DENSE_HIGH_SHARE_GRAPH_EVIDENCE_DRIFT")
+        self.assertEqual([r["id"] for r in graph.owner_results],ids)
+        print("A6B_DENSE_HIGH_SINGLETON_QUAL="+json.dumps({
+            "owners":89,"branches":15,"ownersPerBranch":6,
+            "oldGroupCount":len(old_groups),"oldGroupSizes":hist,
+            "oldSingletonShare":round(singleton_share,4),
+            "graphGroupCount":len(new_groups),
+            "graphGroupSizes":size_histogram(new_groups),
+            "oldMs":old_ms,"graphMs":graph_ms,"serialMs":serial_ms,
+            "bytesEqual":True,"evidenceEqual":True,
+            "refusalsOld":len(old.skipped),
+            "refusalsGraph":len(graph.skipped)},sort_keys=True),flush=True)
