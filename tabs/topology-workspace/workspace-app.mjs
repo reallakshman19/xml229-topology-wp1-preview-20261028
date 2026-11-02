@@ -828,10 +828,11 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       ' · working revision '+state.revision+
       (outcome.stopMessage?' · '+outcome.stopMessage:'')+
       (done?' · validated XML, source-linked operations and lineage digests downloadable.':' · no XML changed.');
-    const hubMismatch=state.hubEnabled&&
-      (/^UXML_SHORT_PARITY_/.test(String(outcome.stopMessage||''))||
-       String(outcome.stopMessage||'').startsWith(
-         'UXML_SHORT_APPLY_CANONICAL_OP_RECEIPT_MISSING_OR_DRIFT'));
+    const hubMismatch=state.hubEnabled&&(
+      outcome.hubMismatch===true||
+      /^UXML_SHORT_PARITY_/.test(String(outcome.stopMessage||''))||
+      String(outcome.stopMessage||'').startsWith(
+        'UXML_SHORT_APPLY_CANONICAL_OP_RECEIPT_MISSING_OR_DRIFT'));
     if(hubMismatch){
       // Fail closed BEFORE a status refresh can expose a previous EQUAL
       // checkpoint, including while an asynchronous evidence recheck runs.
