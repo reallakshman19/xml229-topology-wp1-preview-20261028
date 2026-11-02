@@ -389,49 +389,93 @@ class ShortMemoSafety(unittest.TestCase):
                              before.document.source_text)
             print("MEMO_UXML_NATIVE_SEPARATE_AUTHORITIES="+json.dumps(on_counts,sort_keys=True))
 
-            variants={}
-            for label,ref_no,field in (
-                ("weight","FLAN-0","weight"),
-                ("position","FLAN-0","position"),
-                ("type","FLAN-0","componentType"),
+            variants=[]
+            for label,field,delta in (
+                ("weight+999","weight",999),
+                ("weight+0.001","weight",0.001),
+                ("position-consumed","position",999),
+                ("type-consumed","componentType",None),
             ):
                 bad=deepcopy(uxml)
-                candidates=[comp["rawAttributes"]["psi116"] for comp in bad["components"]
-                            if comp["rawAttributes"]["psi116"].get("componentRefNo")==ref_no]
-                self.assertTrue(candidates,(label,ref_no))
+                candidates=[comp["rawAttributes"]["psi116"]
+                            for comp in bad["components"]
+                            if comp["rawAttributes"]["psi116"].get(
+                                "componentRefNo")=="FLAN-0"]
+                self.assertTrue(candidates,(label,"FLAN-0"))
                 target=candidates[0]
                 if field=="weight":
-                    target["weight"]=(target.get("weight") or 0)+999
+                    target["weight"]=(target.get("weight") or 0)+delta
                 elif field=="position":
                     self.assertIsNotNone(target["position"])
-                    target["position"]["x"]+=999
+                    target["position"]["x"]+=delta
                 else:
                     target["componentType"]="BEND"
-                off_result,_=execute(bad,False)
-                on_result,_=execute(bad,True)
-                self.assertTrue(isinstance(off_result,str) and off_result.startswith("REFUSED:"),
-                                (label,"memo OFF must independently refuse",off_result))
-                self.assertEqual(on_result,off_result,
-                                 label+" mutated UXML must refuse with SAME code ON/OFF")
-                variants[label]=off_result
+                variants.append((label,bad))
+
+            # Independent OFF/ON refusals establish exact expected codes.
+            expected={}
+            for label,bad in variants:
+                off_status,_=execute(bad,False)
+                on_status,_=execute(bad,True)
+                self.assertTrue(isinstance(off_status,str) and
+                                off_status.startswith("REFUSED:"),
+                                (label,off_status))
+                self.assertEqual(on_status,off_status,
+                                 "MEMO_ON_OFF_TAMPER_REFUSAL:"+label)
+                expected[label]=off_status
+
+            # Unlike R1, do NOT reset memo between clean and forged UXML.
+            off_result,_=self._same_session_uxml_witness(
+                original,before,policy,cfg,uxml,variants,expected,
+                enabled=False)
+            on_result,on_stats=self._same_session_uxml_witness(
+                original,before,policy,cfg,uxml,variants,expected,
+                enabled=True)
+            self.assertEqual(on_result,off_result)
+            self.assertEqual(on_result,expected)
             self.assertEqual(original.read_text(encoding="utf-8"),
                              before.document.source_text)
-            print("MEMO_TAMPERED_UXML_REFUSALS="+json.dumps(variants,sort_keys=True))
+            print("MUTANT_GREEN:provenance-clean-then-tampered=PASS")
+            print("MUTANT_GREEN:route-separate-transactions=PASS")
+            print("MEMO_TAMPERED_UXML_REFUSALS="+json.dumps(
+                expected,sort_keys=True))
+            print("MEMO_SAME_SESSION_TRANSACTION_COUNTS="+json.dumps(
+                on_stats,sort_keys=True))
 
-            # Removing the document evidence digest would allow a valid UXML
-            # transaction to be borrowed by a distinct UXML projection.
-            from psi116_topology_resolver.uxml_adapter import resolve_from_uxml
-            clean_result=resolve_from_uxml(uxml,cfg,source_name=str(original))
-            bad_result=resolve_from_uxml(bad,cfg,source_name=str(original))
-            self.assertNotEqual(memo._document_digest(clean_result),
-                                memo._document_digest(bad_result))
-            with patch.object(memo,"_document_digest",return_value="OMITTED_DOCUMENT"):
-                with self.assertRaises(AssertionError):
-                    self.assertNotEqual(
-                        memo.transaction_key(clean_result,policy,cfg,route="uxml"),
-                        memo.transaction_key(bad_result,policy,cfg,route="uxml"),
-                        "different UXML records MUST never share authority")
+            # Actual R2 provenance mutant: cache the clean UXML first, THEN
+            # resolve tampered UXML with constant record digest. Must turn
+            # the refusal assertion RED, not merely compare two key tuples.
+            with patch.object(memo,"_document_digest",
+                              return_value="OMITTED_DOCUMENT"):
+                with self.assertRaisesRegex(
+                        AssertionError,
+                        "MEMO_PROVENANCE_TAMPER_BYPASS:weight") as killed:
+                    self._same_session_uxml_witness(
+                        original,before,policy,cfg,uxml,variants,expected,
+                        enabled=True)
+                print("MUTANT_RED:transaction-provenance-digest-removed:"
+                      "AssertionError:"+str(killed.exception).replace(
+                          "\n"," | "))
             print("MEMO_MUTANT_KILLED:transaction-provenance-digest-removed")
+
+            # Route mutant must fail the transaction_miss==2 REAL authority
+            # count, rather than the old tautological key inequality.
+            genuine_key=memo.transaction_key
+            def omit_route(before,policy,config,*,route="native"):
+                key=genuine_key(before,policy,config,route=route)
+                return key[:-2]+("OMITTED_ROUTE",key[-1])
+            with patch.object(memo,"transaction_key",
+                              side_effect=omit_route):
+                with self.assertRaisesRegex(
+                        AssertionError,
+                        "MEMO_ROUTE_AUTHORITY_COLLISION") as killed:
+                    self._same_session_uxml_witness(
+                        original,before,policy,cfg,uxml,[],{},
+                        enabled=True)
+                print("MUTANT_RED:transaction-route-tag-removed:"
+                      "AssertionError:"+str(killed.exception).replace(
+                          "\n"," | "))
+            print("MEMO_MUTANT_KILLED:transaction-route-tag-removed")
 
     def test_explicit_five_and_twenty_owner_memo_equivalence(self):
         if os.environ.get("UXML_SHORT_MEMO_EQUIVALENCE") != "1":
