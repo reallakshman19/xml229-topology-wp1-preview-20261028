@@ -155,8 +155,9 @@ async function exercise(mode){
      'canonical witness drift revokes hub parity and corrected downloads');
    assert.equal(await page.locator('[data-download-fix]').count(),0);
    assert.equal(await page.evaluate(()=>window.__directProbe.bulkCount),2);
-   assert.doesNotMatch(await page.locator('[data-progress]').textContent(),
-     /Previewing|Cancel available/);
+   const heldStatus=await page.locator('[data-progress]').textContent();
+   assert.match(heldStatus,/corrected downloads HELD/);
+   assert.doesNotMatch(heldStatus,/Previewing|Cancel available|downloadable/);
   }else{
    await page.waitForFunction(expected=>{
      const text=document.querySelector('[data-progress]')?.textContent||'';
