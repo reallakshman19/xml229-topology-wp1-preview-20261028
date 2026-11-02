@@ -81,6 +81,13 @@ async function exercise(mode){
        topologyUxmlParity:{status:'DIFFERENT',
          differences:['/patchBack: UxmlPatchError: UXML_LOSS_CONTRACT_FIELD_TOUCH:SYNTHETIC_OWNER']}};
     const actual=await client.run(job);
+    if(mode==='receiptDrift'&&index===2){
+      // A forged canonical witness on an otherwise EQUAL native result must
+      // invalidate hub parity, not merely stop this one item.
+      const forged=structuredClone(actual);
+      forged.topologyUxmlAppliedEditOps[0].fileSha256='FORGED_SOURCE_SHA';
+      return forged;
+    }
     if(mode==='cancel'&&index===2){
      probe.holding=true;
      await new Promise(resolve=>{probe.releaseLate=resolve;});
@@ -136,6 +143,20 @@ async function exercise(mode){
      /BULK STOPPED · CANCELLED/);
    assert.equal((await page.evaluate(()=>
      window.__directProbe.workspace.getState())).revision,1);
+  }else if(mode==='receiptDrift'){
+   await page.waitForFunction(()=>{
+    const status=document.querySelector('[data-progress]')?.textContent||'';
+    const state=window.__directProbe.workspace.getState();
+    return status.includes('BULK STOPPED · TRANSACTION_FAILED')&&
+      status.includes('UXML_SHORT_APPLY_CANONICAL_OP_RECEIPT_MISSING_OR_DRIFT')&&
+      state.hubParity==='DIFFERENT'&&state.revision===1&&!state.busy;
+   },null,{timeout:180000});
+   assert.equal(await page.locator('[data-download-working]').isDisabled(),true,
+     'canonical witness drift revokes hub parity and corrected downloads');
+   assert.equal(await page.locator('[data-download-fix]').count(),0);
+   assert.equal(await page.evaluate(()=>window.__directProbe.bulkCount),2);
+   assert.doesNotMatch(await page.locator('[data-progress]').textContent(),
+     /Previewing|Cancel available/);
   }else{
    await page.waitForFunction(expected=>{
      const text=document.querySelector('[data-progress]')?.textContent||'';
@@ -176,5 +197,7 @@ test('named canonical loss refusal skips one owner, retains only validated revis
  {timeout:360000},async()=>exercise('refusal'));
 test('hub parity DIFFERENT blocks short-element direct Apply',
  {timeout:180000},async()=>exercise('different'));
+test('canonical receipt drift revokes parity after one validated checkpoint',
+ {timeout:360000},async()=>exercise('receiptDrift'));
 test('cancel during direct Apply retains the last validated checkpoint and final status',
  {timeout:360000},async()=>exercise('cancel'));
