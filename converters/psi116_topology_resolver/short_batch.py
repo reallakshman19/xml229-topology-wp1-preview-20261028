@@ -512,35 +512,75 @@ def _single_attempt(source,owner,config):
 
 def plan_short_groups(before,owner_ids:Sequence[str],
                       config:ResolverConfig,*,maximum=MAX_INDEPENDENT_SHORT_BATCH):
-    """Preserve selection ORDER; adjacent owners only share an independent batch.
+    """Order-constrained conflict-graph layering, capped at 32 per group.
 
-    Unknown/ineligible owners are singles so historical refusal codes survive.
-    Never reorder a later owner ahead of an interacting earlier one.
+    For every two owners i<j with intersecting authoritative source
+    footprints, group(i) MUST precede group(j). Disjoint owners may commute:
+    assign each owner to the earliest still-open layer at/after every
+    conflicting predecessor, without ever putting conflicting owners in
+    one layer. A legacy singleton for unknown/ineligible inputs becomes an
+    ORDER BARRIER: no request may move ahead of it, retaining its original
+    refusal and not guessing its influence.
+
+    This is scheduling only, NOT a waiver: the native batch recomputes
+    assert_independent on the CURRENT source and refuses/bisects on drift.
+    Exact final bytes and normalized owner evidence still require the
+    independent sequential comparison in qualification tests.
     """
     _require(1<=maximum<=MAX_INDEPENDENT_SHORT_BATCH,
              "SHORT_BATCH_GROUP_SIZE_INVALID")
+    _require(len(owner_ids)==len(set(owner_ids)),
+             "SHORT_BATCH_DUPLICATE_OWNER")
     rowmap={r["id"]:r for r in short_elements(before.document,config)}
     groups=[]
-    current=[]
-    footprint=[]
+    assigned=[]
+    previous_zones=[]
+    barrier=0
     for identifier in owner_ids:
         row=rowmap.get(identifier)
         zone=(owner_footprint(before,row,config)
               if row is not None and row["eligible"] else None)
-        if (current and (zone is None or len(current)>=maximum or
-            any(zone.intersection(other) for other in footprint))):
-            groups.append(tuple(current))
-            current=[]
-            footprint=[]
         if zone is None:
-            groups.append((identifier,))
-        else:
-            current.append(identifier)
-            footprint.append(zone)
-    if current:groups.append(tuple(current))
-    _require([i for group in groups for i in group]==list(owner_ids),
-             "SHORT_BATCH_PLAN_ORDER_DRIFT")
-    return tuple(groups)
+            # Preserve the preceding work and the old singleton refusal.
+            groups.append([identifier])
+            assigned.append(len(groups)-1)
+            previous_zones.append(None)
+            barrier=len(groups)
+            continue
+        minimum=barrier
+        for predecessor,prior in enumerate(previous_zones):
+            if prior is not None and zone.intersection(prior):
+                minimum=max(minimum,assigned[predecessor]+1)
+        layer=minimum
+        while layer<len(groups) and len(groups[layer])>=maximum:
+            layer+=1
+        if layer==len(groups):
+            groups.append([])
+        # Every previous conflicting owner was forced into a lower layer.
+        # An explicit guard catches any future planner/capacity regression.
+        _require(not any(zone.intersection(previous_zones[i])
+                         for i in range(len(previous_zones))
+                         if assigned[i]==layer and previous_zones[i] is not None),
+                 "SHORT_BATCH_PLANNER_CONFLICT_LAYER")
+        groups[layer].append(identifier)
+        assigned.append(layer)
+        previous_zones.append(zone)
+    planned=tuple(tuple(group) for group in groups)
+    _require(len([id for group in planned for id in group])==len(owner_ids)
+             and set(id for group in planned for id in group)==set(owner_ids),
+             "SHORT_BATCH_PLAN_OWNER_CENSUS")
+    # Boundary mutation killer: no layer can contain two owners whose
+    # actual authoritative footprints intersect.
+    for group in planned:
+        zones=[previous_zones[owner_ids.index(identifier)]
+               for identifier in group]
+        for i,zone in enumerate(zones):
+            if zone is not None:
+                _require(all(other is None or not zone.intersection(other)
+                             for other in zones[:i]),
+                         "SHORT_BATCH_PLANNER_CONFLICT_LAYER")
+    return planned
+
 
 
 def apply_short_batch_bisect(source: str,owner_ids:Sequence[str],
