@@ -260,30 +260,52 @@ class ShortMemoSafety(unittest.TestCase):
         print("MEMO_MUTANT_KILLED:transaction-source-bytes-removed")
 
     def test_python_memo_finally_actual_path_and_mutant(self):
+        """Unmutated and mutated source run against the SAME module globals."""
         source=fixture()
         before,policy,cfg=selected_request(source)
-        with memo.memo_session("python-finally-control"):
-            self.assertTrue(apply_topofix_transaction(
-                before,policy=policy,config=cfg).committed)
-            self.assertTrue(memo.stats())
-        self.assertEqual(memo.stats(),{})
+        genuine=memo.memo_session
+        original=textwrap.dedent(inspect.getsource(genuine))
+        marker="        _active = previous"
+        self.assertEqual(original.count(marker),1)
 
-        # Compile the production contextmanager with ONLY its real finally
-        # restoration removed. A leaked live cache must fail a clean equality.
-        original=textwrap.dedent(inspect.getsource(memo.memo_session))
-        self.assertIn("        _active = previous",original)
-        mutant=original.replace("        _active = previous","        pass")
-        namespace={"contextmanager":contextmanager,
-                   "start_memo":memo.start_memo,"_active":None}
-        exec(compile(mutant,"<memo-finally-clear-mutant>","exec"),namespace)
+        def same_module_harness(label):
+            self.assertEqual(memo.stats(),{},"MEMO_PREEXISTING_SCOPE:"+label)
+            with memo.memo_session("real-module-"+label):
+                result=apply_topofix_transaction(
+                    before,policy=policy,config=cfg)
+                self.assertTrue(result.committed)
+                self.assertTrue(memo.stats())
+            self.assertEqual(memo.stats(),{},
+                             "MEMO_FINALLY_LEAK:"+label)
+
         try:
-            with self.assertRaises(AssertionError):
-                with namespace["memo_session"]("python-finally-mutant"):
+            # Compile BOTH versions into the real module global dictionary.
+            exec(compile(original,"<module-finally-control>","exec"),
+                 vars(memo))
+            self.assertIsNot(memo.memo_session,genuine)
+            same_module_harness("control")
+            print("MUTANT_GREEN:python-finally-module-control=PASS")
+
+            with self.assertRaisesRegex(RuntimeError,"SYNTHETIC_EXCEPTION"):
+                with memo.memo_session("exception-control"):
                     self.assertTrue(apply_topofix_transaction(
                         before,policy=policy,config=cfg).committed)
-                self.assertEqual(memo.stats(),{},"real finally cleanup must clear")
+                    raise RuntimeError("SYNTHETIC_EXCEPTION")
+            self.assertEqual(memo.stats(),{},
+                             "MEMO_FINALLY_LEAK:exception-control")
+            print("MUTANT_GREEN:python-finally-exception-control=PASS")
+
+            mutant=original.replace(marker,"        pass")
+            exec(compile(mutant,"<module-finally-mutant>","exec"),
+                 vars(memo))
+            with self.assertRaisesRegex(
+                    AssertionError,"MEMO_FINALLY_LEAK:mutant") as killed:
+                same_module_harness("mutant")
+            print("MUTANT_RED:python-finally-clear-removed:AssertionError:"+
+                  str(killed.exception).replace("\n"," | "))
             print("MEMO_MUTANT_KILLED:python-finally-clear-removed")
         finally:
+            memo.memo_session=genuine
             memo.clear_memo()
         self.assertEqual(memo.stats(),{})
 
