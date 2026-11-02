@@ -148,7 +148,7 @@ def uxml_resolve(uxml, config, *, source_name=None, resolver=None):
     first = source[0] if isinstance(source, list) and len(source) == 1 else {}
     raw = first.get("sourceText") if isinstance(first, dict) else None
     if not isinstance(raw, str):
-        return resolve_from_uxml(uxml, config, source_name=source_name)
+        return resolver(uxml, config, source_name=source_name)
     key = _key("uxml_resolve", raw.encode("utf-8"), None, config,
                source_name or "<memory>", _digest(_json(uxml)))
     hit = _active.get("uxml_resolve", key)
