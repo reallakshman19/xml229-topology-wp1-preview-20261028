@@ -1376,18 +1376,23 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     }
     else if(target.hasAttribute('data-select-short'))selectShortElements();
     else if(target.hasAttribute('data-select-gaskets')){
-      const p=state.shortSelection;if(!p)return;
+      const p=state.shortSelection;if(!p||state.busy||state.batchRunning)return;
       for(const r of state.shortElements)if(r.eligible&&r.componentType==='GASK')p.selected.add(r.id);
       renderShortSelection();
     }
     else if(target.hasAttribute('data-short-prev')){
-      if(state.shortSelection){state.shortSelection.page--;renderShortSelection();}
+      if(state.shortSelection&&!state.busy&&!state.batchRunning){state.shortSelection.page--;renderShortSelection();}
     }
     else if(target.hasAttribute('data-short-next')){
-      if(state.shortSelection){state.shortSelection.page++;renderShortSelection();}
+      if(state.shortSelection&&!state.busy&&!state.batchRunning){state.shortSelection.page++;renderShortSelection();}
     }
     else if(target.hasAttribute('data-run-short-drop'))dropShortElements();
     else if(target.hasAttribute('data-analyze'))analyze();
+    else if(target.hasAttribute('data-cancel')&&state.shortBulkFinalizing){
+      // Native Apply is complete; recheck is still running. Preserve
+      // the truthful terminal status and committed working revisions.
+      return;
+    }
     else if(target.hasAttribute('data-cancel')&&state.manualQueueRunning){
       const saved=state.manualQueueCheckpoint;
       cancelEngine();state.epoch++;state.busy=false;
@@ -1466,7 +1471,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     else if(target.hasAttribute('data-focus'))canvas.focus(state.selected);
   };
   const changed=event=>{
-    if(event.target.matches('[data-short-index]')){
+    if(event.target.matches('[data-short-index]')&&!state.busy&&!state.batchRunning){
       const p=state.shortSelection,r=state.shortElements[Number(event.target.dataset.shortIndex)];
       if(p&&r?.eligible&&p.epoch===state.epoch&&p.sha===state.source?.sourceSha256){
         if(event.target.checked)p.selected.add(r.id);else p.selected.delete(r.id);
@@ -1474,12 +1479,13 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       }
     }
     const d=state.secondPass;
-    if(d&&event.target.matches('[data-second-source],[data-second-peer]')){
+    if(d&&!state.busy&&!state.batchRunning&&
+       event.target.matches('[data-second-source],[data-second-peer]')){
       if(event.target.matches('[data-second-source]')){d.sourceKey=event.target.value;d.peerKey='';}
       else d.peerKey=event.target.value;
       d.preview=null;d.confirmed=false;d.status='Selection changed. Preview this exact pair before applying.';renderSecondPass();
     }
-    if(d&&event.target.matches('[data-second-confirm]')){d.confirmed=event.target.checked;updateSecondApply();}
+    if(d&&!state.busy&&!state.batchRunning&&event.target.matches('[data-second-confirm]')){d.confirmed=event.target.checked;updateSecondApply();}
     if(event.target.matches('[data-file]')&&event.target.files?.[0]){
       const file=event.target.files[0];event.target.value='';load(file);
     }
