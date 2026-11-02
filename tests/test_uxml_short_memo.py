@@ -53,6 +53,20 @@ class ShortMemoSafety(unittest.TestCase):
     def tearDown(self):
         memo.clear_memo()
 
+    def test_same_bytes_new_path_reuses_post_closure_analysis_with_exact_receipt_path(self):
+        source=fixture()
+        cfg=ResolverConfig()
+        with memo.memo_session("rewritten-source-path"):
+            before=resolve_psi116(source,cfg,source_name="/synthetic/before.xml.topofix")
+            after=resolve_psi116(source,cfg,source_name="/synthetic/new-revision.xml")
+            self.assertEqual(before.document.source_text,after.document.source_text)
+            self.assertEqual(after.document.source_path,"/synthetic/new-revision.xml")
+            self.assertEqual(before.findings,after.findings)
+            self.assertEqual(before.fix_actions,after.fix_actions)
+            self.assertGreaterEqual(memo.stats().get("source_resolve_hit",0),1)
+        direct=resolve_psi116(source,cfg,source_name="/synthetic/new-revision.xml")
+        self.assertEqual(after,direct,"source path rebind must equal independent parser/analyzer")
+
     def test_one_owner_memo_is_exact_and_deep_copied(self):
         source = fixture()
         before, policy, cfg=selected_request(source)
