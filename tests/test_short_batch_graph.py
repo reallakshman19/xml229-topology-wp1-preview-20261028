@@ -4,6 +4,7 @@ from collections import Counter
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"converters"))
 import psi116_topology_resolver.short_batch as batch
 from psi116_topology_resolver import ResolverConfig,resolve_psi116
