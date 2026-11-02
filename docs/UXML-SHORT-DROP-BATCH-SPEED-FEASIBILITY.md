@@ -187,3 +187,51 @@ prohibited. The earlier Oracle Owner-only **2.41x ratio** predates the repair;
 new Owner original-file timing and any subsequent 89-owner estimate remain
 **NOT_RUN** by the coder. Intermediate serialize/re-parse elimination is
 **NOT_DONE** and is not covered by option C.
+
+
+## R2 final test evidence and performance scope (2 Nov 2026)
+
+**R2 is tests and documentation only.** The product key/worker/writer behavior
+remains the R1 route-and-document-bound implementation. The optional addition
+of the declared source SHA to the transaction key is **NOT_DONE**: this final
+round retains independent proof that removal of the exact source-byte key
+component itself exposes stale transactions. The canonical UXML digest remains
+mandatory and cannot be replaced by sourceText or the route tag.
+
+**What the tamper tests establish:** A pinned-reader original is first
+successfully transacted through the native and UXML routes. Within **one
+uninterrupted memo session**, its clean UXML transaction primes the UXML
+transaction cache, after which the *same owner* is re-evaluated with UXML-only
+weight **+999**, weight **+0.001**, one *consumed* position and one *consumed*
+component type changed. Original sourceText and source hash are unchanged.
+Every forged case must have the exact same refusal code with memo ON and OFF.
+Replacing the provenance digest with a constant must cause a real refused-vs-
+accepted assertion failure in this sequence. Independently, removing the
+route tag must fail the behavioral **two real native transactions** count.
+The Python-finally mutant now runs in **short_memo's actual module globals**,
+and the unmodified function runs through the identical harness first.
+
+**Position-mutation scope:** A **+999** shift of a position on a *non-adjacent,
+non-consumed* component may produce EQUAL with memo ON **and** OFF because
+the selected short-drop's native operation does not consume that position.
+That equality is not a memo-specific bypass. Changing a position which the
+selected operation *does consume* must produce the same refusal with memo ON
+and OFF. The tests deliberately distinguish those cases. This does not
+authorize mutations to unselected source records; original-file write
+authority and sourceRefs remain unchanged.
+
+**Owner-local measurement, ratios only (supplied by Oracle):** With the
+corrected B1 authority boundary, the Owner observed **2 real native
+transactions + 2 cache hits per owner**, fixed XML **OFF==ON EQUAL at 5/5
+steps**, and an approximately **1.35–1.6x** OFF/ON speedup. Before fixing
+the circular transaction cache it had been **2.41x**; that old figure must
+never be used as a current speed claim. No private data, identities or exact
+Owner-model input metrics are used here.
+
+**Performance cost and next step (NOT DONE):** The provenance digest costs
+approximately **0.35–0.6 s per call**, invoked **6 times per owner** in the
+Owner's local observations. This is a correctness cost, **not** a benchmark
+for the suggested optimization. A cheaper, equally complete consumed-record
+digest is the logical *next* speed step but has **not** been designed,
+implemented or authorized in R2. Intermediate serialization/re-parse removal
+remains **NOT_DONE**. No multi-owner batching or policy/tolerance changes.
