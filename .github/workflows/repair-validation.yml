@@ -92,6 +92,7 @@ jobs:
           npx playwright install --with-deps chromium
           node --test tests/uxml-evidence-refresh.browser.mjs
           node --test tests/uxml-short-direct-apply.browser.mjs
+          node --test tests/uxml-short-batch.browser.mjs
           node --test tests/uxml-operations-preview.browser.mjs
           node --test tests/uxml-ui-different.browser.mjs
           node tests/audit-browser.mjs
