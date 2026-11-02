@@ -550,3 +550,60 @@ def apply_short_batch_bisect(source: str,owner_ids:Sequence[str],
     _require(len(outcomes)==len(owner_ids),"SHORT_BATCH_RUN_OWNER_CENSUS_MISMATCH")
     return BatchRunReceipt(base.document.source_sha256,result_source,
                            tuple(outcomes),tuple(batches),tuple(skipped))
+
+
+def verify_independent_short_batch_pre_final(
+    original_xml:str,transaction:IndependentShortBatchResult, *,
+    reviewed_action_ids:Sequence[str],
+    existing_final_intent_sha256:str|None=None,
+    existing_worker_basis_id:str|None=None,
+):
+    """Independent exact-group replay before admitting a fresh Worker basis.
+
+    This never replaces the historical single-owner pre-Final verifier. The
+    batch can only be qualified by its explicit batch transaction payload;
+    original source bytes and every owner are replayed independently of any
+    UXML-derived source evidence. No Final/native-CII transfer.
+    """
+    from .lineage import build_topofix_source_lineage
+    _require(not existing_final_intent_sha256 and not existing_worker_basis_id,
+             "SHORT_BATCH_REQUIRES_FRESH_FINAL_BASIS")
+    _require(isinstance(transaction,IndependentShortBatchResult) and
+             transaction.committed and transaction.fixed_xml is not None and
+             len(transaction.policy.short_element_requests)>=2,
+             "SHORT_BATCH_PREFINAL_UNCOMMITTED")
+    _require(list(reviewed_action_ids)==list(transaction.policy.selected_action_ids) and
+             len(set(reviewed_action_ids))==len(reviewed_action_ids) and
+             len(reviewed_action_ids)==len(transaction.owner_evidence),
+             "SHORT_BATCH_PREFINAL_REVIEW_REQUIRED")
+    _require(original_xml==transaction.source_result.document.source_text and
+             sha256(original_xml.encode("utf-8")).hexdigest()==
+             transaction.source_result.document.source_sha256,
+             "SHORT_BATCH_PREFINAL_ORIGINAL_BYTES_DRIFT")
+    before=resolve_psi116(original_xml,transaction.resolver_config,
+                          source_name=transaction.source_result.document.source_path)
+    replay=apply_independent_short_batch(
+        before,policy=transaction.policy,config=transaction.resolver_config)
+    _require(replay.committed and replay.fixed_xml==transaction.fixed_xml,
+             "SHORT_BATCH_PREFINAL_FIXED_XML_DRIFT")
+    _require(replay.transaction_payload()==transaction.transaction_payload() and
+             replay.validation_payload()==transaction.validation_payload(),
+             "SHORT_BATCH_PREFINAL_RECEIPT_REPLAY_DRIFT")
+    source_map=build_topofix_source_lineage(replay)
+    _require(build_topofix_source_lineage(transaction)==source_map,
+             "SHORT_BATCH_PREFINAL_LINEAGE_REPLAY_DRIFT")
+    payload=transaction.transaction_payload()
+    return {
+        "schema":"psi116-short-batch-prefinal-handoff/v1",
+        "sourceXmlSha256":transaction.source_result.document.source_sha256,
+        "fixedXmlSha256":sha256(transaction.fixed_xml.encode("utf-8")).hexdigest(),
+        "reviewedActionIds":list(reviewed_action_ids),
+        "ownerEvidenceCount":len(transaction.owner_evidence),
+        "sourceLineage":source_map,
+        "transactionSha256":sha256(
+            __import__("json").dumps(payload,sort_keys=True,
+                separators=(",",":"),ensure_ascii=False).encode("utf-8")).hexdigest(),
+        "requiresFreshWorkerBasis":True,
+        "acceptedFinalTransferred":False,
+        "nativeCiiReleaseAuthorized":False,
+    }
