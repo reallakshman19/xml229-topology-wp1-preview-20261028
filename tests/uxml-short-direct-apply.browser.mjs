@@ -70,6 +70,8 @@ async function exercise(mode){
     }
     probe.bulkCount++;
     const index=probe.bulkCount;
+    if(index===1)probe.firstProgress=
+      document.querySelector('[data-progress]')?.textContent||'';
     probe.jobs.push({index,action:job.options.topologyActionIds?.[0],
       sourceSha256:job.options.topologyShortElementRequests[0].sourceSha256});
     if(mode==='refusal'&&index===2)
@@ -118,7 +120,10 @@ async function exercise(mode){
      null,{timeout:120000});
    assert.equal(await page.locator('[data-cancel]').isEnabled(),true);
    assert.match(await page.locator('[data-progress]').textContent(),
-     /Applying 1 of 3 · 1 validated · 0 skipped/);
+     /Applying 2 of 3 · 1 validated · 0 skipped/);
+   assert.match(await page.evaluate(()=>window.__directProbe.firstProgress),
+     /Applying 1 of 3 · 0 validated · 0 skipped/,
+     'first owner is displayed as 1 of N while its Worker is running');
    await page.locator('[data-cancel]').click();
    await page.waitForFunction(()=>{
     const status=document.querySelector('[data-progress]')?.textContent||'';
