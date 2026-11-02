@@ -94,11 +94,19 @@ class DenseGraphPlanning(unittest.TestCase):
         correct=batch.plan_short_groups(before,ids,self.cfg)
         self.assertEqual([len(x) for x in correct],[2,2,2,2])
         print("A6B_DENSE_GREEN:overlapping-owners-separated=PASS")
+        # Execute the REAL graph planner with its actual source-footprint
+        # function removed. The mutated selection must move conflicting
+        # same-branch owners into the SAME group; original control stays
+        # separated. Do not kill a tautological set-intersection assertion.
+        with patch("psi116_topology_resolver.short_batch.owner_footprint",
+                   return_value=frozenset()):
+            broken=batch.plan_short_groups(before,ids,self.cfg)
         with self.assertRaises(AssertionError) as red:
-            self.assertFalse(batch.owner_footprint(before,owners[0],self.cfg).
-                intersection(batch.owner_footprint(before,owners[1],self.cfg)),
+            self.assertEqual(broken,correct,
                 "A6B_DENSE_MUTANT_OVERLAP_SAME_LAYER")
-        print("A6B_DENSE_RED:overlap-admitted:AssertionError:"+
+        self.assertIn(ids[0],broken[0])
+        self.assertIn(ids[1],broken[0])
+        print("A6B_DENSE_RED:planner-footprint-removed:AssertionError:"+
               str(red.exception).splitlines()[-1])
         with self.assertRaisesRegex(batch.ShortBatchRefused,
                                     "SHORT_BATCH_INDEPENDENCE_CONFLICT"):
