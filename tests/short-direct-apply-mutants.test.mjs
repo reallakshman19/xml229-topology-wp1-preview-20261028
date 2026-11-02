@@ -15,7 +15,7 @@ async function instantiate(code){
     '// isolated guard mutant '+(++sequence)+'\n'+code).toString('base64');
   return import(uri);
 }
-async function invoke(mod,mutate){
+async function invoke(mod,mutate,mutateResult=()=>{}){
   const id='SHORT:0',sourceSha256='h0',fixedSha256='h1';
   const request={id,sourceSha256,nodeKeys:['SHORT:0:S1','SHORT:0:S2']};
   const op={kind:'DROP_SHORT_ELEMENT',opId:'UXML-OP-'+id,
@@ -50,6 +50,7 @@ async function invoke(mod,mutate){
     topoFixPostPlanText:JSON.stringify({
       source:{sha256:fixedSha256},actions:[]}),
   };
+  mutateResult(result);
   return mod.runShortBulk({
     source:{sourceSha256,sourceText:'xml|h0',name:'synthetic.xml'},
     shortElements:[{id,eligible:true,sourceSha256,nodeKeys:[...request.nodeKeys]}],
@@ -127,3 +128,88 @@ test('KILL refusal allowlist widening: authority mismatch must not be skippable'
     /UXML_SHORT_TARGETS_OR_PARAMS_DIFFER_FROM_AUTHORITY/);
   console.info('MUTANT_KILLED: widened refusal allowlist · negative assertion FAILED');
 });
+
+
+const extraReceiptGuards=[
+  ['operationKind',"op?.kind!=='DROP_SHORT_ELEMENT'||",
+    op=>{op.kind='FORGED_OPERATION_KIND';},()=>{}],
+  ['exactlyOneEditOp','&&editOps.length===1',
+    ()=>{},result=>{result.topologyUxmlAppliedEditOps.push(
+      structuredClone(result.topologyUxmlAppliedEditOps[0]));}],
+  ['removedWithRecordField',"&&typeof w?.field==='string'&&w.field",
+    op=>{op.removedWithRecord[0].field='';},()=>{}],
+];
+for(const [name,clause,mutate,mutateResult] of extraReceiptGuards){
+  test('KILL canonical receipt guard mutation: '+name,async()=>{
+    assert.equal(live.split(clause).length,2,name+' clause must be exact');
+    const good=await instantiate(live);
+    const bad=await instantiate(live.replace(clause,''));
+    const baseline=await invoke(good,mutate,mutateResult);
+    assert.equal(baseline.stopReason,'TRANSACTION_FAILED',name);
+    assert.equal(baseline.hubMismatch,true,name);
+    const mutant=await invoke(bad,mutate,mutateResult);
+    let assertionFailure=null;
+    try{
+      assert.equal(mutant.stopReason,'TRANSACTION_FAILED',
+        'forged '+name+' must not commit after guard deletion');
+    }catch(e){assertionFailure=e;}
+    assert.equal(assertionFailure?.name,'AssertionError',name);
+    assert.equal(mutant.stopReason,'COMPLETE',name+' mutant must accept forged op');
+    assert.equal(mutant.applied.length,1,name);
+    console.info('MUTANT_KILLED: '+name+' · negative assertion FAILED after guard deletion');
+  });
+}
+test('KILL hubMismatch classifier mutation: lineage drift must HOLD even without PARITY prefix',async()=>{
+  const clause="hubEnabled&&stopReason!=='COMPLETE'&&stopReason!=='CANCELLED'";
+  assert.equal(live.split(clause).length,2);
+  const badCode=live.replace(clause,
+    "hubEnabled&&stopReason==='TRANSACTION_FAILED'&&stopMessage.startsWith('UXML_SHORT_PARITY_')");
+  const mutateResult=result=>{
+    const x=JSON.parse(result.topoFixLineageText);
+    x.fixedXmlSha256='FORGED_LINEAGE_SHA';
+    result.topoFixLineageText=JSON.stringify(x);
+  };
+  const baseline=await invoke(await instantiate(live),()=>{},mutateResult);
+  assert.equal(baseline.stopReason,'TRANSACTION_FAILED');
+  assert.equal(baseline.hubMismatch,true);
+  assert.match(baseline.stopMessage,/SHORT_BULK_SOURCE_LINEAGE_OR_RECHECK_DRIFT/);
+  const mutant=await invoke(await instantiate(badCode),()=>{},mutateResult);
+  assert.equal(mutant.stopReason,'TRANSACTION_FAILED');
+  let assertionFailure=null;
+  try{assert.equal(mutant.hubMismatch,true,
+    'any native lineage/validation failure revokes hub authority');}
+  catch(e){assertionFailure=e;}
+  assert.equal(assertionFailure?.name,'AssertionError');
+  assert.equal(mutant.hubMismatch,false);
+  console.info('MUTANT_KILLED: generic hubMismatch classifier · lineage HOLD assertion FAILED');
+});
+const namedRefusalBase=()=>({
+  ok:true,topoFixCommitted:false,topoFixXmlText:'',
+  acceptedFinalTransferred:false,nativeCiiReleaseAuthorized:false,
+  topologyUxmlParity:{status:'DIFFERENT',differences:[
+    '/patchBack: UxmlPatchError: UXML_CLOS_WRITE_HELD:SYNTHETIC']},
+});
+const namedPreconditionGuards=[
+  ['refusalCommittedOutput','result?.topoFixCommitted===true||',
+    r=>{r.topoFixCommitted=true;}],
+  ['refusalCorrectedXml','result?.topoFixXmlText||',
+    r=>{r.topoFixXmlText='forged corrected XML';}],
+  ['refusalSingleDifference','||differences.length!==1',
+    r=>{r.topologyUxmlParity.differences.push('/findings: unrelated parity drift');}],
+];
+for(const [name,clause,change] of namedPreconditionGuards){
+  test('KILL namedHubOwnerRefusal precondition mutation: '+name,async()=>{
+    assert.equal(live.split(clause).length,2,name+' clause must be exact');
+    const good=await instantiate(live);
+    const bad=await instantiate(live.replace(clause,''));
+    const invalid=namedRefusalBase();change(invalid);
+    assert.equal(good.namedHubOwnerRefusal(invalid),null,name+' live precondition rejects');
+    let assertionFailure=null;
+    try{assert.equal(bad.namedHubOwnerRefusal(invalid),null,
+      'named source-only veto requires '+name);}
+    catch(e){assertionFailure=e;}
+    assert.equal(assertionFailure?.name,'AssertionError',name);
+    assert.equal(bad.namedHubOwnerRefusal(invalid),'UXML_CLOS_WRITE_HELD:SYNTHETIC');
+    console.info('MUTANT_KILLED: '+name+' · precondition assertion FAILED after deletion');
+  });
+}
