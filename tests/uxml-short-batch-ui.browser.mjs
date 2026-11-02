@@ -228,7 +228,8 @@ test('real workspace group refusal bisects to exactly named singleton refusal',
  {timeout:300000},async()=>{
  const x=await scenario({count:5,hub:true,mode:'forcedRefusal'});
  assert.match(x.message,/BULK COMPLETE/);
- assert.equal(x.status.revision,0);assert.equal(x.status.hubRevision,null);
+ assert.equal(x.status.revision,0);
+ assert.equal(x.status.historyOwnerEvidenceCount,0);
  assert.equal(x.jobs.filter(j=>j.isBatch).length>=2,true);
  assert.equal(x.jobs.filter(j=>!j.isBatch).length,5);
  assert.match(x.message,/5 skipped/);
