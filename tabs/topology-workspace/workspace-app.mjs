@@ -1343,6 +1343,9 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   }
   const click=async event=>{
     const target=event.target.closest('button');if(!target||!root.contains(target))return;
+    // A disabled Cancel is not an authorized action, including injected clicks
+    // while completed Apply is still performing its evidence recheck.
+    if(target.hasAttribute('data-cancel')&&target.disabled)return;
     if(target.hasAttribute('data-auto-fix-all'))planAutoFixAll();
     else if(target.hasAttribute('data-run-auto-fix-all'))autoFixAll();
     else if(target.hasAttribute('data-cancel-auto-fix-all')){
