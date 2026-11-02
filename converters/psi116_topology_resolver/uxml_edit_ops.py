@@ -379,7 +379,8 @@ def export_edit_ops(
     _enforce_today_auto_policy(requested.minimum_confidence,
                                requested.require_no_blocking_plan_actions)
     _require(not requested.joint_repairs, "UXML_MANUAL_REPAIR_NOT_AUTHORIZED")
-    result = uxml_resolve(uxml, config, source_name=source_name)
+    result = uxml_resolve(uxml, config, source_name=source_name,
+                          resolver=resolve_from_uxml)
     sha = _source_sha(uxml)
     if requested.short_element_requests:
         op = _short_canonical_operation(uxml, result, requested, config)
