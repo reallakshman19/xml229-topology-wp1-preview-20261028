@@ -507,7 +507,8 @@ def apply_edit_ops(
     # Explicit duplicate-sourceRef reason before the adapter's broader
     # source-index validation obscures the ambiguous target identity.
     _source_refs_by_key(uxml, sha)
-    result = uxml_resolve(uxml, config, source_name=str(original_path))
+    result = uxml_resolve(uxml, config, source_name=str(original_path),
+                          resolver=resolve_from_uxml)
     _require(result.document.source_text.encode("utf-8") == data,
              "UXML_ORIGINAL_BYTES_MISMATCH")
     policy = _validate_ops(uxml, payload, result, config)
