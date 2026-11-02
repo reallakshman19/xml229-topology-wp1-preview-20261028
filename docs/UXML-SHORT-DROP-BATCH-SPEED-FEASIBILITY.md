@@ -238,3 +238,44 @@ for the suggested optimization. A cheaper, equally complete consumed-record
 digest is the logical *next* speed step but has **not** been designed,
 implemented or authorized in R2. Intermediate serialization/re-parse removal
 remains **NOT_DONE**. No multi-owner batching or policy/tolerance changes.
+
+
+## A6b Owner-approved batch feasibility — measurement-first (2 Nov 2026)
+
+**Owner authority:** multi-owner batching ONLY for qualified, independent
+owners; atomic batch validation, canonical UXML authority, per-owner history,
+bisect fallback on refusal, unchanged original/patch parity, release-last
+hubRevision, Cancel and parity EQUAL download. The legacy one-owner route
+retains its exact-one refusal. No CLOS/240.6mm/tolerance/policy/loss/eligibility
+or review-only changes. This is a draft feasibility checkpoint, **not** a
+claim that batch Apply exists in the product.
+
+**Instrumented pre-batch baseline:** pinned [Topology run
+#41492913935](https://github.com/reallakshman19/xml229-topology-wp1-preview-20261028/actions/runs/41492913935)
+passed 134 Python (35 default gated skips), 112 Node, pinned 9/9
+equivalence. On synthetic interconnected 60-TEE, with one owner per
+transaction:
+
+| Stage | Memo OFF, 5 owners | Memo ON, 5 owners | Memo OFF, 20 owners | Memo ON, 20 owners |
+|---|---:|---:|---:|---:|
+| Entire source+UXML per-owner workflow | 14.9554 s | 11.0170 s | 59.5356 s | 45.2770 s |
+| Real native short transactions | 25 calls / 9.7086 s | 15 calls / 4.2845 s | 100 calls / 38.7787 s | 60 calls / 17.7795 s |
+| Full \`_document_digest\` | 0 | 35 calls / 1.5930 s | 0 | 140 calls / 6.9691 s |
+| Cache deep-copy operations | 0 | 65 calls / 3.3812 s | 0 | 260 calls / 14.6317 s |
+| Garbage collections | 1,957 / 0.6389 s | 2,425 / 1.4779 s | 7,436 / 2.7856 s | 9,342 / 7.4753 s |
+
+Timing scopes **overlap**: memo get/put includes deep copies; GC overlaps
+Python stages; do not sum these clocks. Not all OFF-side copies outside the
+memo were instrumented. The observed 20-owner net speedup is approximately
+1.31x. Deep copying and GC are major costs alongside digesting; do not
+assume reducing SHA cost solves native transaction overhead.
+
+**Step 1 experimental candidate:** tests/bench_uxml_short_batch_feasibility.py
+is an explicit opt-in disposable single-tree feasibility implementation. It
+conservatively reserves every record in an owner's branch and associated
+positive-ID aliases, refuses overlapping owner zones and write sets, and
+compares one-pass XML removal+closure against the existing sequential native
+result. It measures native and *simulated* UXML reconstruction, not a genuine
+batch canonical witness or real Pyodide transaction. The test refuses any
+byte mismatch. The 5/20/89-like timing/equivalence gate and genuine Pyodide
+benchmark are separate. **Step 2 engine/Worker/UI: NOT_STARTED.**
