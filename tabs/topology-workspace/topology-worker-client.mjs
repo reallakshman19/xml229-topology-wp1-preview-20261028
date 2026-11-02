@@ -76,8 +76,12 @@ export function createTopologyWorkerClient({
   }
   function endBulkSession(){
     if(bulkLeases>0)bulkLeases--;
-    // Keep the already-verified Worker for the immediate post-bulk read-only
-    // evidence check. Its normal idle recycle resumes after that job.
+    // Worker mailbox preserves order after the final committed owner.
+    // Clear Python memo without recycling the verified reader.
+    if(bulkLeases===0&&worker){
+      try{worker.postMessage({type:'SHORT_MEMO_CLEAR'});}
+      catch(error){reset('TOPOLOGY_WORKER_MEMO_CLEAR_FAILED');}
+    }
   }
   run.beginBulkSession=beginBulkSession;
   run.endBulkSession=endBulkSession;
