@@ -91,6 +91,7 @@ class ShortMemoSafety(unittest.TestCase):
             again=apply_topofix_transaction(before,policy=policy,config=cfg)
             self.assertEqual(again.checks[0].details,original)
             self.assertNotIn("SYNTHETIC_MUTATION", again.checks[0].details)
+        print("MUTANT_GREEN:deepcopy-independent-cache=PASS")
 
     def test_exact_policy_and_source_changes_refuse_even_with_populated_cache(self):
         source=fixture()
@@ -122,15 +123,18 @@ class ShortMemoSafety(unittest.TestCase):
                 before,policy=policy,config=cfg).committed)
             with self.assertRaisesRegex(ValueError,"WITNESS_DRIFT"):
                 apply_topofix_transaction(before,policy=forged,config=cfg)
+        print("MUTANT_GREEN:policy-refusal-control=PASS")
         with memo.memo_session("policy-key-mutant"):
             with patch.object(memo,"_key",
                               side_effect=lambda *a,**k:
                                   genuine(*a,**k)[:3]+("",)+genuine(*a,**k)[4:]):
                 self.assertTrue(apply_topofix_transaction(
                     before,policy=policy,config=cfg).committed)
-                with self.assertRaisesRegex(AssertionError,"ValueError not raised"):
+                with self.assertRaisesRegex(AssertionError,"ValueError not raised") as killed:
                     with self.assertRaisesRegex(ValueError,"WITNESS_DRIFT"):
                         apply_topofix_transaction(before,policy=forged,config=cfg)
+                print("MUTANT_RED:memo-key-ignores-policy:AssertionError:"+
+                      str(killed.exception).replace("\\n"," | "))
                 print("MEMO_MUTANT_KILLED:memo-key-ignores-policy")
 
         # The old bytes mutant inadvertently poisoned *intermediate* source
@@ -162,6 +166,7 @@ class ShortMemoSafety(unittest.TestCase):
                              first_xml)
             self.assertEqual(resolve_psi116(second_xml,cfg).document.source_text,
                              second_xml)
+        print("MUTANT_GREEN:source-resolve-bytes-control=PASS")
         with memo.memo_session("byte-key-mutant"):
             def ignore_source_bytes(*args,**kwargs):
                 key=genuine(*args,**kwargs)
@@ -173,11 +178,13 @@ class ShortMemoSafety(unittest.TestCase):
                 # A real mutation kill: the production invariant assertion
                 # fails with the mutated key, but passes in the control above.
                 with self.assertRaisesRegex(AssertionError,
-                                            "SOURCE_BYTES_CACHE_COLLISION"):
+                                            "SOURCE_BYTES_CACHE_COLLISION") as killed:
                     self.assertEqual(second.document.source_text,second_xml,
                                      "SOURCE_BYTES_CACHE_COLLISION")
                 self.assertGreaterEqual(
                     memo.stats().get("source_resolve_hit",0),1)
+                print("MUTANT_RED:memo-key-ignores-input-bytes:AssertionError:"+
+                      str(killed.exception).replace("\\n"," | "))
                 print("MEMO_MUTANT_KILLED:memo-key-ignores-input-bytes")
 
     def test_mutant_without_deepcopy_fails_clean_evidence_assertion(self):
@@ -190,11 +197,13 @@ class ShortMemoSafety(unittest.TestCase):
                 cached=apply_topofix_transaction(
                     before,policy=policy,config=cfg)
                 cached.checks[0].details["SYNTHETIC_MUTATION"]="poisoned"
-                with self.assertRaises(AssertionError):
+                with self.assertRaises(AssertionError) as killed:
                     next_result=apply_topofix_transaction(
                         before,policy=policy,config=cfg)
                     self.assertNotIn("SYNTHETIC_MUTATION",
                                      next_result.checks[0].details)
+        print("MUTANT_RED:shared-result-no-deepcopy:AssertionError:"+
+              str(killed.exception).replace("\\n"," | "))
         print("MEMO_MUTANT_KILLED:shared-result-no-deepcopy")
         # The old patch(clear_memo) test called its own patched method,
         # proving only the mock. Actual Python finally and Worker/Error/
@@ -238,6 +247,7 @@ class ShortMemoSafety(unittest.TestCase):
                 before,policy=policy,config=cfg).committed)
             with self.assertRaisesRegex(ValueError,"SHORT_ELEMENT_SOURCE_DRIFT"):
                 apply_topofix_transaction(changed_before,policy=policy,config=cfg)
+        print("MUTANT_GREEN:transaction-source-bytes-control=PASS")
         original=memo._key
         def no_source_bytes(*args,**kwargs):
             key=original(*args,**kwargs)
@@ -246,9 +256,11 @@ class ShortMemoSafety(unittest.TestCase):
             with patch.object(memo,"_key",side_effect=no_source_bytes):
                 self.assertTrue(apply_topofix_transaction(
                     before,policy=policy,config=cfg).committed)
-                with self.assertRaises(AssertionError):
+                with self.assertRaises(AssertionError) as killed:
                     with self.assertRaisesRegex(ValueError,"SHORT_ELEMENT_SOURCE_DRIFT"):
                         apply_topofix_transaction(changed_before,policy=policy,config=cfg)
+        print("MUTANT_RED:transaction-source-bytes-removed:AssertionError:"+
+              str(killed.exception).replace("\\n"," | "))
         print("MEMO_MUTANT_KILLED:transaction-source-bytes-removed")
     def test_python_memo_finally_actual_path_and_mutant(self):
         """Unmutated and mutated source run against the SAME module globals."""
