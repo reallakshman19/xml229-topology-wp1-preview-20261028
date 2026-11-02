@@ -122,8 +122,7 @@ def transaction_key(before, policy, config, *, route="native"):
     # A direct result can NEVER satisfy a UXML transaction cache lookup,
     # even when both consume the same original XML and source_name.
     return _key("transaction", source.source_text.encode("utf-8"),
-                policy, config, source.source_path,
-                provenance=source.source_sha256) + (route, _document_digest(before))
+                policy, config, source.source_path) + (route, _document_digest(before))
 
 
 def lookup_transaction(before, policy, config, *, route="native"):
