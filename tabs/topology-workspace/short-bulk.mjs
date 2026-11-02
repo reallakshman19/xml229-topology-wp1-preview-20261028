@@ -192,11 +192,9 @@ export async function runShortBulk({
   }finally{
     if(lease)runEngine.endBulkSession();
   }
-  // Classify authority/parity disagreements separately from ordinary native
-  // reconnect rejection. The UI uses this receipt to revoke parity/download.
-  const hubMismatch=hubEnabled&&stopReason==='TRANSACTION_FAILED'&&(
-    stopMessage.startsWith('UXML_SHORT_PARITY_')||
-    stopMessage.startsWith('UXML_SHORT_APPLY_CANONICAL_OP_RECEIPT_MISSING_OR_DRIFT'));
+  // Every non-cancelled hub failure is a parity/release HOLD. Unknown Worker,
+  // recheck, native rejection, and malformed-result errors are not exceptions.
+  const hubMismatch=hubEnabled&&stopReason!=='COMPLETE'&&stopReason!=='CANCELLED';
   return {originSha256:source.sourceSha256,latest,applied,skipped,requested,
     completed,failedId,pendingIds:requested.slice(completed+(failedId?1:0)),
     currentEligible:rows.filter(r=>r.eligible).length,stopReason,stopMessage,hubMismatch};
