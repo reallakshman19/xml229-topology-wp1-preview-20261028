@@ -974,7 +974,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     try{
       const outcome=await runShortBulk({
         source,shortElements:state.shortElements,selectedIds:ids,runEngine,
-        hubEnabled:state.hubEnabled,
+        hubEnabled:state.hubEnabled,enableIndependentGroups:state.independentShortGroups,
         isCurrent:()=>generation===state.epoch,
         onCheckpoint:checkpoint=>{if(generation===state.epoch)state.shortBulk=checkpoint;},
         onProgress:step=>{
