@@ -12,7 +12,7 @@ from psi116_topology_resolver.short_elements import short_elements
 from psi116_topology_resolver.short_batch import (
     ShortBatchRefused, apply_independent_short_batch,
     apply_short_batch_bisect, assert_independent,
-    normalized_owner_evidence,
+    normalized_owner_evidence,verify_independent_short_batch_pre_final,
 )
 from psi116_topology_resolver.transaction import (
     TransactionPolicy,apply_topofix_transaction)
@@ -72,6 +72,33 @@ class ShortBatchEngine(unittest.TestCase):
         self.assertTrue(all(c.passed for c in group.checks if c.blocking))
         self.assertEqual(group.transaction_payload()["batch"]["ownerCount"],2)
         self.assertEqual(before.document.source_text,original)
+
+    def test_prefinal_batch_replay_rejects_receipt_and_xml_drift(self):
+        original=interconnected_tee_fixture(2)
+        before=resolve_psi116(original,self.cfg)
+        ids=owner_ids(before,self.cfg,2)
+        batch=apply_independent_short_batch(
+            before,policy=owner_policy(before,ids,self.cfg),config=self.cfg)
+        self.assertTrue(batch.committed)
+        prefinal=verify_independent_short_batch_pre_final(
+            original,batch,reviewed_action_ids=ids)
+        self.assertEqual(prefinal["ownerEvidenceCount"],2)
+        self.assertTrue(prefinal["requiresFreshWorkerBasis"])
+        self.assertFalse(prefinal["nativeCiiReleaseAuthorized"])
+        with self.assertRaisesRegex(ShortBatchRefused,
+                                    "SHORT_BATCH_PREFINAL_ORIGINAL_BYTES_DRIFT"):
+            verify_independent_short_batch_pre_final(
+                original+"<!--TAMPER-->",batch,reviewed_action_ids=ids)
+        with self.assertRaisesRegex(ShortBatchRefused,
+                                    "SHORT_BATCH_PREFINAL_REVIEW_REQUIRED"):
+            verify_independent_short_batch_pre_final(
+                original,batch,reviewed_action_ids=ids[:1])
+        poisoned=replace(batch,owner_evidence=batch.owner_evidence[:1])
+        with self.assertRaisesRegex(ShortBatchRefused,
+                                    "SHORT_BATCH_PREFINAL_REVIEW_REQUIRED"):
+            verify_independent_short_batch_pre_final(
+                original,poisoned,reviewed_action_ids=ids)
+        print("A6B_BATCH_PREFINAL_REPLAY_GREEN=PASS")
 
     def test_group_rejected_if_owner_influence_overlaps(self):
         before=resolve_psi116(interconnected_tee_fixture(2),self.cfg)
