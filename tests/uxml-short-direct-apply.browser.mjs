@@ -67,9 +67,14 @@ async function exercise(mode){
   await page.goto('http://127.0.0.1:'+server.address().port+'/index.html');
   await page.evaluate(async ({xml,mode})=>{
    const root=document.querySelector('#xml229-topology-workspace');
+   // The module auto-mounts if this ID is present at import time. Temporarily
+   // hide the ID to ensure ONE test-owned listener/Worker, not an idle second
+   // workspace that can consume Cancel before the active workspace sees it.
+   root.id='synthetic-unmounted-workspace-root';
    const [{mountTopologyWorkspace},{createTopologyWorkerClient}]=await Promise.all([
     import('/tabs/topology-workspace/workspace-app.mjs'),
     import('/tabs/topology-workspace/topology-worker-client.mjs')]);
+   root.id='xml229-topology-workspace';
    const client=createTopologyWorkerClient();
    const probe={jobs:[],bulkCount:0,holding:false,releaseLate:null,
      cancelled:false,mode};
