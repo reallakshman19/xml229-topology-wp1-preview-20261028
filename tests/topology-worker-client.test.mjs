@@ -84,6 +84,8 @@ test('bulk lease keeps one warm Pyodide Worker for twelve serial independently r
    assert.equal(w.terminated,false,'warm Worker remains live during bulk');
  }
  c.endBulkSession();
+ assert.equal(first.sent.at(-1)?.type,'SHORT_MEMO_CLEAR',
+   'bulk completion must clear the short memo before read-only recheck');
  const post=c.run(validJob),w=FakeWorker.instances.at(-1);
  assert.equal(w,first,'warm Worker reused for final read-only evidence refresh');
  w.emit('message',{type:'RESULT',id:w.sent.at(-1).id,result:{ok:true,rechecked:true}});
@@ -106,5 +108,22 @@ test('bulk cancellation terminates Worker and cannot publish a stale revision',a
  assert.notEqual(fresh,w);
  fresh.emit('message',{type:'RESULT',id:fresh.sent.at(-1).id,result:{ok:true,revision:0}});
  assert.equal((await post).revision,0);
+ c.dispose();
+});
+
+test('Worker ERROR followed by bulk-session end clears memo and keeps next source fresh',async()=>{
+ const c=createTopologyWorkerClient({WorkerCtor:FakeWorker,jobTimeoutMs:1000});
+ c.beginBulkSession();
+ const p=c.run({...validJob,options:{...validJob.options,topologyBulkSession:true}});
+ const w=FakeWorker.instances.at(-1),id=w.sent.at(-1).id;
+ w.emit('message',{type:'ERROR',id,message:'synthetic source refusal'});
+ await assert.rejects(p,/synthetic source refusal/);
+ c.endBulkSession();
+ assert.equal(w.sent.at(-1)?.type,'SHORT_MEMO_CLEAR',
+   'a refused bulk job must clear its per-selection memo');
+ const next=c.run(validJob);
+ assert.equal(FakeWorker.instances.at(-1),w);
+ w.emit('message',{type:'RESULT',id:w.sent.at(-1).id,result:{ok:true,source:'fresh'}});
+ assert.equal((await next).source,'fresh');
  c.dispose();
 });
