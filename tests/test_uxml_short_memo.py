@@ -309,6 +309,41 @@ class ShortMemoSafety(unittest.TestCase):
             memo.clear_memo()
         self.assertEqual(memo.stats(),{})
 
+    def _same_session_uxml_witness(self,original,before,policy,cfg,clean,
+                                   variants,expected,*,enabled):
+        """Prime clean cache, then test all UXML-only modifications IN ONE session."""
+        def status(document,direct):
+            try:
+                ops=export_edit_ops(document,policy=policy,
+                                    source_name=str(original),config=cfg)
+                patched=apply_edit_ops(original,document,ops,config=cfg)
+            except UxmlPatchError as error:
+                return "REFUSED:"+str(error).split(":",1)[0]
+            if patched is None or not patched.committed:
+                return "UNCOMMITTED"
+            return ("EQUAL" if compare_hub_patch(direct,patched)==[]
+                    else "DIFFERENT")
+
+        with memo.memo_session("r2-same-session",enabled=enabled):
+            direct=apply_topofix_transaction(
+                before,policy=policy,config=cfg)
+            self.assertTrue(direct.committed)
+            self.assertEqual(status(clean,direct),"EQUAL",
+                             "MEMO_CLEAN_UXML_CONTROL")
+            if enabled:
+                self.assertEqual(memo.stats().get("transaction_miss"),2,
+                                 "MEMO_ROUTE_AUTHORITY_COLLISION")
+                self.assertEqual(memo.stats().get("transaction_hit"),2,
+                                 "MEMO_ROUTE_CANONICAL_REUSE")
+            observed={}
+            for label,bad in variants:
+                actual=status(bad,direct)
+                self.assertEqual(actual,expected[label],
+                                 "MEMO_PROVENANCE_TAMPER_BYPASS:"+label)
+                observed[label]=actual
+            counts=memo.stats()
+        return observed,counts
+
     def _check_original_vs_uxml_route_authority(self,reader,cfg):
         # This entire test runs under the already-gated 5/20 owner test, so
         # the default discovery skip count does not change.
