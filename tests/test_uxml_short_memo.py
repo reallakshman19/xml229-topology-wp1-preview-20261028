@@ -180,35 +180,25 @@ class ShortMemoSafety(unittest.TestCase):
                     memo.stats().get("source_resolve_hit",0),1)
                 print("MEMO_MUTANT_KILLED:memo-key-ignores-input-bytes")
 
-    def test_mutants_no_deepcopy_and_no_clear_are_killed(self):
+    def test_mutant_without_deepcopy_fails_clean_evidence_assertion(self):
         source=fixture()
         before,policy,cfg=selected_request(source)
-        genuine=memo.deepcopy
         with memo.memo_session("copy-mutation"):
-            apply_topofix_transaction(before,policy=policy,config=cfg)
+            self.assertTrue(apply_topofix_transaction(
+                before,policy=policy,config=cfg).committed)
             with patch.object(memo,"deepcopy",side_effect=lambda value:value):
-                cached=apply_topofix_transaction(before,policy=policy,config=cfg)
+                cached=apply_topofix_transaction(
+                    before,policy=policy,config=cfg)
                 cached.checks[0].details["SYNTHETIC_MUTATION"]="poisoned"
-                killed=False
-                try:
-                    next_result=apply_topofix_transaction(before,policy=policy,config=cfg)
-                    self.assertNotIn("SYNTHETIC_MUTATION",next_result.checks[0].details)
-                except AssertionError:
-                    killed=True
-                self.assertTrue(killed,"no-deepcopy mutation must poison cached evidence")
-                print("MEMO_MUTANT_KILLED:shared-result-no-deepcopy")
-        memo.start_memo("CANCEL_ERROR_SCOPE")
-        apply_topofix_transaction(before,policy=policy,config=cfg)
-        self.assertTrue(memo.stats())
-        with patch.object(memo,"clear_memo",side_effect=lambda:None):
-            memo.clear_memo()
-            killed=False
-            try:self.assertEqual(memo.stats(),{})
-            except AssertionError:killed=True
-            self.assertTrue(killed,"no-clear mutation must leave authority cache live")
-            print("MEMO_MUTANT_KILLED:cancel-error-no-clear")
-        memo.clear_memo()
-        self.assertEqual(memo.stats(),{})
+                with self.assertRaises(AssertionError):
+                    next_result=apply_topofix_transaction(
+                        before,policy=policy,config=cfg)
+                    self.assertNotIn("SYNTHETIC_MUTATION",
+                                     next_result.checks[0].details)
+        print("MEMO_MUTANT_KILLED:shared-result-no-deepcopy")
+        # The old patch(clear_memo) test called its own patched method,
+        # proving only the mock. Actual Python finally and Worker/Error/
+        # Cancel cleanup mutants are now executed by separate path tests.
 
     def test_bounded_cache_and_one_owner_rule(self):
         source=fixture()
