@@ -23,6 +23,14 @@ jobs:
         run: |
           set -euo pipefail
           python3 -B -m unittest discover -s tests -p 'test_short_batch_engine.py' -v
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Owner-accounting UI batch guards and unchanged workspace syntax
+        run: |
+          set -euo pipefail
+          node --check tabs/topology-workspace/workspace-app.mjs
+          node --test tests/short-bulk-groups.test.mjs
       - name: Immutable pinned XCU reader
         run: bash tools/fetch-uxml-reader.sh dist
       - name: Independent canonical batch sourceRef loss and parity
