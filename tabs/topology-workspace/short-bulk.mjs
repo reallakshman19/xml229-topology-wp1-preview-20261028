@@ -5,14 +5,24 @@
 // A per-owner canonical loss/eligibility veto has a named refusal, not a
 // whole-source parity disagreement. Only this narrow source-coded rejection
 // can be skipped; all other parity failures HOLD the batch.
+// ONLY source-bound, non-mutating owner refusal codes. Authority mismatch,
+ // malformed requests, and disagreement must STOP the entire batch.
+const SKIPPABLE_HUB_OWNER_CODES=new Set([
+  'UXML_LOSS_CONTRACT_FIELD_TOUCH',
+  'UXML_CLOS_WRITE_HELD',
+  'UXML_SHORT_NATIVE_REFUSED',
+  'UXML_SHORT_NOT_ELIGIBLE_OR_WITNESS_DRIFT',
+]);
 export function namedHubOwnerRefusal(result){
-  if(result?.ok!==true||result?.topoFixCommitted===true||
+  if(result?.topologyUxmlParity?.status!=='DIFFERENT'||
+     result?.ok!==true||result?.topoFixCommitted===true||
      result?.topoFixXmlText||result?.acceptedFinalTransferred!==false||
      result?.nativeCiiReleaseAuthorized!==false)return null;
   const differences=result?.topologyUxmlParity?.differences;
   if(!Array.isArray(differences)||differences.length!==1)return null;
-  const match=/^\/patchBack: UxmlPatchError: ((?:UXML_SHORT_[A-Z0-9_]+|UXML_LOSS_CONTRACT_FIELD_TOUCH|UXML_CLOS_WRITE_HELD)(?::[^\r\n]*)?)$/.exec(differences[0]);
-  return match?.[1]||null;
+  const match=/^\/patchBack: UxmlPatchError: (UXML_[A-Z0-9_]+)(?::([^\r\n]*))?$/.exec(differences[0]);
+  return match&&SKIPPABLE_HUB_OWNER_CODES.has(match[1])?
+    match[1]+(match[2]===undefined?'':':'+match[2]):null;
 }
 
 async function digestXml(text) {
@@ -44,6 +54,10 @@ export async function runShortBulk({
       skipped.push({id,reason:row?.reason||'NOT_ELIGIBLE_ON_CURRENT_REVISION',
         sourceSha256:current.sourceSha256});
       completed++;
+      // Even a no-write skip advances the audited checkpoint. Cancel must not
+      // misreport an already refused item as still unprocessed.
+      onCheckpoint({originSha256:source.sourceSha256,latest,
+        applied:[...applied],skipped:[...skipped],requested,completed});
       onProgress({completed,total:requested.length,applied:applied.length,skipped:skipped.length,
         currentEligible:rows.filter(r=>r.eligible).length,id,status:'SKIPPED'});
       continue;
@@ -69,6 +83,8 @@ export async function runShortBulk({
           // exact code and move to the next owner on the unchanged source.
           skipped.push({id,reason:refused,sourceSha256:current.sourceSha256});
           completed++;
+          onCheckpoint({originSha256:source.sourceSha256,latest,
+            applied:[...applied],skipped:[...skipped],requested,completed});
           onProgress({completed,total:requested.length,applied:applied.length,
             skipped:skipped.length,currentEligible:rows.filter(r=>r.eligible).length,
             id,status:'REFUSED',reason:refused});
