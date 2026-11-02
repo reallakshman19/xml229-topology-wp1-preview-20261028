@@ -224,7 +224,7 @@ export async function qualifyGroupedWorkerResult({
 export async function runIndependentShortBulk({
   source,shortElements,selectedIds,runEngine,hubEnabled=false,
   isCurrent=()=>true,onCheckpoint=()=>{},onProgress=()=>{},
-  hash,runLegacy,maximum=MAX_GROUP,
+  hash,runLegacy,planning,maximum=MAX_GROUP,
 }){
   if(!source||!Array.isArray(shortElements)||!Array.isArray(selectedIds)||
      !unique(selectedIds)||typeof runEngine!=='function'||
@@ -232,7 +232,9 @@ export async function runIndependentShortBulk({
      !Number.isInteger(maximum)||maximum<2||maximum>MAX_GROUP)
     throw Error('SHORT_BATCH_INVALID_SELECTION');
   let current={...source},rows=shortElements,latest=null;
-  const requested=[...selectedIds],applied=[],skipped=[];
+  const requested=[...selectedIds],applied=[],skipped=[],processed=new Set();
+  const plannedGroups=planSourceBoundGroups(requested,rows,planning,
+    current.sourceSha256,maximum);
   let completed=0,stopReason='COMPLETE',stopMessage='',failedId=null;
   const lease=typeof runEngine.beginBulkSession==='function'&&
     typeof runEngine.endBulkSession==='function';
@@ -267,7 +269,8 @@ export async function runIndependentShortBulk({
         'SINGLETON_REFUSAL_CENSUS');
       skipped.push(...output.skipped);
     }
-    completed++;checkpoint();notify(id,output.applied.length?'VALIDATED':'REFUSED');
+    processed.add(id);completed++;
+    checkpoint();notify(id,output.applied.length?'VALIDATED':'REFUSED');
   };
   const runGroup=async ids=>{
     if(stopReason!=='COMPLETE'||!isCurrent()){stopReason='CANCELLED';return;}
@@ -316,6 +319,7 @@ export async function runIndependentShortBulk({
       if(!isCurrent()){stopReason='CANCELLED';return;}
       current=validated.source;rows=validated.latest.findings.shortElements;
       latest=validated.latest;applied.push(...validated.applied);
+      for(const id of ids)processed.add(id);
       completed+=ids.length;
       checkpoint();notify(ids.at(-1),'VALIDATED');
     }catch(error){
@@ -325,18 +329,15 @@ export async function runIndependentShortBulk({
   };
   if(lease)runEngine.beginBulkSession();
   try{
-    let offset=0;
-    while(offset<requested.length&&stopReason==='COMPLETE'){
+    for(const ids of plannedGroups){
+      if(stopReason!=='COMPLETE')break;
       if(!isCurrent()){stopReason='CANCELLED';break;}
-      const ids=nextGroup(requested.slice(offset),rows,
-        current.sourceSha256,maximum);
       await runGroup(ids);
-      if(stopReason==='COMPLETE')offset+=ids.length;
     }
   }finally{if(lease)runEngine.endBulkSession();}
   const hubMismatch=hubEnabled&&
     stopReason!=='COMPLETE'&&stopReason!=='CANCELLED';
-  const pendingIds=requested.slice(completed+(failedId?1:0));
+  const pendingIds=requested.filter(id=>!processed.has(id)&&id!==failedId);
   return {originSha256:source.sourceSha256,latest,applied,skipped,requested,
     completed,failedId,pendingIds,currentEligible:rows.filter(r=>r.eligible).length,
     stopReason,stopMessage,hubMismatch};
