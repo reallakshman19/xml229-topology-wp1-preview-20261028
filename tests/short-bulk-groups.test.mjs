@@ -33,8 +33,11 @@ function sidecar({hub=true,mutate=()=>{}}={}){
     checks:[{code:'SOURCE_BOUND_NATIVE',blocking:true,passed:true}]};
   const lineage={sourceXmlSha256:initial,fixedXmlSha256:fixed,
     sourceXmlMutated:false,state:'PRE_FINAL_ONLY',sourceOccurrenceMap:[]};
-  const prefinal={requiresFreshWorkerBasis:true,
-    nativeCiiReleaseAuthorized:false,ownerEvidenceCount:2};
+  const prefinal={schema:'psi116-short-batch-prefinal-handoff/v1',
+    requiresFreshWorkerBasis:true,acceptedFinalTransferred:false,
+    nativeCiiReleaseAuthorized:false,ownerEvidenceCount:2,
+    sourceXmlSha256:initial,fixedXmlSha256:fixed,
+    reviewedActionIds:[...ids],sourceLineage:lineage};
   const findings={source:{sha256:fixed},shortElements:[],findings:[]};
   const plan={source:{sha256:fixed},actions:[]};
   const canonical=ids.map((id,i)=>({kind:'DROP_SHORT_ELEMENT',
@@ -88,6 +91,10 @@ const poisons={
   blockingCheck:({validation})=>{validation.summary.blockingFailureCount=1;},
   fixedHash:({lineage})=>{lineage.fixedXmlSha256=sha('e');},
   prefinalMissing:({prefinal})=>{prefinal.ownerEvidenceCount=1;},
+  prefinalOwnerDrift:({prefinal})=>{prefinal.reviewedActionIds.pop();},
+  prefinalLineageDrift:({prefinal})=>{
+    prefinal.sourceLineage={...prefinal.sourceLineage,
+      fixedXmlSha256:sha('f')};},
 };
 for(const [name,mutate] of Object.entries(poisons)){
   test('KILL batch receipt mutation '+name,async()=>{
