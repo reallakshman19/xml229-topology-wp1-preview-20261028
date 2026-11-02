@@ -61,7 +61,7 @@ jobs:
           fi
           python3 -B tools/short-memo-qualification.py --enabled off
           python3 -B tools/short-memo-qualification.py --enabled on
-          UXML_SHORT_MEMO_EQUIVALENCE=1 python3 -B -m unittest discover -s tests -p test_uxml_short_memo.py -v 2>&1 | tee /tmp/topofix-short-memo-equivalence.log
+          UXML_SHORT_MEMO_EQUIVALENCE=1 UXML_SHORT_MEMO_DIGEST_PROFILE=1 python3 -B -m unittest discover -s tests -p test_uxml_short_memo.py -v 2>&1 | tee /tmp/topofix-short-memo-equivalence.log
           if grep -Fq 'skipped' /tmp/topofix-short-memo-equivalence.log; then
             echo 'SHORT_MEMO_EQUIVALENCE_SKIP_REFUSED' >&2
             exit 1
