@@ -108,6 +108,23 @@ class CanonicalUxmlGroup(unittest.TestCase):
             with self.assertRaisesRegex(UxmlPatchError,"UXML_LOSS_CONTRACT_FIELD_TOUCH"):
                 qualify_short_batch_uxml(path,forged,policy=policy,config=self.cfg)
             print("A6B_CANONICAL_LOSS_RED:UXML_LOSS_CONTRACT_FIELD_TOUCH")
+            print("A6B_MUTANT_GREEN:uxml-group-canonical-loss-veto=PASS")
+            # Actual witness removal: preserve all native transactions and
+            # original-source checks but deliberately feed _canonical_op the
+            # CLEAN lossContract. A lost canonical witness must turn the
+            # original loss-veto assertion into an AssertionError.
+            import psi116_topology_resolver.short_batch_uxml as module
+            genuine=module._canonical_op
+            def skip_group_loss(row,request,ops,_forged,records,paths,refs,sha):
+                return genuine(row,request,ops,uxml,records,paths,refs,sha)
+            with patch.object(module,"_canonical_op",side_effect=skip_group_loss):
+                with self.assertRaises(AssertionError) as killed:
+                    with self.assertRaisesRegex(
+                            UxmlPatchError,"UXML_LOSS_CONTRACT_FIELD_TOUCH"):
+                        qualify_short_batch_uxml(
+                            path,forged,policy=policy,config=self.cfg)
+            print("A6B_MUTANT_RED:uxml-batch-canonical-witness-skipped:"
+                  "AssertionError:"+str(killed.exception).splitlines()[-1])
         finally:ctx.cleanup()
 
     def test_source_and_uxml_group_timing_5_20_and_89_like(self):
