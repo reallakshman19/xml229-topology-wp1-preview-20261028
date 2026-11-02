@@ -35,7 +35,7 @@ async function digestXml(text) {
 export async function runShortBulk({
   source,shortElements,selectedIds,runEngine,hubEnabled=false,
   isCurrent=()=>true,onCheckpoint=()=>{},onProgress=()=>{},
-  hash=digestXml,
+  hash=digestXml,shortMemoEnabled=true,
 }){
   if(!source?.sourceSha256||typeof source.sourceText!=='string'||
      !Array.isArray(shortElements)||!Array.isArray(selectedIds)||
