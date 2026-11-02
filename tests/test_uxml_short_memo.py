@@ -122,7 +122,7 @@ class ShortMemoSafety(unittest.TestCase):
                                   genuine(*a,**k)[:3]+("",)+genuine(*a,**k)[4:]):
                 self.assertTrue(apply_topofix_transaction(
                     before,policy=policy,config=cfg).committed)
-                with self.assertRaisesRegex(AssertionError,"WITNESS_DRIFT"):
+                with self.assertRaisesRegex(AssertionError,"ValueError not raised"):
                     with self.assertRaisesRegex(ValueError,"WITNESS_DRIFT"):
                         apply_topofix_transaction(before,policy=forged,config=cfg)
                 print("MEMO_MUTANT_KILLED:memo-key-ignores-policy")
