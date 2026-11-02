@@ -432,6 +432,40 @@ def _single_attempt(source,owner,config):
     return apply_topofix_transaction(before,policy=policy,config=config)
 
 
+
+def plan_short_groups(before,owner_ids:Sequence[str],
+                      config:ResolverConfig,*,maximum=MAX_INDEPENDENT_SHORT_BATCH):
+    """Preserve selection ORDER; adjacent owners only share an independent batch.
+
+    Unknown/ineligible owners are singles so historical refusal codes survive.
+    Never reorder a later owner ahead of an interacting earlier one.
+    """
+    _require(1<=maximum<=MAX_INDEPENDENT_SHORT_BATCH,
+             "SHORT_BATCH_GROUP_SIZE_INVALID")
+    rowmap={r["id"]:r for r in short_elements(before.document,config)}
+    groups=[]
+    current=[]
+    footprint=[]
+    for identifier in owner_ids:
+        row=rowmap.get(identifier)
+        zone=(owner_footprint(before,row,config)
+              if row is not None and row["eligible"] else None)
+        if (current and (zone is None or len(current)>=maximum or
+            any(zone.intersection(other) for other in footprint))):
+            groups.append(tuple(current))
+            current=[]
+            footprint=[]
+        if zone is None:
+            groups.append((identifier,))
+        else:
+            current.append(identifier)
+            footprint.append(zone)
+    if current:groups.append(tuple(current))
+    _require([i for group in groups for i in group]==list(owner_ids),
+             "SHORT_BATCH_PLAN_ORDER_DRIFT")
+    return tuple(groups)
+
+
 def apply_short_batch_bisect(source: str,owner_ids:Sequence[str],
                              *,config:ResolverConfig|None=None):
     """Atomic group retries; rejected group never publishes partial bytes.
@@ -491,12 +525,18 @@ def apply_short_batch_bisect(source: str,owner_ids:Sequence[str],
                                      short_element_requests=requests)
             batch=apply_independent_short_batch(before,policy=policy,config=config)
             _require(batch.committed,"SHORT_BATCH_NOT_COMMITTED")
+            evidence=normalized_owner_evidence(batch)
+            # Verify EVERY owner before touching result_source. A missing or
+            # partial group is a REFUSAL, never a partial success.
+            _require(len(evidence)==len(ids) and
+                     [item["id"] for item in evidence]==list(ids) and
+                     len(batch.owner_evidence)==len(ids) and
+                     batch.owner_evidence==evidence,
+                     "SHORT_BATCH_OWNER_EVIDENCE_CENSUS_MISMATCH")
         except (ShortBatchRefused,ValueError,KeyError):
             halfway=len(ids)//2
             recurse(ids[:halfway]);recurse(ids[halfway:]);return
         old_sha=sha256(result_source.encode("utf-8")).hexdigest()
-        evidence=normalized_owner_evidence(batch)
-        _require(len(evidence)==len(ids),"SHORT_BATCH_OWNER_EVIDENCE_CENSUS_MISMATCH")
         result_source=batch.fixed_xml
         for item in evidence:
             outcomes.append({"id":item["id"],"status":"COMMITTED",
@@ -505,7 +545,8 @@ def apply_short_batch_bisect(source: str,owner_ids:Sequence[str],
                         "fixedSha256":sha256(result_source.encode()).hexdigest(),
                         "transaction":batch.transaction_payload(),
                         "validation":batch.validation_payload()})
-    recurse(list(owner_ids))
+    for group in plan_short_groups(base,list(owner_ids),config):
+        recurse(list(group))
     _require(len(outcomes)==len(owner_ids),"SHORT_BATCH_RUN_OWNER_CENSUS_MISMATCH")
     return BatchRunReceipt(base.document.source_sha256,result_source,
                            tuple(outcomes),tuple(batches),tuple(skipped))
