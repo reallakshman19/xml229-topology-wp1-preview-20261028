@@ -24,25 +24,53 @@ function requireBatch(ok,reason){
 }
 function unique(xs){return new Set(xs).size===xs.length;}
 function same(xs,ys){return JSON.stringify(xs)===JSON.stringify(ys);}
-function footprint(row){
-  if(!row||row.eligible!==true||!Number.isInteger(row.branchIndex)||
-     !Array.isArray(row.nodeKeys)||!row.nodeKeys.length||
-     typeof row.leftKey!=='string'||typeof row.rightKey!=='string')return null;
-  return new Set(['branch:'+row.branchIndex,...row.nodeKeys,row.leftKey,row.rightKey]);
-}
-function nextGroup(ids,rows,sourceSha,maximum){
-  const index=new Map(rows.map(row=>[row.id,row]));
-  const group=[],zones=new Set();
-  for(const id of ids){
-    const row=index.get(id);
-    if(row?.sourceSha256!==sourceSha)break;
-    const zone=footprint(row);
-    if(!zone||[...zone].some(x=>zones.has(x)))break;
-    if(group.length>=maximum)break;
-    group.push(id);
-    for(const key of zone)zones.add(key);
+/** The only group-order authority: source-bound native footprints from
+ * read-only Analyze, NOT guessed branch/position equivalence in JS. */
+export function planSourceBoundGroups(ids,rows,planning,sourceSha,maximum=MAX_GROUP){
+  requireBatch(planning?.schema==='psi116-short-group-footprints/v1'&&
+    planning.sourceSha256===sourceSha&&Array.isArray(planning.owners)&&
+    unique(ids)&&Number.isInteger(maximum)&&maximum>=2&&maximum<=MAX_GROUP,
+    'PLANNER_SOURCE_BOUND_FOOTPRINTS_REQUIRED');
+  const rowMap=new Map(rows.map(row=>[row.id,row]));
+  const zones=new Map();
+  for(const entry of planning.owners){
+    requireBatch(typeof entry?.id==='string'&&
+      !zones.has(entry.id)&&Array.isArray(entry.keys)&&entry.keys.length>0&&
+      entry.keys.every(key=>typeof key==='string'&&key.length>0)&&
+      unique(entry.keys),'PLANNER_MALFORMED_NATIVE_FOOTPRINTS');
+    zones.set(entry.id,new Set(entry.keys));
   }
-  return group.length?group:[ids[0]];
+  const groups=[],prior=[],assigned=[];
+  let barrier=0;
+  for(const id of ids){
+    const row=rowMap.get(id);
+    const zone=row?.eligible===true&&row.sourceSha256===sourceSha?
+      zones.get(id):null;
+    if(!zone){
+      groups.push([id]);prior.push(null);
+      assigned.push(groups.length-1);barrier=groups.length;
+      continue;
+    }
+    requireBatch([...row.nodeKeys,row.leftKey,row.rightKey]
+      .every(key=>zone.has(key)), 'PLANNER_NATIVE_SOURCE_RECORD_CENSUS');
+    let minimum=barrier;
+    for(let i=0;i<prior.length;i++){
+      if(prior[i]&&[...zone].some(key=>prior[i].has(key)))
+        minimum=Math.max(minimum,assigned[i]+1);
+    }
+    let layer=minimum;
+    while(layer<groups.length&&groups[layer].length>=maximum)layer++;
+    if(layer===groups.length)groups.push([]);
+    requireBatch(!prior.some((other,i)=>assigned[i]===layer&&other&&
+      [...zone].some(key=>other.has(key))),
+      'PLANNER_OVERLAPPING_OWNERS_IN_GROUP');
+    groups[layer].push(id);prior.push(zone);assigned.push(layer);
+  }
+  requireBatch(groups.flat().length===ids.length&&
+    unique(groups.flat())&&
+    ids.every(id=>groups.some(group=>group.includes(id))),
+    'PLANNER_OWNER_CENSUS');
+  return groups;
 }
 function safeRefusal(result,hub){
   if(result?.ok!==true||result.topoFixCommitted===true||
