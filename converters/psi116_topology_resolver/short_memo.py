@@ -154,6 +154,6 @@ def uxml_resolve(uxml, config, *, source_name=None, resolver=None):
     hit = _active.get("uxml_resolve", key)
     if hit is not None:
         return hit
-    value = resolve_from_uxml(uxml, config, source_name=source_name)
+    value = resolver(uxml, config, source_name=source_name)
     _active.put("uxml_resolve", key, value)
     return value
