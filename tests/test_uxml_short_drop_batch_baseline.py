@@ -73,6 +73,31 @@ class BatchBaselineNative(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             uxml = json.loads(result.stdout)
 
+            # Capability probe on the untouched baseline native contract:
+            # TWO independent branch-owner requests in ONE policy are refused,
+            # both at the transaction engine and at canonical UXML export.
+            others = choices[3:5]
+            two_requests = tuple({k: owner[k]
+                                  for k in ("id", "sourceSha256", "nodeKeys")}
+                                 for owner in others)
+            two_policy = TransactionPolicy(
+                selected_action_ids=tuple(owner["id"] for owner in others),
+                short_element_requests=two_requests)
+            with self.assertRaisesRegex(
+                ValueError, "Select one source-bound short element"):
+                apply_topofix_transaction(before, policy=two_policy, config=cfg)
+            with self.assertRaisesRegex(
+                ValueError, "UXML_SHORT_EXACT_ONE_REQUEST_REQUIRED"):
+                export_edit_ops(uxml, policy=two_policy,
+                                source_name=str(path), config=cfg)
+            print("UXML_BATCH_CAPABILITY_BASELINE=" + json.dumps({
+                "fixture": "synthetic-interconnected-60-tee",
+                "requestedOwners": [owner["id"] for owner in others],
+                "native": "REFUSED: Select one source-bound short element per atomic transaction.",
+                "canonical": "REFUSED: UXML_SHORT_EXACT_ONE_REQUEST_REQUIRED",
+                "sourceBytesUnchanged": path.read_bytes() == original,
+            }, sort_keys=True))
+
             inner_ms = defaultdict(float)
             calls = defaultdict(int)
             def wrapped(name, original_function):
