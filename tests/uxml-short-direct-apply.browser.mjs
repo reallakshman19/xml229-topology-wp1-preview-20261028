@@ -48,11 +48,14 @@ async function exercise(mode){
   if(mode==='publishThrow'){
    await page.route('**/tabs/topology-workspace/workspace-app.mjs',async route=>{
     const response=await route.fetch(),original=await response.text();
+    const method=original.indexOf('  async function publishShortBulk(');
     const needle="      canvas.setScene(scene);sourceMeta();\n      query(root,'[data-gap-review-status]')";
-    assert.equal(original.split(needle).length,2,'pin exact publish mutation location');
+    const offset=original.indexOf(needle,method);
+    assert.ok(method>=0&&offset>method,'must inject only inside bulk publish');
     const replacement="      canvas.setScene=()=>{throw Error('SYNTHETIC_PUBLISH_SET_SCENE_FAILURE');};"+
       "canvas.setScene(scene);sourceMeta();\n      query(root,'[data-gap-review-status]')";
-    await route.fulfill({response,body:original.replace(needle,replacement)});
+    const injected=original.slice(0,offset)+replacement+original.slice(offset+needle.length);
+    await route.fulfill({response,body:injected});
    });
   }
   await page.route('**/index.html',async route=>{
