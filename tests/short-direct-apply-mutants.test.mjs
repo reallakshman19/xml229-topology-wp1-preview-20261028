@@ -34,14 +34,14 @@ async function invoke(mod,mutate){
     topoFixTransactionText:JSON.stringify({
       schema:'psi116-topofix-transaction/v1',
       source:{sha256:sourceSha256},committed:true,sourceXmlMutated:false,
-      selectedActions:[id],fixedXmlSha256,
+      selectedActions:[id],fixedXmlSha256:fixedSha256,
       operations:[{operation:'REMOVE_SELECTED_SHORT_ELEMENT_RECORD'}]}),
     topoFixValidationText:JSON.stringify({
       schema:'psi116-topofix-validation/v1',committed:true,
-      sourceSha256,fixedXmlSha256,summary:{blockingFailureCount:0},
+      sourceSha256,fixedXmlSha256:fixedSha256,summary:{blockingFailureCount:0},
       checks:[{blocking:true,passed:true}]}),
     topoFixLineageText:JSON.stringify({
-      sourceXmlSha256:sourceSha256,fixedXmlSha256,state:'PRE_FINAL_ONLY',
+      sourceXmlSha256:sourceSha256,fixedXmlSha256:fixedSha256,state:'PRE_FINAL_ONLY',
       sourceXmlMutated:false,sourceOccurrenceMap:[]}),
     topoFixPreFinalHandoffText:JSON.stringify({
       requiresFreshWorkerBasis:true,nativeCiiReleaseAuthorized:false}),
