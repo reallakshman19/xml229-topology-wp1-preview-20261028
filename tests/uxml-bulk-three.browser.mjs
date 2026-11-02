@@ -63,7 +63,7 @@ async function exercise(mismatchAt=Infinity){
    root.id='xml229-topology-workspace';
    const client=createTopologyWorkerClient();
    let count=0;
-   const parities=[],timings=[];
+   const parities=[],timings=[],validated=[];
    const runEngine=async job=>{
     const t=performance.now();
     const result=await client.run(job);
@@ -73,6 +73,14 @@ async function exercise(mismatchAt=Infinity){
         readerLoadMs:Math.round(result.topologyBulkTiming?.hubReaderLoadMs||0),
         pyTopologyMs:Math.round(result.topologyBulkTiming?.pythonTopologyMs||0)});
       const mismatch=count===mismatchAt;
+      const receipt=JSON.parse(result.topoFixTransactionText||'null');
+      const check=JSON.parse(result.topoFixValidationText||'null');
+      validated.push({item:count,transaction:receipt?.committed===true,
+        validated:check?.committed===true,
+        checks:check?.checks?.length||0,
+        blockingFailures:check?.summary?.blockingFailureCount,
+        workerParity:result.topologyUxmlParity?.status,
+        sourceMatched:receipt?.source?.sha256===check?.sourceSha256});
       parities.push(mismatch?'DIFFERENT':result.topologyUxmlParity?.status);
       if(mismatch){
         return {...result,topologyUxmlParity:{status:'DIFFERENT',
@@ -84,7 +92,7 @@ async function exercise(mismatchAt=Infinity){
    };
    runEngine.beginBulkSession=()=>client.beginBulkSession();
    runEngine.endBulkSession=()=>client.endBulkSession();
-   window.__triple={client,parities,timings,get count(){return count;},
+   window.__triple={client,parities,timings,validated,get count(){return count;},
     workspace:mountTopologyWorkspace(root,{runEngine,cancelEngine:()=>client.cancel()})};
    await window.__triple.workspace.load(new File([xml],'synthetic-three.xml',{type:'text/xml'}));
   },{xml:fixture(),mismatchAt});
@@ -92,13 +100,19 @@ async function exercise(mismatchAt=Infinity){
   await page.evaluate(()=>window.__triple.workspace.analyze());
   const initial=await page.evaluate(()=>window.__triple.workspace.getState());
   assert.equal(initial.hubParity,'EQUAL','3-branch source hub parity required');
-  await page.locator('[data-preview-short]').click();
+  await page.locator('[data-select-short]').click();
   await page.locator('[data-select-gaskets]').click();
   assert.equal(await page.locator('[data-short-index]:checked').count(),3,
     'all three generated qualified short owners selected');
-  await page.locator('[data-short-hub-preview]').click();
-  await page.waitForFunction(()=>document.querySelector('[data-run-short-drop]')?.disabled===false,
-                             undefined,{timeout:120000});
+  assert.equal(await page.locator('[data-short-hub-preview]').count(),0);
+  assert.equal(await page.locator('[data-run-short-drop]').isEnabled(),true);
+  const second=page.locator('[data-short-index]:checked').nth(1);
+  const secondIndex=await second.getAttribute('data-short-index');
+  await page.locator('[data-short-index="'+secondIndex+'"]').uncheck();
+  assert.equal(await page.locator('[data-run-short-drop]').isEnabled(),true,
+    'two eligible owners remain applicable without preview');
+  await page.locator('[data-short-index="'+secondIndex+'"]').check();
+  assert.equal(await page.locator('[data-run-short-drop]').isEnabled(),true);
   await page.locator('[data-run-short-drop]').click();
   const expected=mismatchAt===Infinity?3:1;
   await page.waitForFunction(expected=>{
@@ -115,11 +129,17 @@ async function exercise(mismatchAt=Infinity){
    count:window.__triple.count,
    parities:window.__triple.parities,
    timings:window.__triple.timings,
+   validated:window.__triple.validated,
    downloadEnabled:!document.querySelector('[data-download-working]').disabled,
    progress:document.querySelector('[data-progress]')?.textContent,
   }));
   assert.deepEqual(errors,[]);
   assert.equal(result.state.revision,expected);
+  assert.equal(result.validated.length,result.count,
+    'each attempted item must return a separately inspected native receipt');
+  assert.ok(result.validated.every(v=>v.transaction&&v.validated&&v.checks>0&&
+    v.blockingFailures===0&&v.workerParity==='EQUAL'&&v.sourceMatched),
+    'no transaction, validation or Worker EQUAL may be skipped');
   if(mismatchAt===Infinity){
    assert.equal(result.count,3);
    assert.deepEqual(result.parities,['EQUAL','EQUAL','EQUAL']);
@@ -136,7 +156,8 @@ async function exercise(mismatchAt=Infinity){
    syntheticShortOwners:3,forcedMismatchAt:mismatchAt===Infinity?null:mismatchAt,
    revision:result.state.revision,workerTransactions:result.count,
    independentParityChecks:result.parities,
-   timings:result.timings,downloadEnabled:result.downloadEnabled}));
+   timings:result.timings,validationReceipts:result.validated,
+   downloadEnabled:result.downloadEnabled}));
  }finally{
   await page.close();await browser.close();await new Promise(done=>server.close(done));
  }

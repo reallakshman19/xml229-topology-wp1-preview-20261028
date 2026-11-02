@@ -76,3 +76,42 @@ Pyodide using synthetic fixtures; no private Owner model is checked in.
 
 **HOLDs:** all existing CLOS, 240.6 mm join, manual/review Apply, tolerance,
 policy, native CII/Final, merge and release restrictions remain unchanged.
+
+
+## Selected short elements — partial read-only preview
+
+The previous all-or-nothing preview aborted on the first selected short
+owner whose sourceRef/loss/qualification check failed. The Worker then
+published an opaque builder exception and the browser replaced it with
+`UXML_SHORT_PREVIEW_SELECTED_OPS_MISMATCH`. This was misleading for large
+selections such as the Owner's 89-gasket trial.
+
+`uxml-operations-preview/v1` now includes `shortPreview` with three
+read-only lists: `selectedIds` (exact original source-qualified selection),
+`acceptedIds` (only ids with a fully projected `DROP_SHORT_ELEMENT`
+operation in `ops`), and `refused` (`{id,code}` for each independently
+refused owner). Each request is exported and rendered independently, retaining
+the native **exact refusal code**. Refused items never enter `ops` or become
+Apply candidates. Global errors (including malformed source, duplicate ids
+and failed overall Auto preview) still fail closed and publish a named builder
+error rather than an invented count mismatch. Unknown exception messages
+remain redacted to the exception type.
+
+The screen verifies a one-to-one disjoint partition:
+`selectedIds = acceptedIds ∪ refused.ids`. Each accepted id must also
+correspond to one displayed short op. It shows “N ready / M refused”,
+the original selected owner id, the exact refusal code and its plain-language
+meaning. **Locate original records** selects the existing source witness;
+**Deselect refused** removes only refused ids from the source selection.
+Changing the selection invalidates the old preview. Apply remains disabled
+until a new read-only preview returns **all currently selected ids accepted,
+zero refused**, with the existing source hash, revision, epoch and parity
+still current. The native Python engine and hub output gate are unchanged.
+
+Synthetic regression coverage uses a three-owner source: an added lossContract
+entry refuses one owner's record while two independently qualified owners
+remain visible. A browser test checks the count, exact refused id/code,
+source location, absence of a refused op, disabled Apply, deselect and required
+fresh successful preview. Other tests deliberately falsify the accepted/refused
+partition and inject a global named builder failure. Original PSI116 source
+bytes are never modified by a preview.

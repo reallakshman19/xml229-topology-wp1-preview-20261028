@@ -197,7 +197,7 @@ test('injected Worker: short-element bulk publishes new-revision evidence, stale
     const {page,errors}=await openInjected(mode);
     try{
       await loadAndAnalyze(page,shortXML);
-      await page.locator('[data-preview-short]').click();
+      await page.locator('[data-select-short]').click();
       const shortApply=page.locator('[data-run-short-drop]');
       assert.equal(await shortApply.isDisabled(),true);
       assert.match(await shortApply.getAttribute('title'),/Select at least one eligible short element/);
@@ -272,7 +272,7 @@ test('revision-race negative: in-flight read-only recheck cannot enable evidence
  const {page,errors}=await openInjected('REVISION_RACE');
  try{
    await loadAndAnalyze(page,shortXML);
-   await page.locator('[data-preview-short]').click();
+   await page.locator('[data-select-short]').click();
    await page.locator('[data-select-gaskets]').click();
    assert.equal(await page.locator('[data-short-index]:checked').count(),1);
    await page.locator('[data-run-short-drop]').click();
@@ -317,17 +317,17 @@ test('UI clarity: hub-only short-drop explanation, review Next/Previous and reta
    assert.equal(await evidence.isDisabled(),true);
    assert.match(await evidence.getAttribute('title'),/EVIDENCE_ANALYSIS_REQUIRED/);
    assert.equal(await page.locator('[data-download-resolutions] + .action-unavailable-reason').count(),1);
-   const short=page.locator('[data-preview-short]');
+   const short=page.locator('[data-select-short]');
    assert.equal(await short.isDisabled(),true);
    assert.match(await short.getAttribute('title'),
      /Universal XML parity must be EQUAL before short-element changes/);
-   assert.match(await page.locator('[data-preview-short] + .action-unavailable-reason').textContent(),
+   assert.match(await page.locator('[data-select-short] + .action-unavailable-reason').textContent(),
      /Universal XML parity must be EQUAL before short-element changes/);
    await page.locator('[data-uxml-toggle]').uncheck();
    assert.equal(await short.isEnabled(),true);
    assert.equal(await short.getAttribute('title'),null);
    assert.equal(await short.getAttribute('data-reason-set'),null);
-   assert.equal(await page.locator('[data-preview-short] + .action-unavailable-reason').count(),0);
+   assert.equal(await page.locator('[data-select-short] + .action-unavailable-reason').count(),0);
    await page.locator('[data-audit-category]').selectOption('all');
    await page.locator('[data-audit-filter="manual"]').click();
    await page.locator('[data-rules-expand]').click();
@@ -463,31 +463,62 @@ async function prepareHubShort(page){
     ?.dataset?.parity==='EQUAL'&&document.querySelector('[data-status]')
     ?.textContent?.includes('Authoritative topology analysis complete.'),
     null,{timeout:120000});
-  const short=page.locator('[data-preview-short]');
+  const short=page.locator('[data-select-short]');
   assert.equal(await short.isEnabled(),true,'EQUAL hub must enable short drop preview');
   assert.equal(await short.getAttribute('title'),null);
   await short.click();
   await page.locator('[data-select-gaskets]').click();
   assert.equal(await page.locator('[data-short-index]:checked').count(),1);
   const apply=page.locator('[data-run-short-drop]');
-  assert.equal(await apply.isDisabled(),true,
-    'hub requires exact selected operations preview before explicit Apply');
-  assert.match(await apply.getAttribute('title'),/Preview the selected UXML short-drop operations/);
-  await page.locator('[data-short-hub-preview]').click();
-  await page.waitForFunction(()=>document.querySelector('[data-short-hub-status]')
-    ?.textContent?.includes('verified for exact current selection'),
-    null,{timeout:120000});
-  assert.equal(await apply.isEnabled(),true);
-  assert.equal(await apply.getAttribute('title'),null);
-  const op=page.locator('[data-ops-rows] [data-op-id]')
-    .filter({hasText:'Drop selected short component and close ports'});
-  assert.equal(await op.count(),1,'read-only Operations preview must show short delete+close');
-  assert.match(await op.textContent(),/Source record: Present → Removed/);
-  assert.equal(await page.locator('[data-download-working]').isDisabled(),true,
-    'preview never writes a corrected source before Apply');
+  assert.equal(await apply.isEnabled(),true,
+    'hub EQUAL and eligible selection enable direct Apply without short preview');
+  assert.equal(await page.locator('[data-short-hub-preview]').count(),0);
 }
 
-test('hub short-drop EQUAL: selected preview, source patch, validated download',
+test('hub deleted-owner raw-only children: canonical removedWithRecord disclosed after direct Apply',
+  {timeout:240000},async()=>{
+  const {page,errors}=await openInjected('PASS');
+  try{
+    const rawXML=hubShortXML.replace('<Weight>2.5</Weight>',
+      '<Weight>2.5</Weight><SIF>1.2</SIF>'+
+      '<InsulationThickness>3</InsulationThickness>'+
+      '<CorrosionAllowance>0.5</CorrosionAllowance>');
+    assert.notEqual(rawXML,hubShortXML);
+    await page.locator('[data-file]').setInputFiles({
+      name:'synthetic-raw-owner.xml',mimeType:'application/xml',
+      buffer:Buffer.from(rawXML,'utf8')
+    });
+    await page.waitForFunction(()=>document.querySelector('[data-occ-summary]')
+      ?.textContent?.includes('6 of 6'),null,{timeout:30000});
+    await page.locator('[data-uxml-toggle]').check();
+    await page.locator('[data-analyze]').click();
+    await page.waitForFunction(()=>document.querySelector('[data-uxml-parity]')
+      ?.dataset?.parity==='EQUAL'&&document.querySelector('[data-status]')
+      ?.textContent?.includes('Authoritative topology analysis complete.'),
+      null,{timeout:120000});
+    await page.locator('[data-select-short]').click();
+    await page.locator('[data-select-gaskets]').click();
+    assert.equal(await page.locator('[data-short-index]:checked').count(),1);
+    assert.equal(await page.locator('[data-run-short-drop]').isEnabled(),true);
+    await page.locator('[data-run-short-drop]').click();
+    await page.waitForFunction(()=>
+      document.querySelector('[data-progress]')?.textContent?.includes('BULK COMPLETE')&&
+      document.querySelector('main')?.getAttribute('aria-busy')==='false'&&
+      document.querySelector('[data-download-working]')?.disabled===false,
+      null,{timeout:120000});
+    const disclosure=page.locator('[data-short-bulk-operations]');
+    assert.equal(await disclosure.count(),1);
+    await disclosure.locator('summary').click();
+    const display=await disclosure.textContent();
+    assert.match(display,/removedWithRecord/);
+    for(const name of ['SIF','InsulationThickness','CorrosionAllowance'])
+      assert.match(display,new RegExp(name));
+    assert.equal(await page.locator('[data-download-working]').isEnabled(),true);
+    assert.deepEqual(errors,[]);
+  }finally{await page.close();}
+});
+
+test('hub short-drop EQUAL: direct Apply, source patch, validated download',
  {timeout:240000},async()=>{
   const {page,errors}=await openInjected('PASS');
   try{
@@ -550,53 +581,24 @@ async function prepareTwoShort(page){
     ?.dataset?.parity==='EQUAL'&&document.querySelector('[data-status]')
     ?.textContent?.includes('Authoritative topology analysis complete.'),
     null,{timeout:120000});
-  await page.locator('[data-preview-short]').click();
+  await page.locator('[data-select-short]').click();
   const candidates=page.locator('[data-short-index]:not([disabled])');
   assert.ok(await candidates.count()>=2,
     'two independent selected synthetic owners must qualify');
   assert.equal(await page.locator('[data-run-short-drop]').isDisabled(),true);
 }
 
-async function previewCurrentShort(page){
-  await page.locator('[data-short-hub-preview]').click();
-  await page.waitForFunction(()=>document.querySelector('[data-short-hub-status]')
-    ?.textContent?.includes('verified for exact current selection'),
-    null,{timeout:120000});
-  assert.equal(await page.locator('[data-run-short-drop]').isEnabled(),true);
-}
-
-test('hub preview selection change invalidates Apply and requires re-preview',
+test('hub direct Apply remains enabled as eligible selection changes',
   {timeout:240000},async()=>{
   const {page,errors}=await openInjected('PASS');
   try{
     await prepareTwoShort(page);
     const eligible=page.locator('[data-short-index]:not([disabled])');
     await eligible.nth(0).check();
-    await previewCurrentShort(page);
-    const firstOps=await page.locator('[data-ops-rows] [data-op-id]')
-      .filter({hasText:'Drop selected short component'}).count();
-    assert.equal(firstOps,1);
+    assert.equal(await page.locator('[data-run-short-drop]').isEnabled(),true);
     await eligible.nth(1).check();
-    const apply=page.locator('[data-run-short-drop]');
-    assert.equal(await apply.isDisabled(),true);
-    assert.match(await apply.getAttribute('title'),
-      /Preview the selected UXML short-drop operations/);
-    assert.match(await page.locator('[data-run-short-drop] + .action-unavailable-reason')
-      .textContent(),/Preview the selected UXML short-drop operations/);
-    const before=await page.evaluate(()=>window.__evidenceFixture.stages
-      .filter(s=>s==='TRANSACTION').length);
-    // Dispatch a synthetic click to ensure the handler (not merely disabled
-    // browser semantics) refuses a stale source/selection authorization.
-    await page.evaluate(()=>document.querySelector('[data-run-short-drop]')
-      .dispatchEvent(new MouseEvent('click',{bubbles:true})));
-    assert.equal(await page.evaluate(()=>window.__evidenceFixture.stages
-      .filter(s=>s==='TRANSACTION').length),before);
-    assert.match(await page.locator('[data-fix-result]').textContent(),
-      /UXML_SHORT_PREVIEW_OR_PARITY_REQUIRED/);
-    await previewCurrentShort(page);
-    assert.equal(await apply.getAttribute('title'),null);
-    assert.equal(await page.locator('[data-ops-rows] [data-op-id]')
-      .filter({hasText:'Drop selected short component'}).count(),2);
+    assert.equal(await page.locator('[data-run-short-drop]').isEnabled(),true);
+    assert.equal(await page.locator('[data-short-hub-preview]').count(),0);
     assert.deepEqual(errors,[]);
   }finally{await page.close();}
 });
@@ -608,7 +610,6 @@ test('hub second-item DIFFERENT never exposes intermediate download',
     await prepareTwoShort(page);
     await page.locator('[data-select-gaskets]').click();
     assert.equal(await page.locator('[data-short-index]:checked').count(),2);
-    await previewCurrentShort(page);
     assert.equal(await page.locator('[data-download-working]').isDisabled(),true);
     await page.evaluate(()=>{
       const working=document.querySelector('[data-download-working]');
@@ -653,6 +654,7 @@ test('hub second-item DIFFERENT never exposes intermediate download',
     assert.deepEqual(errors,[]);
   }finally{await page.close();}
 });
+
 
 test.after(async()=>{
  await browser.close();
