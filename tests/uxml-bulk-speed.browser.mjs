@@ -87,7 +87,10 @@ test('336 generated PSI116 occurrences: real Worker/Pyodide one short-drop with 
       topologyBulkSpeedProfile:true}}:job;
     const t=performance.now();
     const result=await client.run(input);
-    if(!profile)window.__bulkSpeedLastParity=result.topologyUxmlParity;
+    if(!profile){
+     window.__bulkSpeedLastParity=result.topologyUxmlParity;
+     if(!window.__bulkSpeedInitialAnalysis)window.__bulkSpeedInitialAnalysis=result;
+    }
     if(profile)timings.push({workerRoundTripMs:performance.now()-t,
                              ...result.topologyBulkTiming,
                              parity:result.topologyUxmlParity?.status,
@@ -96,7 +99,7 @@ test('336 generated PSI116 occurrences: real Worker/Pyodide one short-drop with 
    };
    runEngine.beginBulkSession=()=>client.beginBulkSession();
    runEngine.endBulkSession=()=>client.endBulkSession();
-   window.__bulkSpeedProbe={timings,client,
+   window.__bulkSpeedProbe={timings,client,originalXml:xml,
     workspace:mountTopologyWorkspace(root,{runEngine,cancelEngine:()=>client.cancel()})};
    await window.__bulkSpeedProbe.workspace.load(new File([xml],'generated-bulk.xml',{type:'text/xml'}));
   },source);
@@ -138,6 +141,56 @@ test('336 generated PSI116 occurrences: real Worker/Pyodide one short-drop with 
   assert.equal(observed.timings[0].parity,'EQUAL','unconditional hub parity');
   assert.equal(observed.timings[0].committed,true);
   assert.deepEqual(errors,[]);
+  // Compare two independent Worker runs on the SAME synthetic source, with
+  // short-drop memo OFF then ON. Canonical operations and evidence must match.
+  const memoPair=await page.evaluate(async()=>{
+   const probe=window.__bulkSpeedProbe;
+   const found=JSON.parse(window.__bulkSpeedInitialAnalysis.topologyFindingsText);
+   const row=found.shortElements.find(r=>r.eligible&&r.componentRefNo==='SHORT');
+   if(!row)throw Error('SYNTHETIC_MEMO_OWNER_NOT_FOUND');
+   const xml=probe.originalXml;
+   const hash=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(xml));
+   const sha=[...new Uint8Array(hash)].map(b=>b.toString(16).padStart(2,'0')).join('');
+   const request={id:row.id,sourceSha256:sha,nodeKeys:[...row.nodeKeys]};
+   const base={sourceKind:'xml',sourceText:xml,sourceName:'generated-bulk.xml',
+    topologyPreFinalOnly:true,sourceRawSha256:sha,
+    options:{outputMode:'enriched-only',analyzeTopology:true,
+     generateTopoFix:true,useTopoFixForCii:false,
+     topologyActionIds:[row.id],topologyShortElementRequests:[request],
+     topologyUxmlPreview:true,topologyBulkSpeedProfile:true}};
+   const measured=[];
+   for(const enabled of [false,true]){
+    const started=performance.now();
+    const result=await probe.client.run({...base,
+      options:{...base.options,topologyShortMemo:enabled}});
+    measured.push({enabled,elapsedMs:performance.now()-started,
+      parity:result.topologyUxmlParity?.status,
+      committed:result.topoFixCommitted,
+      xml:result.topoFixXmlText,ops:result.topologyUxmlAppliedEditOps,
+      validation:result.topoFixValidationText,
+      txn:result.topoFixTransactionText,
+      lineage:result.topoFixLineageText,
+      phases:result.topologyBulkTiming});
+   }
+   return measured;
+  });
+  assert.equal(memoPair.length,2);
+  for(const m of memoPair){assert.equal(m.parity,'EQUAL');assert.equal(m.committed,true);}
+  assert.equal(memoPair[0].xml,memoPair[1].xml,'corrected XML bytes');
+  assert.deepEqual(memoPair[0].ops,memoPair[1].ops,'canonical ops');
+  const parsed=key=>memoPair.map(m=>JSON.parse(m[key]));
+  const [val0,val1]=parsed('validation');
+  assert.deepEqual(val0,val1,'complete validation sidecar');
+  const [txn0,txn1]=parsed('txn');
+  txn0.source.path='<same-input>';txn1.source.path='<same-input>';
+  assert.deepEqual(txn0,txn1,'full source-bound transaction evidence');
+  const [line0,line1]=parsed('lineage');
+  assert.deepEqual(line0,line1,'full source-linked lineage');
+  console.log('UXML_SHORT_MEMO_PYODIDE_ON_OFF='+JSON.stringify(memoPair.map(m=>({
+    memoEnabled:m.enabled,elapsedMs:+m.elapsedMs.toFixed(1),
+    enginePyodideMs:+m.phases.enginePyodideMs.toFixed(1),
+    pythonTopologyMs:+m.phases.pythonTopologyMs.toFixed(1),
+    parity:m.parity,committed:m.committed,byteAndEvidenceEqual:true}))));
   console.log('UXML_BULK_SPEED_REAL_BROWSER_TIMING '+JSON.stringify({
    syntheticElements:336,syntheticNodeRecords:source.match(/<Node>/g)?.length,
    firstAnalysisMs:+ticks.initialAnalysisMs.toFixed(1),
