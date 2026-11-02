@@ -107,34 +107,72 @@ class ShortMemoSafety(unittest.TestCase):
             selected_action_ids=policy.selected_action_ids,
             short_element_requests=({**policy.short_element_requests[0],
                                      "nodeKeys":["FORGED:SOURCE_KEY"]},))
-        changed=source.replace("</Branch>","<!-- byte-mutation --></Branch>",1)
         genuine=memo._key
-        for label,alter,request,expected in [
-            ("memo-key-ignores-policy",lambda key:key[:3]+("",)+key[4:],
-             (before,forged),"WITNESS_DRIFT"),
-            ("memo-key-ignores-input-bytes",lambda key:key[:2]+("",)+key[3:],
-             (resolve_psi116(changed,cfg),policy),"SOURCE_DRIFT"),
-        ]:
-            with self.subTest(label=label):
-                with memo.memo_session("mutant-key-"+label):
-                    self.assertTrue(apply_topofix_transaction(
-                        before,policy=policy,config=cfg).committed)
-                    value,mismatched=request
-                    with self.assertRaisesRegex(ValueError,expected):
-                        apply_topofix_transaction(value,policy=mismatched,config=cfg)
-                with memo.memo_session("mutant-key-"+label):
-                    with patch.object(memo,"_key",side_effect=lambda *a,**k:alter(genuine(*a,**k))):
-                        self.assertTrue(apply_topofix_transaction(
-                            before,policy=policy,config=cfg).committed)
-                        value,mismatched=request
-                        killed=False
-                        try:
-                            with self.assertRaisesRegex(ValueError,expected):
-                                apply_topofix_transaction(value,policy=mismatched,config=cfg)
-                        except AssertionError:
-                            killed=True
-                        self.assertTrue(killed,label+" mutant must make refusal test fail")
-                        print("MEMO_MUTANT_KILLED:"+label)
+
+        # Policy omission is a transaction-key mutant. Its control commits,
+        # but a forged nodeKey witness must be independently refused.
+        with memo.memo_session("policy-key-control"):
+            self.assertTrue(apply_topofix_transaction(
+                before,policy=policy,config=cfg).committed)
+            with self.assertRaisesRegex(ValueError,"WITNESS_DRIFT"):
+                apply_topofix_transaction(before,policy=forged,config=cfg)
+        with memo.memo_session("policy-key-mutant"):
+            with patch.object(memo,"_key",
+                              side_effect=lambda *a,**k:
+                                  genuine(*a,**k)[:3]+("",)+genuine(*a,**k)[4:]):
+                self.assertTrue(apply_topofix_transaction(
+                    before,policy=policy,config=cfg).committed)
+                with self.assertRaisesRegex(AssertionError,"WITNESS_DRIFT"):
+                    with self.assertRaisesRegex(ValueError,"WITNESS_DRIFT"):
+                        apply_topofix_transaction(before,policy=forged,config=cfg)
+                print("MEMO_MUTANT_KILLED:memo-key-ignores-policy")
+
+        # The old bytes mutant inadvertently poisoned *intermediate* source
+        # resolves in its very first native transaction: the post-removal
+        # candidate and post-closure candidate collided with the original
+        # under a globally byte-blind key, so reconnection rejected before
+        # the stale-source assertion. Use two different independently
+        # eligible short owners instead of a forged policy for another source.
+        first_xml=interconnected_tee_fixture(1)
+        second_xml=interconnected_tee_fixture(2)
+        self.assertNotEqual(first_xml,second_xml)
+        first_state=resolve_psi116(first_xml,cfg)
+        second_state=resolve_psi116(second_xml,cfg)
+        for state,ref_no in ((first_state,"SHORT-000"),
+                             (second_state,"SHORT-001")):
+            row=next(r for r in short_elements(state.document,cfg)
+                     if r["componentRefNo"]==ref_no)
+            self.assertTrue(row["eligible"],ref_no)
+            request={k:row[k] for k in ("id","sourceSha256","nodeKeys")}
+            independent_policy=TransactionPolicy(
+                selected_action_ids=(row["id"],),
+                short_element_requests=(request,))
+            independent=apply_topofix_transaction(
+                state,policy=independent_policy,config=cfg)
+            self.assertTrue(independent.committed,
+                            (ref_no,independent.reject_reasons))
+        with memo.memo_session("byte-key-control"):
+            self.assertEqual(resolve_psi116(first_xml,cfg).document.source_text,
+                             first_xml)
+            self.assertEqual(resolve_psi116(second_xml,cfg).document.source_text,
+                             second_xml)
+        with memo.memo_session("byte-key-mutant"):
+            def ignore_source_bytes(*args,**kwargs):
+                key=genuine(*args,**kwargs)
+                return key[:2]+("",)+key[3:]
+            with patch.object(memo,"_key",side_effect=ignore_source_bytes):
+                self.assertEqual(resolve_psi116(first_xml,cfg).document.source_text,
+                                 first_xml)
+                second=resolve_psi116(second_xml,cfg)
+                # A real mutation kill: the production invariant assertion
+                # fails with the mutated key, but passes in the control above.
+                with self.assertRaisesRegex(AssertionError,
+                                            "SOURCE_BYTES_CACHE_COLLISION"):
+                    self.assertEqual(second.document.source_text,second_xml,
+                                     "SOURCE_BYTES_CACHE_COLLISION")
+                self.assertGreaterEqual(
+                    memo.stats().get("source_resolve_hit",0),1)
+                print("MEMO_MUTANT_KILLED:memo-key-ignores-input-bytes")
 
     def test_mutants_no_deepcopy_and_no_clear_are_killed(self):
         source=fixture()
