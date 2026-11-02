@@ -75,14 +75,13 @@ if hub_doc is not None:
         hub_parity = {"status": "DIFFERENT",
                       "differences": ["/uxmlReader: "+type(exc).__name__+": "+str(exc)]}
 _speed_marks['pyHubParityMs'] = (_speed_time.perf_counter() - _speed_started) * 1000 - _speed_marks['pyResolveMs']
-# This is an inspection projection only. export_edit_ops remains the one
-# authority for which operations exist; no transaction is executed here.
+# Read-only S2 Auto operation disclosure on Analyze. The short-element
+# operation authority is independently checked during each native Apply.
 if hub_doc is not None and hub_parity["status"] == "EQUAL" and not job_generate_topofix:
     try:
         from psi116_topology_resolver.uxml_operations_preview import build_operation_preview
         ops_preview = build_operation_preview(
-            hub_doc, source_name=str(job_topology_input_path), config=cfg,
-            short_requests=json.loads(job_short_preview_json))
+            hub_doc, source_name=str(job_topology_input_path), config=cfg)
     except Exception as exc:
         # Presentation failure is NEVER topology or patch-back parity failure.
         # Preserve the verified hub route and its existing Auto-fix admission.
@@ -118,6 +117,7 @@ status = {
 }
 
 if job_generate_topofix:
+    applied_edit_ops = None
     direct_transaction = apply_topofix_transaction(
         result,
         policy=TransactionPolicy(selected_action_ids=tuple(job_topology_action_ids),
@@ -154,6 +154,9 @@ if job_generate_topofix:
                 hub_parity = {"status": "DIFFERENT", "differences": differences}
             else:
                 transaction = patched
+                # Canonical operation disclosure ONLY after both independent
+                # transactions and their corrected bytes agree. No new writer.
+                applied_edit_ops = ops["ops"]
         except Exception as exc:
             hub_parity = {"status": "DIFFERENT",
                           "differences": ["/patchBack: "+type(exc).__name__+": "+str(exc)]}
@@ -203,6 +206,7 @@ if job_generate_topofix:
 
 _speed_marks['pyValidationRecheckMs'] = (_speed_time.perf_counter() - _speed_started) * 1000 - sum(_speed_marks.values())
 status['bulkTimings'] = _speed_marks if globals().get('job_bulk_speed_profile', False) else None
+status["appliedEditOps"] = applied_edit_ops if (job_generate_topofix and status["committed"] and hub_parity["status"] == "EQUAL") else None
 status["opsPreview"] = ops_preview if hub_parity["status"] == "EQUAL" else None
 status["hubParity"] = hub_parity
 Path(job_topology_status_path).write_text(
@@ -330,7 +334,6 @@ export async function runPsi116TopologyStage(pyodide, job, inputPath, jobDir, st
   pyodide.globals.set('job_joint_repairs_json', JSON.stringify(options.topologyJointRepairs || []));
   pyodide.globals.set('job_connection_preview_json', JSON.stringify(options.topologyConnectionPreview || null));
   pyodide.globals.set('job_short_elements_json', JSON.stringify(options.topologyShortElementRequests || []));
-  pyodide.globals.set('job_short_preview_json', JSON.stringify(options.topologyShortPreviewRequests || []));
   pyodide.globals.set('job_bulk_speed_profile', speed);
   const pythonStart=performance.now();
   await pyodide.runPythonAsync(TOPOLOGY_SNIPPET);
@@ -348,6 +351,8 @@ export async function runPsi116TopologyStage(pyodide, job, inputPath, jobDir, st
   const topoFixTransactionText = generateTopoFix ? readOptional(pyodide, paths.transaction) : '';
   const topoFixValidationText = generateTopoFix ? readOptional(pyodide, paths.validation) : '';
   const topoFixCommitted = status.committed === true;
+  const topologyUxmlAppliedEditOps = topoFixCommitted && status.hubParity?.status==='EQUAL'?
+    (status.appliedEditOps || null):null;
   const topoFixXmlText = topoFixCommitted ? readOptional(pyodide, paths.fixed) : '';
   const topoFixLineageText = topoFixCommitted ? readOptional(pyodide, paths.lineage) : '';
   const topoFixPreFinalHandoffText = topoFixCommitted ? readOptional(pyodide, paths.handoff) : '';
@@ -403,6 +408,7 @@ export async function runPsi116TopologyStage(pyodide, job, inputPath, jobDir, st
     topologyUxmlParity,
     topologyBulkTiming,
     topologyOperationsPreview,
+    topologyUxmlAppliedEditOps,
     ciiInputSource: useTopoFixForCii ? 'topofix' : 'original',
     topologySummary: {
       requested: true,

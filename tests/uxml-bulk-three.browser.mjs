@@ -100,33 +100,19 @@ async function exercise(mismatchAt=Infinity){
   await page.evaluate(()=>window.__triple.workspace.analyze());
   const initial=await page.evaluate(()=>window.__triple.workspace.getState());
   assert.equal(initial.hubParity,'EQUAL','3-branch source hub parity required');
-  await page.locator('[data-preview-short]').click();
+  await page.locator('[data-select-short]').click();
   await page.locator('[data-select-gaskets]').click();
   assert.equal(await page.locator('[data-short-index]:checked').count(),3,
     'all three generated qualified short owners selected');
-  await page.locator('[data-short-hub-preview]').click();
-  await page.waitForFunction(()=>document.querySelector('[data-run-short-drop]')?.disabled===false,
-                             undefined,{timeout:120000});
-  assert.match(await page.locator('[data-short-hub-status]').textContent(),
-    /3 ready \/ 0 refused/,
-    'combined preview must accept exactly three separate source-qualified owners');
-  assert.equal(await page.locator('[data-ops-rows] [data-op-id]')
-    .filter({hasText:'Drop selected short component'}).count(),3);
+  assert.equal(await page.locator('[data-short-hub-preview]').count(),0);
+  assert.equal(await page.locator('[data-run-short-drop]').isEnabled(),true);
   const second=page.locator('[data-short-index]:checked').nth(1);
   const secondIndex=await second.getAttribute('data-short-index');
-  assert.ok(Number.isInteger(Number(secondIndex)) && Number(secondIndex)>=0);
   await page.locator('[data-short-index="'+secondIndex+'"]').uncheck();
-  assert.equal(await page.locator('[data-run-short-drop]').isDisabled(),true,
-    'changing selection must revoke previously admitted Apply');
-  assert.match(await page.locator('[data-run-short-drop]').getAttribute('title'),
-    /Preview the selected UXML short-drop operations/);
+  assert.equal(await page.locator('[data-run-short-drop]').isEnabled(),true,
+    'two eligible owners remain applicable without preview');
   await page.locator('[data-short-index="'+secondIndex+'"]').check();
-  assert.equal(await page.locator('[data-run-short-drop]').isDisabled(),true,
-    'returning to the previous set does not resurrect a stale preview');
-  await page.locator('[data-short-hub-preview]').click();
-  await page.waitForFunction(()=>document.querySelector('[data-run-short-drop]')?.disabled===false,
-                             undefined,{timeout:120000});
-  assert.match(await page.locator('[data-short-hub-status]').textContent(),/3 ready \/ 0 refused/);
+  assert.equal(await page.locator('[data-run-short-drop]').isEnabled(),true);
   await page.locator('[data-run-short-drop]').click();
   const expected=mismatchAt===Infinity?3:1;
   await page.waitForFunction(expected=>{

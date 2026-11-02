@@ -309,11 +309,11 @@ try{
  await page.waitForFunction(()=>document.querySelector('[data-occ-summary]')?.textContent?.includes('6 of 6'));
  await page.locator('[data-analyze]').click();
  await page.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'),null,{timeout:120000});
- await page.locator('[data-preview-short]').click();
- if(await page.locator('[data-short-index]').count()>24)throw Error('Unbounded short-element preview rendered');
- if(!(await page.locator('[data-short-preview]').textContent()).includes('PREVIEW ONLY'))throw Error('Short preview missing nonmutating status');
+ await page.locator('[data-select-short]').click();
+ if(await page.locator('[data-short-index]').count()>24)throw Error('Unbounded short-element selection list rendered');
+ if(!(await page.locator('[data-short-preview]').textContent()).includes('Select owners, then Apply'))throw Error('Short selector missing direct Apply status');
  const shortPreview=await page.locator('[data-short-preview]').textContent();
- if(!shortPreview.includes('GASK · 3.000 mm · SHORT · 2 records · weight 2.5')||!shortPreview.includes('B0:N30:S3'))throw Error('Short preview missing complete owner/length/weight/source census');
+ if(!shortPreview.includes('GASK · 3.000 mm · SHORT · 2 records · weight 2.5')||!shortPreview.includes('B0:N30:S3'))throw Error('Short selection missing complete owner/length/weight/source census');
  await page.locator('[data-select-gaskets]').click();
  if(await page.locator('[data-short-index]:checked').count()!==1)throw Error('Gasket selection included unrelated elements');
  await mkdir(path.join(sourceRoot,'preview-test-results'),{recursive:true});
@@ -349,7 +349,7 @@ try{
  await page.waitForFunction(()=>document.querySelector('[data-occ-summary]')?.textContent?.includes('6 of 6'));
  await page.locator('[data-analyze]').click();
  await page.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'),null,{timeout:120000});
- await page.locator('[data-preview-short]').click();await page.locator('[data-select-gaskets]').click();
+ await page.locator('[data-select-short]').click();await page.locator('[data-select-gaskets]').click();
  await page.locator('[data-run-short-drop]').click();
  await page.waitForFunction(()=>document.querySelector('main').getAttribute('aria-busy')==='false'&&document.querySelector('[data-fix-result]')?.getAttribute('data-result')==='rejected',null,{timeout:120000});
  result.shortDropRejected=await page.locator('[data-progress]').textContent();
@@ -364,7 +364,7 @@ try{
   await page.waitForFunction(()=>document.querySelector('[data-occ-summary]')?.textContent?.includes('6 of 6'));
   await page.locator('[data-analyze]').click();
   await page.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'),null,{timeout:120000});
-  await page.locator('[data-preview-short]').click();
+  await page.locator('[data-select-short]').click();
   if(length===6){
    if(await page.locator('[data-short-index]:not(:disabled)').count()!==1||!(await page.locator('[data-short-preview]').textContent()).includes('Length basis: straight port spacing'))throw Error('Zero-filled exactly 6 mm gasket lost qualification');
    await page.locator('[data-select-gaskets]').click();await page.locator('[data-run-short-drop]').click();
@@ -382,7 +382,7 @@ try{
   await page.waitForFunction(()=>!document.querySelector('[data-analyze]').disabled);
   await page.locator('[data-analyze]').click();
   await page.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'),null,{timeout:120000});
-  await page.locator('[data-preview-short]').click();
+  await page.locator('[data-select-short]').click();
   const preview=await page.locator('[data-short-preview]').textContent();
   if(await page.locator('[data-short-index]:disabled').count()!==1||!preview.includes('physical length unverified')||!preview.includes('not qualified by endpoint distance'))throw Error(kind+' chord was promoted to a physical length');
   result.shortLengthQualification.push({kind,outcome:'MANUAL_LENGTH_UNQUALIFIED'});
@@ -415,19 +415,19 @@ try{
  await scalePage.waitForFunction(()=>!document.querySelector('[data-analyze]').disabled);
  await scalePage.locator('[data-analyze]').click();
  await scalePage.waitForFunction(()=>document.querySelector('[data-status]')?.textContent?.includes('Authoritative topology analysis complete.'));
- await scalePage.locator('[data-preview-short]').click();
+ await scalePage.locator('[data-select-short]').click();
  if(await scalePage.locator('[data-short-index]').count()!==24||
     !(await scalePage.locator('[data-short-preview]').textContent()).includes('130 measured candidates'))
-   throw Error('Scale preview must render only one page of 24 out of 130');
+   throw Error('Scale selection must render only one page of 24 out of 130');
  await scalePage.locator('[data-select-gaskets]').click();
- if(!(await scalePage.locator('[data-run-short-drop]').textContent()).includes('Apply all 130 selected'))
-   throw Error('Selection must expose the bounded eight-owner batch size');
+ if(!(await scalePage.locator('[data-run-short-drop]').textContent()).includes('Apply 130 selected'))
+   throw Error('Selection must expose the full direct-Apply intent for all 130 owners');
  await scalePage.locator('[data-short-next]').click();
  if(await scalePage.locator('[data-short-index]:checked').count()!==24||
     !(await scalePage.locator('[data-short-selection-count]').textContent()).includes('130 selected'))
-   throw Error('Selection was lost across short-preview pages');
+   throw Error('Selection was lost across short-selection pages');
  if((await scalePage.locator('[data-progress]').textContent()).includes('APPLIED'))
-   throw Error('A preview or selection mutated working XML');
+   throw Error('Source selection alone mutated working XML');
  result.shortPreviewScale='PASS: 130 rows, 24/page, selection across pages, full-selection bulk intent, no mutation';
  await scalePage.close();
  // Manual Fix is a collapsed rule/case queue. >25 mm repairs require a separate preview and approval.

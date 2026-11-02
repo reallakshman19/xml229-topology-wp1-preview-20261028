@@ -6,7 +6,6 @@ import {buildAudit,renderAuditHTML,renderAuditSummary,filterCounts} from './audi
 import {eligibleActions,previewBatchPlan,explicitlyRejectedActionIds} from './batch-plan.mjs';
 import {runValidatedPasses} from './batch-runner.mjs';
 import {assertOperationsPreview} from './uxml-operations-view.mjs';
-import {assessShortPreview} from './short-preview-model.mjs';
 import {createOperationsPreviewPanel} from './uxml-operations-panel.mjs';
 import {runShortBulk} from './short-bulk.mjs';
 import {secondPassHTML} from './second-pass.mjs';
@@ -50,9 +49,9 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   const ownedWorker=runEngine?null:createTopologyWorkerClient();
   runEngine ||= ownedWorker.run;
   cancelEngine ||= ownedWorker?()=>ownedWorker.cancel():()=>{};
-  const state={epoch:0,source:null,original:null,revision:0,applied:0,history:[],resolutions:[],shortElements:[],shortPreview:null,scene:null,plan:null,findings:[],result:null,
-    selected:new Set(),search:'',filter:'all',category:'all',hubEnabled:false,hubParity:null,hubRevision:null,analysisProof:null,evidenceProofReason:'EVIDENCE_ANALYSIS_REQUIRED',opsPreview:null,opsPreviewError:null,shortHubPreview:null,shortHubPreviewError:null,
-     shortHubReport:null,manualPorts:[],secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false,shortBulk:null,manualQueue:[],manualQueueRunning:false,manualQueueCheckpoint:null,manualQueueStatus:''};
+  const state={epoch:0,source:null,original:null,revision:0,applied:0,history:[],resolutions:[],shortElements:[],shortSelection:null,scene:null,plan:null,findings:[],result:null,
+    selected:new Set(),search:'',filter:'all',category:'all',hubEnabled:false,hubParity:null,hubRevision:null,analysisProof:null,evidenceProofReason:'EVIDENCE_ANALYSIS_REQUIRED',opsPreview:null,opsPreviewError:null,
+     activeJob:null,shortBulkFinalizing:false,manualPorts:[],secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false,shortBulk:null,manualQueue:[],manualQueueRunning:false,manualQueueCheckpoint:null,manualQueueStatus:''};
   // The queue lives alongside Second Pass, without changing the engineering audit.
   const queuePanel=document.createElement('section');
   queuePanel.dataset.manualQueue='';
@@ -168,7 +167,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       (matching.length>350?'<p>Showing first 350 matches. Narrow the search.</p>':'');
   }
   function renderActions() {
-    const shortButton=query(root,'[data-preview-short]');
+    const shortButton=query(root,'[data-select-short]');
     if(shortButton)shortButton.disabled=!state.plan||state.busy||state.batchRunning||
       (state.hubEnabled&&(state.hubParity?.status!=='EQUAL'||!analysisProofCurrent()));
     const plan=state.plan;
@@ -381,7 +380,8 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   }
   function downloadBatchReport(){
     const fix=state.fix;
-    if(!fix?.report||fix.sourceSha256!==state.source?.sourceSha256||!hubCanRelease(true))return;
+    if(state.busy||state.batchRunning||!fix?.report||
+       fix.sourceSha256!==state.source?.sourceSha256||!hubCanRelease(true))return;
     const filename=(state.source.name.replace(/\\.xml$/i,'')||'input')+
       '.autofix-batch-report.json';
     const url=URL.createObjectURL(new Blob([JSON.stringify(fix.report,null,2)],
@@ -391,7 +391,8 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     window.setTimeout(()=>URL.revokeObjectURL(url),1000);
   }
   function downloadFix(){
-    if(!state.fix||state.fix.sourceSha256!==state.source?.sourceSha256||!hubCanRelease(true))return;
+    if(state.busy||state.batchRunning||!state.fix||
+       state.fix.sourceSha256!==state.source?.sourceSha256||!hubCanRelease(true))return;
     const blob=new Blob([state.fix.xml],{type:'application/xml;charset=utf-8'});
     const url=URL.createObjectURL(blob);
     const anchor=document.createElement('a');
@@ -400,7 +401,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     window.setTimeout(()=>URL.revokeObjectURL(url),1000);
   }
   function downloadCurrent(history=false){
-    if(!state.source||!state.revision||!hubCanRelease())return;
+    if(state.busy||state.batchRunning||!state.source||!state.revision||!hubCanRelease())return;
     const body=history?JSON.stringify({schema:'topofix-working-history/v1',
       originalSha256:state.original.sourceSha256,currentSha256:state.source.sourceSha256,
       revision:state.revision,repairs:state.history},null,2):state.source.sourceText;
@@ -623,7 +624,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       state.source=nextSource;state.scene=nextScene;state.plan=current.plan;
       invalidateManualQueue();
       state.resolutions=current.resolutions;
-      state.shortElements=current.shortElements;state.shortPreview=null;state.manualPorts=current.manualPorts;state.secondPass=null;state.openCases.clear();
+      state.shortElements=current.shortElements;state.shortSelection=null;state.manualPorts=current.manualPorts;state.secondPass=null;state.openCases.clear();
       const shortPanel=query(root,'[data-short-preview]');if(shortPanel)shortPanel.textContent='';
       state.findings=current.findings;state.result=recheck;state.selected.clear();state.gapReviews.clear();
       state.selected=new Set(changedIds);
@@ -683,158 +684,113 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   }
   function autoFix(actionId){return runFix([actionId],'single');}
 
-  function shortSelectionKey(){
-    return JSON.stringify([...(state.shortPreview?.selected||[])].sort());
-  }
-  function shortHubPreviewCurrent(){
-    const p=state.shortPreview,h=state.shortHubPreview;
-    return !!(p&&h&&state.hubEnabled&&state.hubParity?.status==='EQUAL'&&
-      h.epoch===state.epoch&&h.revision===state.revision&&
-      h.sha===state.source?.sourceSha256&&p.sha===h.sha&&
-      h.ids===shortSelectionKey()&&p.selected.size>0&&
-      h.acceptedIds===h.ids&&!state.shortHubReport?.refusedCount);
-  }
-  function invalidateShortHubPreview(){
-    state.shortHubPreview=null;state.shortHubPreviewError=null;
-    state.shortHubReport=null;
-    if(state.hubEnabled){
-      state.opsPreview=null;
-      state.opsPreviewError='SHORT_SELECTION_CHANGED_REPREVIEW_REQUIRED';
-      opsPanel.render();
-    }
-  }
-  async function previewSelectedUxmlShortOps(){
-    const p=state.shortPreview,source=state.source;
-    if(!state.hubEnabled||!p||!source||state.busy||state.batchRunning||
-       !state.plan||state.hubParity?.status!=='EQUAL'||!analysisProofCurrent()||
-       p.sha!==source.sourceSha256||p.epoch!==state.epoch)return;
-    const ids=[...p.selected].sort(),idKey=shortSelectionKey();
-    const requests=ids.map(id=>{
-      const row=state.shortElements.find(item=>item.id===id);
-      return row?.eligible&&row.sourceSha256===source.sourceSha256
-        ?{id:row.id,sourceSha256:row.sourceSha256,nodeKeys:[...row.nodeKeys]}:null;
-    });
-    if(!requests.length||requests.some(item=>!item)){
-      state.shortHubPreviewError='SHORT_SELECTION_NOT_QUALIFIED_ON_CURRENT_SOURCE';
-      renderShortPreview();return;
-    }
-    const generation=state.epoch,revision=state.revision;
-    state.busy=true;state.shortHubPreview=null;state.shortHubPreviewError=null;
-    state.shortHubReport=null;renderShortPreview();refresh();
-    updateStatus('Read-only UXML edit-ops preview for '+ids.length+
-      ' explicitly selected short elements. No XML changes applied.');
-    try{
-      const job=readOnlyAnalysisJob(source);
-      job.options.topologyShortPreviewRequests=requests;
-      const result=await runEngine(job);
-      if(generation!==state.epoch||state.source!==source||
-         revision!==state.revision||!state.hubEnabled||
-         idKey!==shortSelectionKey())return;
-      recordHubResult(result,source.rawSha256);
-      if(state.hubParity?.status!=='EQUAL')
-        throw Error('UXML_SHORT_PREVIEW_PARITY_'+state.hubParity?.status+': '+
-          (state.hubParity?.differences||[]).join(' | '));
-      // A global preview error must retain its true named builder code; it is
-      // NOT a selection mismatch, nor an implied zero-operation result.
-      if(state.opsPreviewError)throw Error(state.opsPreviewError);
-      const report=assessShortPreview(state.opsPreview,ids);
-      state.shortHubReport={...report,ids:idKey,sha:source.sourceSha256,
-        epoch:generation,revision};
-      if(report.complete){
-        state.shortHubPreview={sha:source.sourceSha256,epoch:generation,
-          revision,ids:idKey,acceptedIds:idKey};
-        updateStatus('Read-only UXML preview verified for exact current selection. '+
-          report.readyCount+' ready / 0 refused; separate explicit Apply required.');
-      }else{
-        state.shortHubPreview=null;
-        updateStatus('UXML short-element preview: '+report.readyCount+
-          ' ready / '+report.refusedCount+' refused. Deselect refused, '+
-          'then re-preview the accepted selection before Apply.');
-      }
-    }catch(error){
-      if(generation!==state.epoch)return;
-      state.shortHubPreview=null;
-      state.shortHubPreviewError='UXML_SHORT_PREVIEW_BLOCKED: '+String(error?.message||error);
-      updateStatus(state.shortHubPreviewError);
-    }finally{
-      if(generation===state.epoch){
-        state.busy=false;renderShortPreview();refresh();
-      }
-    }
-  }
-
   // This preview is only a view of source-qualified data already received.
   // Paginate so one click never constructs an unbounded DOM tree.
-  const SHORT_PREVIEW_PAGE_SIZE=24;
-  function renderShortPreview(){
-    const p=state.shortPreview,panel=query(root,'[data-short-preview]');
+  const SHORT_SELECTION_PAGE_SIZE=24;
+  function renderShortSelection(){
+    // Selection only: no separate hub short-op preview or approval gate.
+    const p=state.shortSelection,panel=query(root,'[data-short-preview]');
     if(!p||!state.source||p.sha!==state.source.sourceSha256){panel.textContent='';return;}
     const rows=state.shortElements,total=rows.length;
-    const pages=Math.max(1,Math.ceil(total/SHORT_PREVIEW_PAGE_SIZE));
+    const pages=Math.max(1,Math.ceil(total/SHORT_SELECTION_PAGE_SIZE));
     p.page=Math.max(0,Math.min(p.page,pages-1));
-    const start=p.page*SHORT_PREVIEW_PAGE_SIZE;
-    const visible=rows.slice(start,start+SHORT_PREVIEW_PAGE_SIZE);
+    const start=p.page*SHORT_SELECTION_PAGE_SIZE;
+    const visible=rows.slice(start,start+SHORT_SELECTION_PAGE_SIZE);
     const eligible=rows.filter(r=>r.eligible).length;
-    const hubReady=!state.hubEnabled||shortHubPreviewCurrent();
-    const report=state.shortHubReport;
-    const reported=!!(state.hubEnabled&&report&&report.ids===shortSelectionKey()&&
-      report.sha===state.source.sourceSha256&&report.epoch===state.epoch&&
-      report.revision===state.revision);
-    const refusedHtml=reported&&report.refusedCount?
-      '<section data-short-refusals aria-label="Refused short operations">'+
-      '<p><strong>'+report.readyCount+' ready / '+report.refusedCount+
-        ' refused</strong> · Refused items are never Apply operations.</p>'+
-      '<button type="button" data-short-deselect-refused>Deselect refused ('+
-        report.refusedCount+')</button><ul>'+
-      report.refused.map(item=>'<li data-short-refused="'+esc(item.id)+'">'+
-        '<strong>'+esc(item.id)+'</strong> · '+esc(item.plainReason)+
-        ' <code>'+esc(item.code)+'</code> '+
-        '<button type="button" data-short-refused-locate="'+esc(item.id)+
-        '">Locate original records</button></li>').join('')+
-      '</ul></section>':'';
-    panel.innerHTML='<h3>Drop elements ≤6 mm, then close</h3>'+
-      '<p role="status">PREVIEW ONLY · '+total+' measured candidates · '+eligible+
-      ' eligible under source checks · working XML unchanged. Select source owners, then explicitly Apply.</p>'+
+    const hubReady=!state.hubEnabled||
+      (state.hubParity?.status==='EQUAL'&&analysisProofCurrent());
+    panel.innerHTML='<h3>Select short elements ≤6 mm</h3>'+
+      '<p role="status">'+total+' measured candidates · '+eligible+
+      ' eligible under source checks. Select owners, then Apply. '+
+      'Each hub transaction independently checks canonical UXML operation authority, '+
+      'loss contract, original source and native validation before retaining a revision.</p>'+
       '<p data-short-selection-count>'+p.selected.size+' selected · page '+(p.page+1)+' of '+pages+'</p>'+
-      '<button data-select-gaskets>Select eligible gaskets (all pages)</button>'+
+      '<button data-select-gaskets '+(state.busy||state.batchRunning?'disabled':'')+
+        '>Select eligible gaskets (all pages)</button>'+
       '<ul>'+visible.map((r,i)=>'<li><label><input type="checkbox" data-short-index="'+(start+i)+'" '+
-        (!r.eligible?'disabled ':'')+(p.selected.has(r.id)?'checked ':'')+'>'+
+        (!r.eligible||state.busy||state.batchRunning?'disabled ':'')+
+        (p.selected.has(r.id)?'checked ':'')+'>'+
         esc(r.componentType+' · '+Number(r.lengthMm).toFixed(3)+' mm'+
         (r.lengthBasis==='SOURCE_STRAIGHT_TWO_PORT_SPAN'?'':' source span; physical length unverified')+
         ' · '+r.componentRefNo+' · '+r.recordCount+' records · weight '+r.weightRemoved)+
         '</label><small>'+esc((r.nodeKeys||[]).join(', ')+' · '+
         (r.eligible?'Length basis: straight port spacing':r.reason||'Manual review'))+
         '</small></li>').join('')+'</ul>'+
-      '<div class="short-preview-pagination"><button data-short-prev '+(!p.page?'disabled':'')+'>Previous</button>'+
-      '<button data-short-next '+(p.page>=pages-1?'disabled':'')+'>Next</button></div>'+
-      (state.hubEnabled?'<button data-short-hub-preview '+(!p.selected.size||state.busy?'disabled':'')+
-        '>Preview selected UXML edit operations ('+p.selected.size+')</button>'+
-        '<p data-short-hub-status role="status">'+esc(state.shortHubPreviewError||
-          (reported?report.readyCount+' ready / '+report.refusedCount+
-             ' refused'+(hubReady?' · UXML operation preview verified for exact current selection.':
-               ' · Deselect refused, then re-preview before Apply.'):
-           hubReady?'UXML operation preview verified for exact current selection.':
-             'Select source owners, then preview exact UXML edit operations before Apply.'))+
-        '</p>'+refusedHtml:'')+
-      (total?'<button data-run-short-drop '+(!p.selected.size||!hubReady?'disabled':'')+
-        '>Apply all '+p.selected.size+' selected &amp; close</button>':
+      '<div class="short-preview-pagination"><button data-short-prev '+
+        (!p.page||state.busy||state.batchRunning?'disabled':'')+'>Previous</button>'+
+      '<button data-short-next '+
+        (p.page>=pages-1||state.busy||state.batchRunning?'disabled':'')+'>Next</button></div>'+
+      (total?'<button data-run-short-drop '+
+        (!p.selected.size||!hubReady||state.busy||state.batchRunning?'disabled':'')+
+        '>Apply '+p.selected.size+' selected &amp; close</button>':
         '<p>No measurable two-port elements at ≤6 mm.</p>')+
-      '<p>One source-bound transaction and recheck per element. Cancel at any point; only validated revisions are retained.</p>';
+      '<p>Cancel retains the last validated revision. Refused owners are reported individually and never written.</p>';
     explainDisabledActions();
   }
-  function previewShortElements(){
+  function selectShortElements(){
     if(!state.source||!state.plan||state.busy||state.batchRunning)return;
-    state.shortPreview={sha:state.source.sourceSha256,epoch:state.epoch,page:0,selected:new Set()};
-    state.shortHubPreview=null;state.shortHubPreviewError=null;
-    state.shortHubReport=null;
-    renderShortPreview();
+    state.shortSelection={sha:state.source.sourceSha256,epoch:state.epoch,page:0,selected:new Set()};
+    renderShortSelection();
     query(root,'[data-short-preview]').scrollIntoView({block:'nearest'});
+  }
+
+  function showShortBulkAudit(outcome){
+    // Presentation only. Each applied op is the exact canonical operation
+    // returned after export_edit_ops -> apply_edit_ops -> byte-equal native
+    // comparison; every refusal is retained with its original named reason.
+    const panel=query(root,'[data-fix-result]');if(!panel)return;
+    const applied=outcome?.applied||[],skipped=outcome?.skipped||[];
+    if(!applied.length&&!skipped.length)return;
+    const details=document.createElement('details');
+    details.dataset.shortBulkOperations='';
+    const summary=document.createElement('summary');
+    summary.textContent='Review source-bound Apply operations: '+applied.length+
+      ' validated, '+skipped.length+' skipped/refused';
+    details.appendChild(summary);
+    const list=document.createElement('ul');
+    for(const pass of applied){
+      const op=pass.canonicalEditOps?.[0];
+      const removed=(op?.removedWithRecord||[])
+        .map(x=>x.recordKey+' / '+x.field).join('; ')||'none';
+      const li=document.createElement('li');
+      li.textContent=pass.id+' · validated original source operation · removed records: '+
+        (op?.targets||[]).join(', ')+' · removedWithRecord: '+removed;
+      list.appendChild(li);
+    }
+    for(const item of skipped){
+      const li=document.createElement('li');
+      li.textContent=item.id+' · SKIPPED (no write) · '+item.reason;
+      list.appendChild(li);
+    }
+    details.appendChild(list);panel.appendChild(details);
+  }
+
+  function holdShortHubRelease(reason){
+    if(!state.hubEnabled)return;
+    // Set source-release custody FIRST. Neither a canvas render exception nor
+    // a second publication exception may preserve a stale EQUAL download gate.
+    state.hubParity={status:'DIFFERENT',differences:[String(reason||'SHORT_BULK_HUB_HOLD')]};
+    state.hubRevision=null;
+    state.opsPreview=null;state.opsPreviewError=null;
+    clearEvidenceProof('EVIDENCE_RECHECK_PARITY_NOT_EQUAL');
+    // Rendering is advisory; hard release gates above survive UI exceptions.
+    try{renderHubParity();opsPanel.render();}catch{/* custody already HELD */}
   }
 
   /** One UI publication for a fully audited sequence (or last validated checkpoint).
    * Never call runFix() or repaint the canvas per selected element.
    */
   async function publishShortBulk(outcome,generation=state.epoch){
+    // Decide and enforce hub authority before ANY working-source mutation.
+    const reason=outcome?.stopReason||'COMPLETE';
+    // The Worker may carry a stronger hub-HOLD witness than its stop label.
+    // A COMPLETE/CANCELLED label never overrides an explicit native mismatch.
+    const hubMismatch=state.hubEnabled&&(
+      (reason!=='COMPLETE'&&reason!=='CANCELLED')||outcome?.hubMismatch===true);
+    // RELEASE LAST: revoke previous authority until every parse, UI write,
+    // source-count check and evidence recheck has succeeded.
+    state.hubRevision=null;
+    if(hubMismatch)holdShortHubRelease(outcome?.stopMessage||'SHORT_BULK_HUB_HOLD:'+reason);
     if(!outcome||outcome.originSha256!==state.source?.sourceSha256)
       throw Error('SHORT_BULK_ORIGINAL_SOURCE_DRIFT');
     const beforeCount=state.findings.length,applied=outcome.applied||[];
@@ -849,18 +805,17 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       state.resolutions=next.findings.resolvedConnections||[];
       state.shortElements=next.findings.shortElements||[];
       state.manualPorts=next.findings.manualConnectionPorts||[];
-      state.secondPass=null;state.shortPreview=null;state.selected.clear();
+      state.secondPass=null;state.shortSelection=null;state.selected.clear();
       state.gapReviews.clear();state.openCases.clear();
       query(root,'[data-short-preview]').textContent='';
       for(const [i,pass] of applied.entries()){
         state.history.push({sourceSha256:pass.sourceSha256,fixedSha256:pass.fixedSha256,
-          actionIds:[pass.id],operations:pass.transaction.operations,validation:pass.validation.checks,
+          actionIds:[pass.id],operations:pass.transaction.operations,
+          canonicalEditOps:pass.canonicalEditOps,validation:pass.validation.checks,
           reviews:i===0?reviews:{},resolvedConnections:i===applied.length-1?state.resolutions:[]});
       }
       state.revision+=applied.length;
       state.applied+=applied.length;
-      state.hubRevision=state.hubEnabled?state.revision:null;
-      state.shortHubPreview=null;state.shortHubPreviewError=null;
       clearEvidenceProof('EVIDENCE_RECHECK_PENDING');
       state.fix={sourceSha256:state.source.sourceSha256,receiptKey:'drop',
         hubRoute:state.hubEnabled,
@@ -887,62 +842,116 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     const checked=done+skipped+failed,unprocessed=Math.max(0,selected-checked);
     const nowEligible=state.shortElements.filter(r=>r.eligible).length;
     if(checked+unprocessed!==selected)throw Error('SHORT_BULK_COUNT_RECONCILIATION_FAILED');
-    const reason=outcome.stopReason||'COMPLETE';
     const message=(reason==='COMPLETE'?'BULK COMPLETE':'BULK STOPPED · '+reason)+
       ' · selected '+selected+' = '+done+' validated + '+skipped+' skipped + '+failed+
       ' failed + '+unprocessed+' unprocessed · eligible on CURRENT XML '+nowEligible+
       ' · working revision '+state.revision+
       (outcome.stopMessage?' · '+outcome.stopMessage:'')+
-      (done?' · validated XML, source-linked operations and lineage digests downloadable.':' · no XML changed.');
-    const hubMismatch=state.hubEnabled&&
-      String(outcome.stopMessage||'').startsWith('UXML_SHORT_PARITY_');
-    if(hubMismatch){
-      // Fail closed BEFORE a status refresh can expose a previous EQUAL
-      // checkpoint, including while an asynchronous evidence recheck runs.
-      state.hubParity={status:'DIFFERENT',differences:[outcome.stopMessage]};
-      state.hubRevision=null;state.opsPreview=null;state.shortHubPreview=null;
-      clearEvidenceProof('EVIDENCE_RECHECK_PARITY_NOT_EQUAL');
-      renderHubParity();
-    }
+      (hubMismatch?' · last validated checkpoint retained; corrected downloads HELD.':
+       done?' · validated XML, source-linked operations and lineage digests downloadable.':
+         ' · no XML changed.');
     query(root,'[data-progress]').textContent=message;
     setFixStatus(message,hubMismatch?'rejected':
       reason==='COMPLETE'&&done?'ready':done?'stopped':'rejected','drop');
+    showShortBulkAudit(outcome);
     updateStatus('Selected short-element batch finished. '+done+
-      ' validated; '+skipped+' not eligible on reanalysis. Engineering review remains required.');
+      ' validated; '+skipped+' skipped/refused. Engineering review remains required.');
     // On a hub mismatch, do not reset the negative parity by reanalysing
     // the partially validated checkpoint until an explicit fresh Analyze.
     if(outcome.latest&&done&&!hubMismatch)
       await refreshPublishedEvidence(generation,state.revision,state.source);
+    // No preview heartbeat may overwrite a terminal Apply result. A later
+    // evidence mismatch is a HOLD, never an implied corrected download.
+    if(generation===state.epoch)
+      query(root,'[data-progress]').textContent=
+        state.hubEnabled&&state.hubParity?.status!=='EQUAL'?
+          message+' · HUB EVIDENCE HOLD: re-analyse before download.':message;
+    // FINAL statement. Never add any throwable UI work after hub release:
+    // even CANCELLED outcomes must finish all writes/recheck first.
+    if(state.hubEnabled&&!hubMismatch&&generation===state.epoch&&
+       state.hubParity?.status==='EQUAL'&&analysisProofCurrent())
+      state.hubRevision=state.revision;
+  }
+
+  /** All short-bulk publication paths (finish, engine ERROR, Cancel) go here.
+   * A publication failure never rethrows and cannot unlock a corrected download.
+   * Retry uses the ACTUAL outcome, not a fabricated zero-progress checkpoint.
+   */
+  async function publishShortBulkGuarded(outcome,generation=state.epoch){
+    try{
+      await publishShortBulk(outcome,generation);
+      return true;
+    }catch(error){
+      const why=String(error?.message||error);
+      const label='SHORT_BULK_PUBLICATION_FAILED:'+why;
+      if(state.hubEnabled)holdShortHubRelease(label);
+      // If parse/scene setup failed before source publication, the original
+      // SHA still matches and the same validated outcome can be re-presented.
+      // If source already advanced, retry is source-bound and must refuse;
+      // NEVER silently re-apply a transaction against the advanced source.
+      const retry={...outcome,stopReason:'ERROR',stopMessage:label,
+        hubMismatch:state.hubEnabled};
+      try{
+        if(generation===state.epoch&&state.source?.sourceSha256===outcome?.originSha256)
+          await publishShortBulk(retry,generation);
+      }catch(republishError){
+        if(state.hubEnabled)holdShortHubRelease(
+          'SHORT_BULK_REPUBLISH_FAILED:'+String(republishError?.message||republishError));
+      }
+      // No second publication or renderer is trusted for release custody.
+      if(state.hubEnabled)holdShortHubRelease(label);
+      const retained=state.revision;
+      const validated=outcome?.applied?.length||0;
+      const report='BULK STOPPED · ERROR · '+label+
+        ' · working revision '+retained+' retained; '+
+        validated+' native-validated item(s) in attempted publication'+
+        (state.hubEnabled?' · corrected downloads HELD.':
+          ' · working-source release requires review.');
+      try{
+        if(generation===state.epoch){
+          query(root,'[data-progress]').textContent=report;
+          setFixStatus(report,'rejected','drop');
+          updateStatus('Publication failed; working revision '+retained+
+            ' retained. Inspect the source-bound receipt before retry.');
+        }
+      }catch{/* no UI exception may escape the source-release gate */}
+      return false;
+    }
   }
   async function dropShortElements(){
-    if(state.hubEnabled&&(!shortHubPreviewCurrent()||
-       state.hubParity?.status!=='EQUAL'||!analysisProofCurrent())){
-      setFixStatus('UXML_SHORT_PREVIEW_OR_PARITY_REQUIRED: preview selected edits and verify EQUAL before Apply.','rejected');
+    if(state.hubEnabled&&
+       (state.hubParity?.status!=='EQUAL'||!analysisProofCurrent())){
+      setFixStatus('UXML_SHORT_PARITY_OR_EVIDENCE_REQUIRED: Analyze the current source and verify EQUAL before Apply.','rejected');
       return;
     }
-    const p=state.shortPreview;
+    const p=state.shortSelection;
     if(state.busy||state.batchRunning||!p||p.epoch!==state.epoch||
        p.sha!==state.source?.sourceSha256)return;
-    const eligibleIds=new Set(state.shortElements.filter(r=>r.eligible).map(r=>r.id));
-    const ids=[...p.selected].filter(id=>eligibleIds.has(id));
+    // Do not silently drop a source-bound selection: per-owner Apply reports
+    // each ineligible/refused item with its exact current-revision reason.
+    const ids=[...p.selected];
     if(!ids.length){setFixStatus('Select at least one source-qualified element.','rejected');return;}
     const generation=state.epoch,source={...state.source};
-    state.batchRunning=true;state.shortBulk=null;refresh();
+    state.batchRunning=true;state.activeJob='short-bulk';
+    state.shortBulk=null;refresh();
     const startedAt=Date.now();
-    let lastBulkStatus='STARTING',lastCompleted=0,lastApplied=0,lastSkipped=0;
+    let lastCompleted=0,lastApplied=0,lastSkipped=0,bulkFinished=false,
+      itemInFlight=false;
     const paintBulkProgress=()=>{
-      if(generation!==state.epoch||!state.batchRunning)return;
-      const elapsed=Math.floor((Date.now()-startedAt)/1000);
+      if(generation!==state.epoch||!state.batchRunning||bulkFinished)return;
+      const elapsed=Math.max(0,(Date.now()-startedAt)/1000);
+      const remaining=lastCompleted>0&&lastCompleted<ids.length?
+        Math.ceil(elapsed*(ids.length-lastCompleted)/lastCompleted):null;
+      const eta=remaining===null?'estimating after first item':
+        '~ETA '+(remaining>=60?Math.ceil(remaining/60)+' min':
+          Math.max(1,remaining)+' sec')+' (approximate)';
       query(root,'[data-progress]').textContent=
-        'BULK '+lastBulkStatus+' · '+lastCompleted+'/'+ids.length+
-        ' selected checked · '+lastApplied+' validated · '+lastSkipped+' skipped · '+
-        elapsed+' s elapsed · audit/canvas show PRE-BATCH REVISION '+state.revision+
-        ' (frozen snapshot until final publication). Cancel remains available.';
+        'Applying '+Math.min(ids.length,lastCompleted+(itemInFlight?1:0))+' of '+ids.length+' · '+
+        lastApplied+' validated · '+lastSkipped+' skipped · '+eta+
+        ' · Cancel available; only validated working revisions retained.';
     };
     const heartbeat=setInterval(paintBulkProgress,1000);
-    query(root,'[data-progress]').textContent=
-      'BULK STARTED · 0/'+ids.length+' selected checked. Audit counts and canvas are PRE-BATCH SNAPSHOT at revision '+
-      state.revision+'. Python validates each owner headlessly; canvas refreshes after the batch.';
+    paintBulkProgress();
     try{
       const outcome=await runShortBulk({
         source,shortElements:state.shortElements,selectedIds:ids,runEngine,
@@ -951,23 +960,31 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
         onCheckpoint:checkpoint=>{if(generation===state.epoch)state.shortBulk=checkpoint;},
         onProgress:step=>{
           if(generation!==state.epoch)return;
-          lastBulkStatus=step.status;
           lastCompleted=step.completed;lastApplied=step.applied;lastSkipped=step.skipped;
+          itemInFlight=step.status==='APPLYING';
           paintBulkProgress();
         },
       });
       if(generation!==state.epoch)return;
-      state.shortBulk=null;
-      await publishShortBulk(outcome,generation);
+      bulkFinished=true;clearInterval(heartbeat);
+      state.shortBulkFinalizing=true;state.shortBulk=null;refresh();
+      await publishShortBulkGuarded(outcome,generation);
     }catch(error){
       if(generation!==state.epoch)return;
+      // The native job itself failed before a terminal outcome. Preserve
+      // its latest validated checkpoint rather than inventing an empty batch.
       const checkpoint=state.shortBulk||{originSha256:source.sourceSha256,latest:null,
         applied:[],skipped:[],requested:ids,completed:0};
-      state.shortBulk=null;
-      await publishShortBulk({...checkpoint,stopReason:'ERROR',stopMessage:error?.message||String(error)},generation);
+      bulkFinished=true;clearInterval(heartbeat);
+      state.shortBulkFinalizing=true;state.shortBulk=null;
+      await publishShortBulkGuarded({...checkpoint,stopReason:'ERROR',
+        stopMessage:String(error?.message||error),hubMismatch:state.hubEnabled},generation);
     }finally{
       clearInterval(heartbeat);
-      if(generation===state.epoch){state.batchRunning=false;state.shortBulk=null;refresh();}
+      if(generation===state.epoch){
+        state.batchRunning=false;state.shortBulkFinalizing=false;
+        state.activeJob=null;state.shortBulk=null;refresh();
+      }
     }
   }
 
@@ -1027,7 +1044,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       state.shortElements=next.findings.shortElements||[];
       state.manualPorts=next.findings.manualConnectionPorts||[];
       state.selected.clear();state.openCases.clear();state.gapReviews.clear();
-      state.secondPass=null;state.shortPreview=null;
+      state.secondPass=null;state.shortSelection=null;
       const shortPanel=query(root,'[data-short-preview]');
       if(shortPanel)shortPanel.textContent='';
       for(const item of applied){
@@ -1266,12 +1283,15 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     const hubToggle=query(root,'[data-uxml-toggle]');
     if(hubToggle){hubToggle.checked=state.hubEnabled;hubToggle.disabled=state.busy||state.batchRunning;}
     renderHubParity();
-    query(root,'[data-cancel]').disabled=!(state.busy||state.batchRunning);
+    query(root,'[data-cancel]').disabled=
+      !(state.busy||state.batchRunning)||state.shortBulkFinalizing;
     getNodes(root,'[data-auto-fix],[data-close-joint],[data-add-second-pass]').forEach(button=>
       button.disabled=state.busy||state.batchRunning||
         (state.hubEnabled&&(state.hubParity?.status!=='EQUAL'||!button.hasAttribute('data-auto-fix'))));
     getNodes(root,'[data-download-working],[data-download-history]').forEach(button=>
-      button.disabled=state.busy||!state.revision||!hubCanRelease());
+      button.disabled=state.busy||state.batchRunning||!state.revision||!hubCanRelease());
+    getNodes(root,'[data-download-fix],[data-download-batch-report]').forEach(button=>
+      button.disabled=state.busy||state.batchRunning||!hubCanRelease(true));
     explainDisabledActions();
   }
   function select(ids,add=false) {
@@ -1293,11 +1313,12 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       (hits.length>50?'… More than 50 hits; use text search.':'');
   }
   async function load(file) {
+    // Retire stale progress and Cancel dispatch before the old finally can run.
+    state.activeJob=null;
     cancelEngine();
     const generation=++state.epoch;
     state.shortBulk=null;
-    state.shortHubPreview=null;state.shortHubPreviewError=null;
-    state.source=null;state.original=null;state.revision=0;state.hubParity=null;state.hubRevision=null;clearEvidenceProof('EVIDENCE_ANALYSIS_REQUIRED');state.opsPreview=null;state.opsPreviewError=null;state.applied=0;state.history=[];state.resolutions=[];state.shortElements=[];state.shortPreview=null;
+    state.source=null;state.original=null;state.revision=0;state.hubParity=null;state.hubRevision=null;clearEvidenceProof('EVIDENCE_ANALYSIS_REQUIRED');state.opsPreview=null;state.opsPreviewError=null;state.applied=0;state.history=[];state.resolutions=[];state.shortElements=[];state.shortSelection=null;
     const shortPanel=query(root,'[data-short-preview]');if(shortPanel)shortPanel.textContent='';
     state.manualPorts=[];state.secondPass=null;state.manualQueue=[];
     state.manualQueueCheckpoint=null;state.manualQueueRunning=false;
@@ -1366,6 +1387,9 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   }
   const click=async event=>{
     const target=event.target.closest('button');if(!target||!root.contains(target))return;
+    // A disabled Cancel is not an authorized action, including injected clicks
+    // while completed Apply is still performing its evidence recheck.
+    if(target.hasAttribute('data-cancel')&&target.disabled)return;
     if(target.hasAttribute('data-auto-fix-all'))planAutoFixAll();
     else if(target.hasAttribute('data-run-auto-fix-all'))autoFixAll();
     else if(target.hasAttribute('data-cancel-auto-fix-all')){
@@ -1397,43 +1421,25 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       const rules=getNodes(root,'.audit-rule');state.openRules.set(state.filter,new Set(open?rules.map(r=>r.dataset.ruleCode):[]));
       rules.forEach(r=>r.open=open);
     }
-    else if(target.hasAttribute('data-preview-short'))previewShortElements();
-    else if(target.hasAttribute('data-short-hub-preview'))previewSelectedUxmlShortOps();
-    else if(target.hasAttribute('data-short-refused-locate')){
-      const row=state.shortElements.find(x=>x.id===target.dataset.shortRefusedLocate);
-      const ids=(row?.nodeKeys||[]).map(key=>state.scene?.byKey.get(key)?.id)
-        .filter(Boolean);
-      if(ids.length){
-        select(ids);canvas.focus(ids);
-        displayMessage('Refused short-element owner: '+row.id+
-          ' · '+ids.length+' exact original occurrence(s) highlighted.');
-        query(root,'[data-canvas]')?.scrollIntoView({block:'center'});
-      }else displayMessage('No exact source occurrence is available; location not guessed.');
-    }
-    else if(target.hasAttribute('data-short-deselect-refused')){
-      const report=state.shortHubReport,p=state.shortPreview;
-      if(!report||!p||report.ids!==shortSelectionKey()||
-         report.sha!==state.source?.sourceSha256||
-         report.epoch!==state.epoch||report.revision!==state.revision||
-         !state.hubEnabled)return;
-      const removed=report.refused.filter(x=>p.selected.delete(x.id)).length;
-      invalidateShortHubPreview();renderShortPreview();
-      updateStatus(removed+' refused owner(s) deselected. '+
-        'Re-preview the remaining exact selection before Apply.');
-    }
+    else if(target.hasAttribute('data-select-short'))selectShortElements();
     else if(target.hasAttribute('data-select-gaskets')){
-      const p=state.shortPreview;if(!p)return;
+      const p=state.shortSelection;if(!p||state.busy||state.batchRunning)return;
       for(const r of state.shortElements)if(r.eligible&&r.componentType==='GASK')p.selected.add(r.id);
-      invalidateShortHubPreview();renderShortPreview();
+      renderShortSelection();
     }
     else if(target.hasAttribute('data-short-prev')){
-      if(state.shortPreview){state.shortPreview.page--;renderShortPreview();}
+      if(state.shortSelection&&!state.busy&&!state.batchRunning){state.shortSelection.page--;renderShortSelection();}
     }
     else if(target.hasAttribute('data-short-next')){
-      if(state.shortPreview){state.shortPreview.page++;renderShortPreview();}
+      if(state.shortSelection&&!state.busy&&!state.batchRunning){state.shortSelection.page++;renderShortSelection();}
     }
     else if(target.hasAttribute('data-run-short-drop'))dropShortElements();
     else if(target.hasAttribute('data-analyze'))analyze();
+    else if(target.hasAttribute('data-cancel')&&state.shortBulkFinalizing){
+      // Native Apply is complete; recheck is still running. Preserve
+      // the truthful terminal status and committed working revisions.
+      return;
+    }
     else if(target.hasAttribute('data-cancel')&&state.manualQueueRunning){
       const saved=state.manualQueueCheckpoint;
       cancelEngine();state.epoch++;state.busy=false;
@@ -1448,12 +1454,14 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       // checkpoint. Do not invoke a second engine run or leave a half-applied UI.
       const saved=state.shortBulk;
       cancelEngine();state.epoch++;state.busy=false;state.batchRunning=false;
+      state.activeJob=null;
       state.shortBulk=null;
-      await publishShortBulk({...saved,stopReason:'CANCELLED',stopMessage:'User cancelled active batch'},state.epoch);
+      await publishShortBulkGuarded({...saved,stopReason:'CANCELLED',
+        stopMessage:'User cancelled active batch'},state.epoch);
       refresh();
     }
-    else if(target.hasAttribute('data-cancel')){cancelEngine();state.secondPass=null;state.shortPreview=null;
-      query(root,'[data-short-preview]').textContent='';state.epoch++;state.busy=false;state.batchRunning=false;refresh();
+    else if(target.hasAttribute('data-cancel')){cancelEngine();state.secondPass=null;state.shortSelection=null;
+      query(root,'[data-short-preview]').textContent='';state.epoch++;state.busy=false;state.batchRunning=false;state.activeJob=null;refresh();
       state.batch=null;query(root,'[data-batch-confirm]').textContent='';
       query(root,'[data-progress]').textContent='CANCELLED · working revision '+state.revision+' retained.';
       setFixStatus('Operation cancelled. No new working revision applied.','rejected');
@@ -1511,28 +1519,28 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     else if(target.hasAttribute('data-focus'))canvas.focus(state.selected);
   };
   const changed=event=>{
-    if(event.target.matches('[data-short-index]')){
-      const p=state.shortPreview,r=state.shortElements[Number(event.target.dataset.shortIndex)];
+    if(event.target.matches('[data-short-index]')&&!state.busy&&!state.batchRunning){
+      const p=state.shortSelection,r=state.shortElements[Number(event.target.dataset.shortIndex)];
       if(p&&r?.eligible&&p.epoch===state.epoch&&p.sha===state.source?.sourceSha256){
         if(event.target.checked)p.selected.add(r.id);else p.selected.delete(r.id);
-        invalidateShortHubPreview();renderShortPreview();
+        renderShortSelection();
       }
     }
     const d=state.secondPass;
-    if(d&&event.target.matches('[data-second-source],[data-second-peer]')){
+    if(d&&!state.busy&&!state.batchRunning&&
+       event.target.matches('[data-second-source],[data-second-peer]')){
       if(event.target.matches('[data-second-source]')){d.sourceKey=event.target.value;d.peerKey='';}
       else d.peerKey=event.target.value;
       d.preview=null;d.confirmed=false;d.status='Selection changed. Preview this exact pair before applying.';renderSecondPass();
     }
-    if(d&&event.target.matches('[data-second-confirm]')){d.confirmed=event.target.checked;updateSecondApply();}
+    if(d&&!state.busy&&!state.batchRunning&&event.target.matches('[data-second-confirm]')){d.confirmed=event.target.checked;updateSecondApply();}
     if(event.target.matches('[data-file]')&&event.target.files?.[0]){
       const file=event.target.files[0];event.target.value='';load(file);
     }
     if(event.target.matches('[data-uxml-toggle]')){
       if(state.busy||state.batchRunning){event.target.checked=state.hubEnabled;return;}
       state.hubEnabled=event.target.checked;state.hubParity=null;clearEvidenceProof('EVIDENCE_ANALYSIS_REQUIRED');state.opsPreview=null;state.opsPreviewError=null;
-      state.shortHubPreview=null;state.shortHubPreviewError=null;
-      state.shortHubReport=null;state.shortPreview=null;
+      state.shortSelection=null;
       query(root,'[data-short-preview]').textContent='';
       opsPanel.reset();
       renderHubParity();renderActions();refresh();
@@ -1571,8 +1579,13 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     occurrences:state.scene?.records.length||0,actions:state.plan?.actions.length||0,
     selected:[...state.selected],busy:state.busy,
     hubEnabled:state.hubEnabled,hubParity:state.hubParity?.status||'OFF',
+    hubRevision:state.hubRevision,activeJob:state.activeJob,
+    shortBulkFinalizing:state.shortBulkFinalizing,
     queued:state.manualQueue.map(x=>({id:x.id,status:x.status})),queueBusy:state.manualQueueRunning}),load,analyze,
-    dispose(){cancelEngine();ownedWorker?.dispose();state.epoch++;opsPanel.dispose();canvas.dispose();root.removeEventListener('toggle',toggled,true);root.removeEventListener('click',click);
+    dispose(){
+      state.activeJob=null;
+      cancelEngine();ownedWorker?.dispose();state.epoch++;
+      opsPanel.dispose();canvas.dispose();root.removeEventListener('toggle',toggled,true);root.removeEventListener('click',click);
       root.removeEventListener('change',changed);root.removeEventListener('input',input);}};
 }
 const root=document.querySelector('#xml229-topology-workspace');
