@@ -185,7 +185,12 @@ test('336 generated PSI116 occurrences: real Worker/Pyodide one short-drop with 
   txn0.source.path='<same-input>';txn1.source.path='<same-input>';
   assert.deepEqual(txn0,txn1,'full source-bound transaction evidence');
   const [line0,line1]=parsed('lineage');
-  assert.deepEqual(line0,line1,'full source-linked lineage');
+  // The input source is identical, but each Worker invocation uses its own
+  // transient /work/... path, which is included in transactionSha256. As
+  // above, compare the entire source/operation lineage after removing ONLY
+  // the expected nondeterministic transaction-path-derived digest.
+  delete line0.transactionSha256;delete line1.transactionSha256;
+  assert.deepEqual(line0,line1,'all source-linked lineage except transient path digest');
   console.log('UXML_SHORT_MEMO_PYODIDE_ON_OFF='+JSON.stringify(memoPair.map(m=>({
     memoEnabled:m.enabled,elapsedMs:+m.elapsedMs.toFixed(1),
     enginePyodideMs:+m.phases.enginePyodideMs.toFixed(1),
