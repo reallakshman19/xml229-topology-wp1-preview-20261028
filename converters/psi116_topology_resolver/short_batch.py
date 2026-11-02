@@ -176,15 +176,86 @@ def normalized_owner_evidence(transaction):
     return tuple(evidence)
 
 
+def _replay_owner_revisions(before,operations,requests,candidate_xml):
+    """Exact sequential per-owner hashes from group-authorized operations.
+
+    This is a lightweight deterministic XML field replay, NOT another native
+    transaction. Each removed/changed source key is independently accounted
+    and every intermediate XML revision is serialized in selection order.
+    The last byte string MUST equal the native group output.
+    """
+    root=_parse_clone(before.document.source_text)
+    locators=_build_locator_index(root,before)
+    by_id=defaultdict(list)
+    for operation in operations:
+        by_id[operation.action_id].append(operation)
+    original=before.document.source_text
+    current=original
+    revisions=[]
+    seen=set()
+    for request in requests:
+        owner=request["id"]
+        edits=by_id.pop(owner,[])
+        _require(bool(edits),"SHORT_BATCH_OWNER_REPLAY_OP_MISSING")
+        source_sha=sha256(current.encode("utf-8")).hexdigest()
+        removed_keys=[]
+        changed_keys=[]
+        for op in edits:
+            key=op.source_node_key
+            _require(key not in seen and key in locators,
+                     "SHORT_BATCH_OWNER_REPLAY_KEY_DRIFT")
+            seen.add(key)
+            locator=locators[key]
+            element=locator.node_element
+            if op.operation=="REMOVE_SELECTED_SHORT_ELEMENT_RECORD":
+                from .lineage import _canonical
+                _require(_canonical(ET.fromstring(op.before))==_canonical(element),
+                         "SHORT_BATCH_OWNER_REPLAY_DELETE_BEFORE_DRIFT")
+                locator.branch_element.remove(element)
+                removed_keys.append(key)
+            elif op.operation=="CLOSE_COMPONENT_PORT":
+                _require(isinstance(op.before,dict) and
+                         isinstance(op.after,dict) and
+                         set(op.before)==set(op.after)=={"NodeNumber","Position"},
+                         "SHORT_BATCH_OWNER_REPLAY_PORT_SCHEMA_INVALID")
+                for field in ("NodeNumber","Position"):
+                    child=_child(element,field)
+                    _require(child is not None and
+                             child.text==op.before[field],
+                             "SHORT_BATCH_OWNER_REPLAY_PORT_BEFORE_DRIFT")
+                    child.text=op.after[field]
+                changed_keys.append(key)
+            else:
+                raise ShortBatchRefused("SHORT_BATCH_OWNER_REPLAY_UNEXPECTED_OPERATION")
+        _require(set(removed_keys)==set(request["nodeKeys"]) and
+                 len(removed_keys)==len(request["nodeKeys"]),
+                 "SHORT_BATCH_OWNER_REPLAY_REMOVAL_MISMATCH")
+        current=_serialize(root,before.document.namespace)
+        revisions.append({
+            "id":owner,"sourceSha256":source_sha,
+            "fixedSha256":sha256(current.encode("utf-8")).hexdigest(),
+            "removedSourceKeys":sorted(removed_keys),
+            "changedSourceKeys":sorted(changed_keys),
+            "sourceXmlMutated":False,
+        })
+    _require(not by_id and len(revisions)==len(requests),
+             "SHORT_BATCH_OWNER_REPLAY_CENSUS_MISMATCH")
+    _require(current==candidate_xml,
+             "SHORT_BATCH_OWNER_REPLAY_FINAL_BYTES_DIFFERENT")
+    return tuple(revisions)
+
+
 @dataclass(frozen=True)
 class IndependentShortBatchResult(TopoFixTransactionResult):
     owner_evidence: tuple[dict,...] = field(default_factory=tuple)
+    owner_revisions: tuple[dict,...] = field(default_factory=tuple)
 
     def transaction_payload(self):
         result=super().transaction_payload()
         result["batch"]={"schema":BATCH_SCHEMA,
                          "ownerCount":len(self.owner_evidence),
                          "owners":list(self.owner_evidence),
+                         "ownerRevisions":list(self.owner_revisions),
                          "atomic":True}
         return result
 
@@ -397,7 +468,13 @@ def apply_independent_short_batch(
     _require(len(owners)==len(rows) and
              sum(x["operationCount"] for x in owners)==len(operations),
              "SHORT_BATCH_PER_OWNER_ACCOUNTING_REJECTED")
-    candidate=replace(candidate,owner_evidence=owners)
+    revisions=_replay_owner_revisions(
+        before,candidate.operations,policy.short_element_requests,final_xml)
+    _require(len(revisions)==len(owners) and
+             [x["id"] for x in revisions]==[x["id"] for x in owners],
+             "SHORT_BATCH_OWNER_REVISION_CENSUS_MISMATCH")
+    candidate=replace(candidate,owner_evidence=owners,
+                      owner_revisions=revisions)
     # Full source occurrence lineage replays ALL changes from original XML.
     # Includes exact original/after attributes and forbids undeclared writes.
     from .lineage import build_topofix_source_lineage
@@ -531,16 +608,21 @@ def apply_short_batch_bisect(source: str,owner_ids:Sequence[str],
             _require(len(evidence)==len(ids) and
                      [item["id"] for item in evidence]==list(ids) and
                      len(batch.owner_evidence)==len(ids) and
-                     batch.owner_evidence==evidence,
+                     batch.owner_evidence==evidence and
+                     len(batch.owner_revisions)==len(ids) and
+                     [r["id"] for r in batch.owner_revisions]==list(ids) and
+                     all(r["sourceXmlMutated"] is False for r in batch.owner_revisions),
                      "SHORT_BATCH_OWNER_EVIDENCE_CENSUS_MISMATCH")
         except (ShortBatchRefused,ValueError,KeyError):
             halfway=len(ids)//2
             recurse(ids[:halfway]);recurse(ids[halfway:]);return
         old_sha=sha256(result_source.encode("utf-8")).hexdigest()
         result_source=batch.fixed_xml
-        for item in evidence:
+        for item,revision in zip(evidence,batch.owner_revisions):
             outcomes.append({"id":item["id"],"status":"COMMITTED",
-                             "sourceSha256":old_sha,"evidence":item})
+                             "sourceSha256":revision["sourceSha256"],
+                             "fixedSha256":revision["fixedSha256"],
+                             "evidence":item})
         batches.append({"ids":list(ids),"sourceSha256":old_sha,
                         "fixedSha256":sha256(result_source.encode()).hexdigest(),
                         "transaction":batch.transaction_payload(),
