@@ -720,9 +720,9 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       'Each hub transaction independently checks canonical UXML operation authority, '+
       'loss contract, original source and native validation before retaining a revision.</p>'+
       '<label><input type="checkbox" data-short-independent '+
-         '(state.independentShortGroups?'checked ':'')+
-         '(state.busy||state.batchRunning?'disabled ':'')+'>'+ 
-         'Group independent owners (up to 32; OFF = legacy one-owner comparison)</label>'+
+        (state.independentShortGroups?'checked ':'')+
+        (state.busy||state.batchRunning?'disabled ':'')+'>'+
+        'Group independent owners (up to 32; OFF = legacy one-owner comparison)</label>'+
        '<p data-short-selection-count>'+p.selected.size+' selected · page '+(p.page+1)+' of '+pages+'</p>'+
       '<button data-select-gaskets '+(state.busy||state.batchRunning?'disabled':'')+
         '>Select eligible gaskets (all pages)</button>'+
