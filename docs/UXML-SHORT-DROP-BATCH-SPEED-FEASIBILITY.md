@@ -207,7 +207,7 @@ component type changed. Original sourceText and source hash are unchanged.
 Every forged case must have the exact same refusal code with memo ON and OFF.
 Replacing the provenance digest with a constant must cause a real refused-vs-
 accepted assertion failure in this sequence. Independently, removing the
-route tag must fail the behavioral **two real native transactions** count.
+route tag must fail the behavioral count of **one independently executed native-source transaction plus one independently executed UXML-derived native transaction** (two real runs, not two routes borrowing one result).
 The Python-finally mutant now runs in **short_memo's actual module globals**,
 and the unmodified function runs through the identical harness first.
 
@@ -216,7 +216,10 @@ non-consumed* component may produce EQUAL with memo ON **and** OFF because
 the selected short-drop's native operation does not consume that position.
 That equality is not a memo-specific bypass. Changing a position which the
 selected operation *does consume* must produce the same refusal with memo ON
-and OFF. The tests deliberately distinguish those cases. This does not
+and OFF. The in-repo tamper test covers the **consumed** position; a separate
+non-adjacent, non-consumed position mutation is **NOT_TESTED in-repo** and
+must not be described as an automated equivalence regression. The
+independent runner's observation remains background only. This does not
 authorize mutations to unselected source records; original-file write
 authority and sourceRefs remain unchanged.
 
