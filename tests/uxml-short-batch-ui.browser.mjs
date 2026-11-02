@@ -65,8 +65,19 @@ async function scenario({count=5,hub=false,group=true,mode='normal',mutation=nul
    const [before,after]=mutationPatches[mutation];
    await page.route('**/tabs/topology-workspace/workspace-app.mjs',async route=>{
     const response=await route.fetch(),source=await response.text();
-    assert.equal(source.split(before).length,2,mutation+' exact injection point');
-    await route.fulfill({response,body:source.replace(before,after)});
+    let altered;
+    if(mutation==='releaseLastBypassed'){
+      const start=source.indexOf('  async function publishShortBulk(');
+      const end=source.indexOf('  async function publishShortBulkGuarded(',start);
+      const offset=source.indexOf(before,start);
+      assert.ok(start>=0&&end>start&&offset>start&&offset<end,
+        'releaseLastBypassed must target only publishShortBulk');
+      altered=source.slice(0,offset)+after+source.slice(offset+before.length);
+    }else{
+      assert.equal(source.split(before).length,2,mutation+' exact injection point');
+      altered=source.replace(before,after);
+    }
+    await route.fulfill({response,body:altered});
    });
   }
   await page.goto(url);
