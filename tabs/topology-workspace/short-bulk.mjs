@@ -36,13 +36,13 @@ export async function runShortBulk({
   source,shortElements,selectedIds,runEngine,hubEnabled=false,
   isCurrent=()=>true,onCheckpoint=()=>{},onProgress=()=>{},
   hash=digestXml,shortMemoEnabled=true,enableIndependentGroups=false,
-  shortBatchPlanning=null,
+  shortBatchPlanning=null,shortBatchSourceRecords=null,
 }){
   if(enableIndependentGroups){
     const {runIndependentShortBulk}=await import('./short-bulk-groups.mjs');
     return runIndependentShortBulk({source,shortElements,selectedIds,runEngine,
       hubEnabled,isCurrent,onCheckpoint,onProgress,hash,
-      planning:shortBatchPlanning,
+      planning:shortBatchPlanning,sourceRecords:shortBatchSourceRecords,
       runLegacy:options=>runShortBulk({...options,
         shortMemoEnabled,enableIndependentGroups:false})});
   }
