@@ -829,7 +829,9 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       (outcome.stopMessage?' · '+outcome.stopMessage:'')+
       (done?' · validated XML, source-linked operations and lineage digests downloadable.':' · no XML changed.');
     const hubMismatch=state.hubEnabled&&
-      String(outcome.stopMessage||'').startsWith('UXML_SHORT_PARITY_');
+      (/^UXML_SHORT_PARITY_/.test(String(outcome.stopMessage||''))||
+       String(outcome.stopMessage||'').startsWith(
+         'UXML_SHORT_APPLY_CANONICAL_OP_RECEIPT_MISSING_OR_DRIFT'));
     if(hubMismatch){
       // Fail closed BEFORE a status refresh can expose a previous EQUAL
       // checkpoint, including while an asynchronous evidence recheck runs.
@@ -843,7 +845,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       reason==='COMPLETE'&&done?'ready':done?'stopped':'rejected','drop');
     showShortBulkAudit(outcome);
     updateStatus('Selected short-element batch finished. '+done+
-      ' validated; '+skipped+' not eligible on reanalysis. Engineering review remains required.');
+      ' validated; '+skipped+' skipped/refused. Engineering review remains required.');
     // On a hub mismatch, do not reset the negative parity by reanalysing
     // the partially validated checkpoint until an explicit fresh Analyze.
     if(outcome.latest&&done&&!hubMismatch)
@@ -872,7 +874,8 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     state.batchRunning=true;state.activeJob='short-bulk';
     state.shortBulk=null;refresh();
     const startedAt=Date.now();
-    let lastCompleted=0,lastApplied=0,lastSkipped=0,bulkFinished=false;
+    let lastCompleted=0,lastApplied=0,lastSkipped=0,bulkFinished=false,
+      itemInFlight=false;
     const paintBulkProgress=()=>{
       if(generation!==state.epoch||!state.batchRunning||bulkFinished)return;
       const elapsed=Math.max(0,(Date.now()-startedAt)/1000);
@@ -882,7 +885,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
         '~ETA '+(remaining>=60?Math.ceil(remaining/60)+' min':
           Math.max(1,remaining)+' sec')+' (approximate)';
       query(root,'[data-progress]').textContent=
-        'Applying '+lastCompleted+' of '+ids.length+' · '+
+        'Applying '+Math.min(ids.length,lastCompleted+(itemInFlight?1:0))+' of '+ids.length+' · '+
         lastApplied+' validated · '+lastSkipped+' skipped · '+eta+
         ' · Cancel available; only validated working revisions retained.';
     };
@@ -897,6 +900,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
         onProgress:step=>{
           if(generation!==state.epoch)return;
           lastCompleted=step.completed;lastApplied=step.applied;lastSkipped=step.skipped;
+          itemInFlight=step.status==='APPLYING';
           paintBulkProgress();
         },
       });
