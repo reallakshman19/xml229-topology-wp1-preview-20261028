@@ -243,7 +243,8 @@ async function exercise(mode){
    },null,{timeout:180000});
    assert.equal(await page.locator('[data-download-working]').isDisabled(),true);
    assert.equal(await page.locator('[data-download-history]').isDisabled(),true);
-   assert.equal(await page.locator('[data-download-fix]').isDisabled(),true);
+   assert.equal(await page.locator('[data-download-fix]').count(),0,
+     'HOLD must remove the corrected XML download action entirely');
    const state=await page.evaluate(()=>window.__directProbe.workspace.getState());
    assert.equal(state.hubRevision,null,'no stale EQUAL correction authority');
    assert.equal(state.revision,3,'previously validated working revision retained');
