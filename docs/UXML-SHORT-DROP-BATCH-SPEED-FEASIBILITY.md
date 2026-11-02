@@ -279,3 +279,70 @@ result. It measures native and *simulated* UXML reconstruction, not a genuine
 batch canonical witness or real Pyodide transaction. The test refuses any
 byte mismatch. The 5/20/89-like timing/equivalence gate and genuine Pyodide
 benchmark are separate. **Step 2 engine/Worker/UI: NOT_STARTED.**
+
+
+## A6b Step 2 — authority-grade engine and workspace comparison (2 Nov 2026)
+
+This section **supersedes the historical Step 1 status above**. The Step 1
+prototype remains disposable and must not be confused with the production
+batch path. Option A was approved by the Owner; **no separate cheaper-digest
+optimization** has been implemented.
+
+The opt-in engine is now `short_batch.py`: bounded 2–32 independent
+owners per atomic group; owner-affected record and shared-node read/write
+footprints checked before the transaction; complete native validation,
+source lineage and original-byte replay; one owner-local normalized
+evidence and SHA revision record per selected owner. A refused group
+never commits partial bytes. Its bisect fallback eventually executes
+the unchanged historical exact-one path and retains its refusal code.
+
+`short_batch_uxml.py` executes an independent UXML-derived native group
+and original-source native group; it checks one group-wide canonical
+sourceRef/loss witness and byte/receipt parity before any group can publish.
+The Worker requires explicit `topologyShortBatchExplicit:true`, limits
+groups to 32, and stays Pre-Final-only: no conversion to Final/native CII.
+A full-provenance per-job UXML resolver memo allows the initial parity
+analysis and the group canonical check to share one adapter pass, without
+ever sharing a direct/UXML transaction result.
+
+The workspace selection offers **Group independent owners** (default ON
+only after real Chromium qualification; OFF chooses the original
+one-owner path). It counts completed and in-flight **owners**, not
+groups; ETA is explicitly approximate. One group is published only after
+every owner receipt, ordered intermediate SHA, full batch validation,
+canonical UXML operation and pre-Final lineage has passed. Grouped history
+keeps distinct `ownerOperations`, `ownerEvidence` and `ownerRevision`
+per owner. Cancel discards only an in-flight group; previously validated
+group checkpoints remain. The guarded publisher removes hubRevision
+authority before work and restores it **last**, only after fresh source-bound
+analysis proves EQUAL. Download gates are unchanged.
+
+Real Chromium/Pyodide comparison on the public synthetic source, via
+the **actual workspace button** and downloaded XML bytes, with the
+pre-default-ON qualified browser run
+[#41516529232](https://github.com/reallakshman19/xml229-topology-wp1-preview-20261028/actions/runs/41516529232):
+
+| Owners | Route | Grouped UI | Serial UI | Speedup | Downloaded XML |
+|---:|---|---:|---:|---:|---|
+| 5 | Direct | 0.479 s | 0.894 s | 1.87x | EQUAL |
+| 5 | UXML | 0.698 s | 1.594 s | 2.28x | EQUAL |
+| 20 | Direct | 1.728 s | 14.060 s | 8.14x | EQUAL |
+| 20 | UXML | 2.429 s | 21.709 s | 8.94x | EQUAL |
+
+Browser tests also reject mid-group Cancel publication, preserve the
+named singleton code after forced group refusal/bisect, and refuse hub
+release while source recheck is pending. Four targeted UI source mutants
+(toggle ignored, missing owner evidence, early hubRevision release and
+Cancel accepting a stale result) must fail their own behavioral assertions.
+The historical direct-Apply browser tests explicitly choose OFF so the
+one-owner route remains continuously qualified.
+
+**Performance interpretation:** The earlier 20-owner memo baseline spent
+14.63 seconds on 260 deep copies and 7.48 seconds in GC, with overlapping
+clocks. Fewer per-owner transactions, cache copies and GC cycles explain
+much of the A6b gain, so a separate provenance-digest shortcut is
+**NOT_DONE** and its B1 safety protection remains intact. The 89-like
+native engine was qualified on public synthetic only; the Oracle alone
+runs the private Owner-model counts/timing trial. The displayed UI numbers
+are not production or Owner-file ETA guarantees. Independent non-author
+review and merge remain HOLD until all exact-head workflows are green.
