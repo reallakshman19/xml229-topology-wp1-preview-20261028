@@ -23,6 +23,7 @@ from .transaction import (
 )
 from .short_elements import short_elements
 from .uxml_adapter import resolve_from_uxml
+from .short_memo import uxml_resolve
 from .uxml_compare import _diff
 
 EDIT_OP_SCHEMA = "uxml-edit-ops/v1"
@@ -378,7 +379,7 @@ def export_edit_ops(
     _enforce_today_auto_policy(requested.minimum_confidence,
                                requested.require_no_blocking_plan_actions)
     _require(not requested.joint_repairs, "UXML_MANUAL_REPAIR_NOT_AUTHORIZED")
-    result = resolve_from_uxml(uxml, config, source_name=source_name)
+    result = uxml_resolve(uxml, config, source_name=source_name)
     sha = _source_sha(uxml)
     if requested.short_element_requests:
         op = _short_canonical_operation(uxml, result, requested, config)
@@ -505,7 +506,7 @@ def apply_edit_ops(
     # Explicit duplicate-sourceRef reason before the adapter's broader
     # source-index validation obscures the ambiguous target identity.
     _source_refs_by_key(uxml, sha)
-    result = resolve_from_uxml(uxml, config, source_name=str(original_path))
+    result = uxml_resolve(uxml, config, source_name=str(original_path))
     _require(result.document.source_text.encode("utf-8") == data,
              "UXML_ORIGINAL_BYTES_MISMATCH")
     policy = _validate_ops(uxml, payload, result, config)
