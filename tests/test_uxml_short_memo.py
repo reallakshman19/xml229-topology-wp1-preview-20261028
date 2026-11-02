@@ -208,9 +208,14 @@ class ShortMemoSafety(unittest.TestCase):
                             self.assertEqual(compare_hub_patch(direct,patched),[])
                             self.assertEqual(direct.fixed_xml,patched.fixed_xml)
                             self.assertEqual(source.read_bytes(),old)
+                            txn=patched.transaction_payload()
+                            # Temporary-directory paths are distinct between
+                            # ON/OFF invocations. Only the chosen file path
+                            # varies, not any source bytes or authority proof.
+                            txn["source"]["path"]="<synthetic-source>"
                             outcomes.append({
                                 "xml":patched.fixed_xml,
-                                "txn":patched.transaction_payload(),
+                                "txn":txn,
                                 "validation":patched.validation_payload(),
                                 "ops":canonical["ops"],
                                 "refusalForForgedPolicy":check_refusal(
