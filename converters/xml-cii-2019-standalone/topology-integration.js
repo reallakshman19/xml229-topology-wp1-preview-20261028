@@ -207,6 +207,9 @@ if job_generate_topofix:
 
 _speed_marks['pyValidationRecheckMs'] = (_speed_time.perf_counter() - _speed_started) * 1000 - sum(_speed_marks.values())
 status['bulkTimings'] = _speed_marks if globals().get('job_bulk_speed_profile', False) else None
+if status['bulkTimings'] is not None:
+    from psi116_topology_resolver.short_memo import stats as _short_memo_stats
+    status['bulkTimings']['shortMemoStats'] = _short_memo_stats()
 status["appliedEditOps"] = applied_edit_ops if (job_generate_topofix and status["committed"] and hub_parity["status"] == "EQUAL") else None
 status["opsPreview"] = ops_preview if hub_parity["status"] == "EQUAL" else None
 status["hubParity"] = hub_parity
