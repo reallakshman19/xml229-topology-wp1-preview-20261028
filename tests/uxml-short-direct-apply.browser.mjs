@@ -65,6 +65,16 @@ async function exercise(mode){
     await route.fulfill({response,body:injected});
    });
   }
+  if(mode==='refreshFault'){
+   await page.route('**/tabs/topology-workspace/workspace-app.mjs',async route=>{
+    const response=await route.fetch(),original=await response.text();
+    const marker="    root.setAttribute('aria-busy',String(state.busy||state.batchRunning));";
+    assert.equal(original.split(marker).length,2,'refresh source injection must be exact');
+    await route.fulfill({response,body:original.replace(marker,
+      "    if(state.revision>0&&!state.busy)throw Error('SYNTHETIC_RENDER_FAILURE');\n"+
+      marker)});
+   });
+  }
   await page.route('**/index.html',async route=>{
    const response=await route.fetch(),html=await response.text();
    const tag='<script type="module" src="./tabs/topology-workspace/workspace-app.mjs"></script>';
@@ -262,6 +272,18 @@ async function exercise(mode){
    },null,{timeout:120000});
    assert.match(await page.locator('[data-progress]').textContent(),/BULK COMPLETE/);
    assert.equal(await page.locator('[data-download-working]').isEnabled(),true);
+  }else if(mode==='refreshFault'){
+   await page.waitForFunction(()=>{
+    const text=document.querySelector('[data-progress]')?.textContent||'';
+    const state=window.__directProbe.workspace.getState();
+    return text.includes('WORKSPACE_REFRESH_ERROR:SYNTHETIC_RENDER_FAILURE')&&
+      text.includes('corrected downloads HELD')&&
+      state.hubParity==='DIFFERENT'&&state.hubRevision===null&&
+      state.revision===3&&!state.busy;
+   },null,{timeout:180000});
+   assert.equal(await page.locator('[data-download-working]').isDisabled(),true);
+   assert.equal(await page.locator('[data-download-fix]').count(),0);
+   assert.deepEqual(errors,[],'refresh error caught before browser pageerror');
   }else if(mode==='publishThrow'||mode==='earlyParseThrow'){
    await page.waitForFunction(mode=>{
     const text=document.querySelector('[data-progress]')?.textContent||'';
@@ -372,5 +394,7 @@ test('Cancel publication canvas failure catches throw and revokes hub release',
  {timeout:360000},async()=>exercise('cancelPublishThrow'));
 test('early parse publication failure retains only old working revision and holds downloads',
  {timeout:360000},async()=>exercise('earlyParseThrow'));
+test('refresh renderer failure ends as ERROR/HOLD with last validated revision',
+ {timeout:360000},async()=>exercise('refreshFault'));
 test('cancel during direct Apply retains the last validated checkpoint and final status',
  {timeout:360000},async()=>exercise('cancel'));
