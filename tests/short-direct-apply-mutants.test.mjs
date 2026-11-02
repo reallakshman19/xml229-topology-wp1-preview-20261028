@@ -87,7 +87,8 @@ for(const [name,clause,mutate] of guards){
     assert.equal(live.split(clause).length,2,
       'the guard must exist exactly once before deletion: '+name);
     // Guard expression deleted, leaving the rest of the existing IF intact.
-    const mutant=live.replace(clause,'');
+    const mutant=live.replace(clause,
+      name==='requestNodeKeys'?'false':'');
     const broken=await instantiate(mutant);
     const reference=await instantiate(live);
     const original=await invoke(reference,mutate);
