@@ -544,6 +544,7 @@ def apply_topofix_transaction(
     *,
     policy: TransactionPolicy,
     config: ResolverConfig | None = None,
+    memo_route: str = "native",
 ) -> TopoFixTransactionResult:
     config = config or ResolverConfig()
     config.validate()
@@ -556,11 +557,11 @@ def apply_topofix_transaction(
         policy.validate()
         if len(policy.short_element_requests) != 1 or policy.joint_repairs or policy.apply_all_safe:
             return apply_short_element(before, policy, config)
-        existing = lookup_transaction(before, policy, config)
+        existing = lookup_transaction(before, policy, config, route=memo_route)
         if existing is not None:
             return existing
         transaction = apply_short_element(before, policy, config)
-        return remember_transaction(before, policy, config, transaction)
+        return remember_transaction(before, policy, config, transaction, route=memo_route)
     if policy.joint_repairs:
         from .joint_repair import with_confirmed_joint_repairs, repair_action_id
         if tuple(policy.selected_action_ids) != tuple(repair_action_id(r) for r in policy.joint_repairs):
