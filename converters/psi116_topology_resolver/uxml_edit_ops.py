@@ -324,6 +324,7 @@ def _short_canonical_operation(uxml: dict, result: ResolutionResult,
     for edit in edits:
         touched[edit["recordKey"]].add("*" if edit["field"] == "Source record"
                                         else edit["field"])
+    removed_with_record = []
     for key, fields in touched.items():
         _require(key in records and key in paths,
                  "UXML_SHORT_ORIGINAL_RECORD_NOT_FOUND:" + key)
@@ -335,11 +336,29 @@ def _short_canonical_operation(uxml: dict, result: ResolutionResult,
             loss_path, node_path = loss["details"]["sourcePath"], paths[key]
             if loss_path != node_path and not loss_path.startswith(node_path + "/"):
                 continue
+            # The native drop removes every child of a deleted owner. A
+            # *strict child* marked RAW_SOURCE_ONLY_NOT_SEMANTICALLY_CARRIED
+            # disappears with its parent, rather than being copied from UXML.
+            # Every other loss (including the owner path itself) still vetoes.
+            if ("*" in fields and loss_path.startswith(node_path + "/") and
+                    loss.get("code") == "PSI116_RAW_SOURCE_ONLY_NOT_SEMANTICALLY_CARRIED"):
+                segment = loss_path[len(node_path) + 1:].split("/", 1)[0]
+                field = segment.split("[", 1)[0]
+                _require(bool(field) and segment.startswith(field + "[") and
+                         segment.endswith("]") and segment[len(field) + 1:-1].isascii() and
+                         segment[len(field) + 1:-1].isdigit(),
+                         "UXML_LOSS_CONTRACT_FIELD_TOUCH:" + key)
+                removed_with_record.append({"recordKey": key, "field": field})
+                continue
             if "*" in fields or any(loss_path.startswith(node_path + "/" + field + "[")
                                     for field in fields):
                 raise UxmlPatchError("UXML_LOSS_CONTRACT_FIELD_TOUCH:" + key)
+    removed_with_record = sorted({(item["recordKey"], item["field"])
+                                  for item in removed_with_record})
     return {"opId": "UXML-OP-" + request["id"], "kind": "DROP_SHORT_ELEMENT",
             "sourceActionId": request["id"], "fileSha256": sha, "targets": targets,
+            "removedWithRecord": [{"recordKey": key, "field": field}
+                                  for key, field in removed_with_record],
             "params": [{"request": {"id": row["id"], "sourceSha256": sha,
                                     "nodeKeys": list(row["nodeKeys"])},
                         "leftKey": row["leftKey"], "rightKey": row["rightKey"],
@@ -418,7 +437,7 @@ def _validate_ops(uxml: dict, payload: Mapping[str, Any],
     refs = _source_refs_by_key(uxml, sha)
     if policy.short_element_requests:
         _require(len(supplied) == 1 and isinstance(supplied[0], dict) and
-                 set(supplied[0]) == EDIT_OP_FIELDS,
+                 set(supplied[0]) == EDIT_OP_FIELDS | {"removedWithRecord"},
                  "UXML_SHORT_EXACT_ONE_OP_REQUIRED")
         op = supplied[0]
         _require(op.get("kind") == "DROP_SHORT_ELEMENT", "UXML_SHORT_KIND_REFUSED")

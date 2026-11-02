@@ -85,3 +85,33 @@ test('JSON and CSV disclose only visible columns, one row per operation and reje
  assert.match(csv,/'=INJECT\(\)/);
  assert.match(csv,/Alias coincident node/);
 });
+
+test('short owner raw-only child disclosure is validated and exported without turning fields into actions',()=>{
+ const preview={schema:'uxml-operations-preview/v1',sourceSha256:sha,
+  summary:{totalOps:1,byKind:{DROP_SHORT_ELEMENT:1},
+    sourceRecordCount:2,untouchedRecordCount:1},
+  ops:[{opId:'UXML-OP-SHORT-1',kind:'DROP_SHORT_ELEMENT',
+    kindName:'Drop selected short component and close ports',
+    sourceActionId:'SHORT:1',uxmlIds:['OWNER'],
+    sourceRecords:[{format:'PSI116',recordKey:'B0:N3:S2',changed:true}],
+    changes:[{recordKey:'B0:N3:S2',field:'Source record',
+      before:'Present',after:'Removed'}],
+    removedWithRecord:[{recordKey:'B0:N3:S2',field:'SIF'},
+      {recordKey:'B0:N3:S2',field:'CorrosionAllowance'}],
+    policyReason:'Only the original deleted owner is removed'}]};
+ assert.equal(assertOperationsPreview(preview,sha),preview);
+ const visible=visibleOperationExport(preview);
+ assert.deepEqual(visible.operations[0].removedWithRecord,preview.ops[0].removedWithRecord);
+ assert.match(operationsCSV(preview),/Removed with deleted element/);
+ assert.match(operationsCSV(preview),/CorrosionAllowance/);
+ for(const mutate of [
+   x=>{delete x.removedWithRecord;},
+   x=>x.removedWithRecord.push({recordKey:'B0:N99:S99',field:'SIF'}),
+   x=>x.removedWithRecord.push({recordKey:'B0:N3:S2',field:'SIF'}),
+   x=>x.removedWithRecord.push({recordKey:'B0:N3:S2',field:''}),
+ ]){
+   const damaged=structuredClone(preview);
+   mutate(damaged.ops[0]);
+   assert.throws(()=>assertOperationsPreview(damaged,sha),/UXML_OPS_PREVIEW_ROW_INVALID/);
+ }
+});

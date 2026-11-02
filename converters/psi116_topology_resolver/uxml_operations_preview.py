@@ -66,6 +66,18 @@ def _preview_fields(op: dict, action: Any, records: dict[str, Any]) -> list[dict
         _need(isinstance(params, list) and len(params) == 1 and
               isinstance(params[0], dict) and isinstance(params[0].get("edits"), list),
               "UXML_PREVIEW_SHORT_EFFECTS_INVALID")
+        deleted = {e["recordKey"] for e in params[0]["edits"]
+                   if isinstance(e, dict) and e.get("field") == "Source record"
+                   and e.get("after") == "Removed"}
+        removed = op.get("removedWithRecord")
+        _need(isinstance(removed, list) and
+              all(isinstance(item, dict) and
+                  set(item) == {"recordKey", "field"} and
+                  isinstance(item["field"], str) and bool(item["field"]) and
+                  item["recordKey"] in deleted for item in removed) and
+              len({(item["recordKey"], item["field"]) for item in removed}) ==
+              len(removed),
+              "UXML_PREVIEW_REMOVED_WITH_RECORD_INVALID")
         for edit in params[0]["edits"]:
             _need(isinstance(edit, dict) and
                   set(edit) == {"recordKey", "field", "before", "after"} and
@@ -205,6 +217,8 @@ def build_operation_preview(uxml: dict, *,
                     for key in op["targets"]
                 ],
                 "changes": changes,
+                "removedWithRecord": (list(op["removedWithRecord"])
+                                      if op["kind"] == "DROP_SHORT_ELEMENT" else []),
                 "policyReason": ("Explicit qualified ≤6 mm owner; sourceRefs, exact deletes, "
                                  "port edits and loss-contract checked on the current source. "
                                  "Later bulk items requalify against their new revision."

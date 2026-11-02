@@ -513,6 +513,46 @@ async function prepareHubShort(page){
     'preview never writes a corrected source before Apply');
 }
 
+test('hub deleted-owner raw-only children: exact removed fields shown in read-only operation row',
+  {timeout:240000},async()=>{
+  const {page,errors}=await openInjected('PASS');
+  try{
+    const rawXML=hubShortXML.replace('<Weight>2.5</Weight>',
+      '<Weight>2.5</Weight><SIF>1.2</SIF>'+
+      '<InsulationThickness>3</InsulationThickness>'+
+      '<CorrosionAllowance>0.5</CorrosionAllowance>');
+    assert.notEqual(rawXML,hubShortXML);
+    await page.locator('[data-file]').setInputFiles({
+      name:'synthetic-raw-owner.xml',mimeType:'application/xml',
+      buffer:Buffer.from(rawXML,'utf8')
+    });
+    await page.waitForFunction(()=>document.querySelector('[data-occ-summary]')
+      ?.textContent?.includes('6 of 6'),null,{timeout:30000});
+    await page.locator('[data-uxml-toggle]').check();
+    await page.locator('[data-analyze]').click();
+    await page.waitForFunction(()=>document.querySelector('[data-uxml-parity]')
+      ?.dataset?.parity==='EQUAL'&&document.querySelector('[data-status]')
+      ?.textContent?.includes('Authoritative topology analysis complete.'),
+      null,{timeout:120000});
+    await page.locator('[data-preview-short]').click();
+    await page.locator('[data-select-gaskets]').click();
+    assert.equal(await page.locator('[data-short-index]:checked').count(),1);
+    await page.locator('[data-short-hub-preview]').click();
+    await page.waitForFunction(()=>document.querySelector('[data-short-hub-status]')
+      ?.textContent?.includes('1 ready / 0 refused'),
+      null,{timeout:120000});
+    const disclosure=page.locator('[data-ops-removed-with-record]');
+    assert.equal(await disclosure.count(),1);
+    const display=await disclosure.textContent();
+    assert.match(display,/Removed with the deleted element:/);
+    for(const name of ['SIF','InsulationThickness','CorrosionAllowance'])
+      assert.match(display,new RegExp(name));
+    assert.equal(await page.locator('[data-run-short-drop]').isEnabled(),true);
+    assert.equal(await page.locator('[data-download-working]').isDisabled(),true);
+    assert.deepEqual(errors,[]);
+  }finally{await page.close();}
+});
+
 test('hub short-drop EQUAL: selected preview, source patch, validated download',
  {timeout:240000},async()=>{
   const {page,errors}=await openInjected('PASS');

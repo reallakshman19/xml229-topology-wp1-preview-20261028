@@ -74,6 +74,10 @@ export function createOperationsPreviewPanel(root,{snapshot,onLocate,onReview}){
           '<li>'+esc(c.recordKey+' · '+c.field+': '+
             label(c.before)+' → '+(c.after==null?'(removed)':label(c.after)))+
           '</li>').join('')+'</ul>'+
+        (op.removedWithRecord?.length?
+          '<p data-ops-removed-with-record><strong>Removed with the deleted element:</strong> '+
+          esc(op.removedWithRecord.map(item=>item.field).join(', '))+
+          '</p>':'')+
         '<p class="uxml-op-meta"><strong>Auto-eligible because:</strong> '+
         esc(op.policyReason)+'</p>'+
         '<button type="button" data-ops-locate="'+esc(op.opId)+

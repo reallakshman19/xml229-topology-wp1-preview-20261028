@@ -2,6 +2,8 @@
 from copy import deepcopy
 from dataclasses import replace as dataclass_replace
 from unittest.mock import patch
+import inspect
+import textwrap
 import re
 from pathlib import Path
 import json
@@ -178,6 +180,282 @@ class UxmlShortDropHub(unittest.TestCase):
             self.assertEqual(sorted(p.name for p in Path(temp).iterdir()),
                              ["synthetic-gasket.xml"])
 
+    RAW_ONLY_CODE = "PSI116_RAW_SOURCE_ONLY_NOT_SEMANTICALLY_CARRIED"
+
+    def raw_owner_source(self, folder):
+        """Real synthetic raw children in an owner deleted by a 3 mm drop."""
+        path = folder / "synthetic-raw-removed-gasket.xml"
+        fields = ("SIF", "InsulationThickness", "CorrosionAllowance")
+        extra = ("<SIF>1.2</SIF><InsulationThickness>3</InsulationThickness>"
+                 "<CorrosionAllowance>0.5</CorrosionAllowance>")
+        raw = verified_synthetic(fixture(3, "GASK", extra)).encode("utf-8")
+        path.write_bytes(raw)
+        cli = subprocess.run(
+            ["node", str(self.xcu / "tools" / "psi116-to-uxml.mjs"), str(path)],
+            cwd=self.xcu, capture_output=True, text=True, timeout=45)
+        self.assertEqual(cli.returncode, 0, cli.stderr)
+        uxml = json.loads(cli.stdout)
+        resolved = resolve_psi116(path)
+        selected = next(row for row in short_elements(resolved.document, ResolverConfig())
+                        if row["componentRefNo"] == "SHORT")
+        self.assertTrue(selected["eligible"], selected["reason"])
+        request = {key: selected[key] for key in ("id", "sourceSha256", "nodeKeys")}
+        policy = TransactionPolicy(selected_action_ids=(request["id"],),
+                                   short_element_requests=(request,))
+        paths = _source_record_paths(resolved.document.source_text, resolved)
+        removed = request["nodeKeys"][0]
+        self.assertIn(removed, paths)
+        self.assertTrue(all("<" + field + ">" in raw.decode("utf-8")
+                            for field in fields))
+        # The pinned XCU reader may already emit these loss witnesses; add
+        # exactly the synthetic report entries to make every guard explicit.
+        for field in fields:
+            source_path = paths[removed] + "/" + field + "[1]"
+            if not any(row.get("code") == self.RAW_ONLY_CODE and
+                       row.get("details", {}).get("sourcePath") == source_path
+                       for row in uxml["lossContract"]):
+                uxml["lossContract"].append({
+                    "code": self.RAW_ONLY_CODE,
+                    "details": {"sourcePath": source_path}})
+        return path, raw, uxml, policy, request, fields, removed, paths
+
+    def test_raw_only_deleted_owner_is_ready_disclosed_and_byte_identical(self):
+        with tempfile.TemporaryDirectory(prefix="uxml-raw-owner-") as temp:
+            path, raw, uxml, policy, request, fields, removed, paths = (
+                self.raw_owner_source(Path(temp)))
+            ops = export_edit_ops(uxml, policy=policy, source_name=str(path))
+            self.assertEqual(ops["ops"][0]["kind"], "DROP_SHORT_ELEMENT")
+            removed_list = ops["ops"][0]["removedWithRecord"]
+            self.assertEqual(removed_list, [{"recordKey": removed, "field": f}
+                                            for f in sorted(fields)])
+            self.assertEqual(ops["ops"][0]["params"][0]["request"], request)
+            preview = build_operation_preview(uxml, source_name=str(path),
+                                              short_requests=[request])
+            self.assertEqual(preview["shortPreview"]["acceptedIds"], [request["id"]])
+            self.assertEqual(preview["shortPreview"]["refused"], [])
+            row = next(op for op in preview["ops"]
+                       if op["kind"] == "DROP_SHORT_ELEMENT")
+            self.assertEqual(row["removedWithRecord"], removed_list)
+            patched, differences = compare_patch_to_direct(path, uxml, ops)
+            self.assertEqual(differences, [], "raw-only owner removal must be native EQUAL")
+            direct = apply_topofix_transaction(resolve_psi116(path), policy=policy)
+            self.assertTrue(direct.committed)
+            self.assertEqual(patched.fixed_xml.encode("utf-8"),
+                             direct.fixed_xml.encode("utf-8"))
+            self.assertEqual(patched.validation_payload(), direct.validation_payload())
+            self.assertTrue(all(("<" + f + ">") not in patched.fixed_xml for f in fields),
+                            "raw children must disappear only with their deleted owner")
+            self.assertEqual(path.read_bytes(), raw)
+            self.assertEqual([p.name for p in Path(temp).iterdir()],
+                             ["synthetic-raw-removed-gasket.xml"])
+
+    def test_three_raw_loss_refusals_and_untouched_node_number_acceptance(self):
+        with tempfile.TemporaryDirectory(prefix="uxml-raw-owner-refusals-") as temp:
+            path, raw, uxml, policy, request = self.source(Path(temp))
+            valid = export_edit_ops(uxml, policy=policy, source_name=str(path))
+            edits = valid["ops"][0]["params"][0]["edits"]
+            deleted = next(row["recordKey"] for row in edits
+                           if row["field"] == "Source record")
+            retained = next(row["recordKey"] for row in edits
+                            if row["field"] == "Position")
+            original = resolve_psi116(path)
+            paths = _source_record_paths(original.document.source_text, original)
+            cases = [
+                ("deleted_record_exact_path", deleted, paths[deleted],
+                 self.RAW_ONLY_CODE),
+                ("other_code_under_deleted", deleted,
+                 paths[deleted] + "/InsulationThickness[1]", "SYNTHETIC_OTHER_CODE"),
+                ("retained_edited_position", retained,
+                 paths[retained] + "/Position[1]", self.RAW_ONLY_CODE),
+            ]
+            for name, key, source_path, code in cases:
+                with self.subTest(guard=name):
+                    doc = deepcopy(uxml)
+                    doc["lossContract"].append({
+                        "code": code, "details": {"sourcePath": source_path}})
+                    with self.assertRaisesRegex(
+                            UxmlPatchError, "UXML_LOSS_CONTRACT_FIELD_TOUCH"):
+                        export_edit_ops(doc, policy=policy, source_name=str(path))
+                    with self.assertRaisesRegex(
+                            UxmlPatchError, "UXML_LOSS_CONTRACT_FIELD_TOUCH"):
+                        apply_edit_ops(path, doc, valid)
+                    self.assertEqual(path.read_bytes(), raw)
+            # Option (b): this native closure edits Position, NOT NodeNumber.
+            # Loss on an untouched retained field must NOT block a safe drop.
+            self.assertFalse(any(e["recordKey"] == retained and
+                                 e["field"] == "NodeNumber" for e in edits))
+            untouched = deepcopy(uxml)
+            untouched["lossContract"].append({
+                "code": self.RAW_ONLY_CODE,
+                "details": {"sourcePath": paths[retained] + "/NodeNumber[1]"}})
+            self.assertEqual(
+                export_edit_ops(untouched, policy=policy, source_name=str(path)),
+                valid)
+            result = apply_edit_ops(path, untouched, valid)
+            self.assertTrue(result.committed, result.reject_reasons)
+            self.assertEqual(path.read_bytes(), raw)
+            self.assertEqual([p.name for p in Path(temp).iterdir()],
+                             ["synthetic-gasket.xml"])
+
+    def test_m4_malformed_raw_only_deleted_child_paths_refused_and_mutant_killed(self):
+        """A deleted owner's exempt raw-only child must have an indexed ASCII path."""
+        import psi116_topology_resolver.uxml_edit_ops as module
+        with tempfile.TemporaryDirectory(prefix="uxml-m4-synthetic-") as temp:
+            path, raw, uxml, policy, _, _, deleted, paths = (
+                self.raw_owner_source(Path(temp)))
+            canonical = export_edit_ops(uxml, policy=policy, source_name=str(path))
+            record_path = paths[deleted]
+            invalid = ("SIF", "SIF[x]", "[1]", "", "SIF[١]")
+            for suffix in invalid:
+                with self.subTest(path_suffix=suffix):
+                    variant = deepcopy(uxml)
+                    variant["lossContract"].append({
+                        "code": self.RAW_ONLY_CODE,
+                        "details": {"sourcePath": record_path + "/" + suffix}})
+                    with self.assertRaisesRegex(
+                            UxmlPatchError, "UXML_LOSS_CONTRACT_FIELD_TOUCH"):
+                        export_edit_ops(variant, policy=policy, source_name=str(path))
+                    with self.assertRaisesRegex(
+                            UxmlPatchError, "UXML_LOSS_CONTRACT_FIELD_TOUCH"):
+                        apply_edit_ops(path, variant, canonical)
+                    self.assertEqual(path.read_bytes(), raw)
+            src = textwrap.dedent(inspect.getsource(module._short_canonical_operation))
+            original = '_require(bool(field) and segment.startswith(field + "[") and'
+            mutant = '_require(True or bool(field) and segment.startswith(field + "[") and'
+            self.assertEqual(src.count(original), 1)
+            namespace = dict(vars(module))
+            exec(compile(src.replace(original, mutant, 1),
+                         "<synthetic-M4-mutant>", "exec"), namespace)
+            falsifier = deepcopy(uxml)
+            falsifier["lossContract"].append({
+                "code": self.RAW_ONLY_CODE,
+                "details": {"sourcePath": record_path + "/SIF"}})
+            with self.assertRaisesRegex(
+                    UxmlPatchError, "UXML_LOSS_CONTRACT_FIELD_TOUCH"):
+                module._short_canonical_operation(
+                    falsifier, module.resolve_from_uxml(falsifier, ResolverConfig()),
+                    policy, ResolverConfig())
+            admitted_by_mutant = namespace["_short_canonical_operation"](
+                falsifier, module.resolve_from_uxml(falsifier, ResolverConfig()),
+                policy, ResolverConfig())
+            self.assertEqual(admitted_by_mutant["kind"], "DROP_SHORT_ELEMENT")
+            self.assertEqual(path.read_bytes(), raw)
+            print("SYNTHETIC_REVIEW_MUTANT_KILLED: M4")
+
+    def test_m6_m6b_preview_removed_with_record_guards_and_mutants(self):
+        """The read-only Python preview must reject forged disclosures."""
+        import psi116_topology_resolver.uxml_operations_preview as preview_module
+        with tempfile.TemporaryDirectory(prefix="uxml-m6-synthetic-") as temp:
+            path, raw, uxml, policy, _, _, deleted, _ = (
+                self.raw_owner_source(Path(temp)))
+            op = export_edit_ops(uxml, policy=policy, source_name=str(path))["ops"][0]
+            edits = op["params"][0]["edits"]
+            retained = next(e["recordKey"] for e in edits if e["field"] == "Position")
+            self.assertNotEqual(deleted, retained)
+            self.assertGreater(len(op["removedWithRecord"]), 0)
+            self.assertEqual(preview_module._preview_fields(op, None, {}), edits)
+            cases = [
+                ("not_list", {"recordKey": deleted, "field": "SIF"}),
+                ("wrong_record", [{"recordKey": "B0:N999:S999", "field": "SIF"}]),
+                ("retained_key", [{"recordKey": retained, "field": "SIF"}]),
+                ("empty_field", [{"recordKey": deleted, "field": ""}]),
+                ("duplicate", op["removedWithRecord"] +
+                 [dict(op["removedWithRecord"][0])]),
+            ]
+            for name, forged_removed in cases:
+                with self.subTest(guard=name):
+                    forged = deepcopy(op)
+                    forged["removedWithRecord"] = forged_removed
+                    with self.assertRaisesRegex(
+                            OperationsPreviewError,
+                            "UXML_PREVIEW_REMOVED_WITH_RECORD_INVALID"):
+                        preview_module._preview_fields(forged, None, {})
+                    self.assertEqual(path.read_bytes(), raw)
+
+            src = textwrap.dedent(inspect.getsource(preview_module._preview_fields))
+            # M6 removes the deleted-record ownership check, not uniqueness.
+            original_m6 = 'item["recordKey"] in deleted for item in removed)'
+            self.assertEqual(src.count(original_m6), 1)
+            ns6 = dict(vars(preview_module))
+            exec(compile(src.replace(original_m6, "True for item in removed)", 1),
+                         "<synthetic-M6-mutant>", "exec"), ns6)
+            forged = deepcopy(op)
+            forged["removedWithRecord"] = [{"recordKey": retained, "field": "SIF"}]
+            self.assertEqual(ns6["_preview_fields"](forged, None, {}), edits)
+
+            # M6b removes the duplicate (recordKey,field) uniqueness check.
+            original_m6b = ('len({(item["recordKey"], item["field"]) for item in removed}) =='
+                            '\n              len(removed)')
+            self.assertEqual(src.count(original_m6b), 1)
+            ns6b = dict(vars(preview_module))
+            exec(compile(src.replace(original_m6b, "True", 1),
+                         "<synthetic-M6b-mutant>", "exec"), ns6b)
+            forged = deepcopy(op)
+            forged["removedWithRecord"].append(dict(forged["removedWithRecord"][0]))
+            self.assertEqual(ns6b["_preview_fields"](forged, None, {}), edits)
+            self.assertEqual(path.read_bytes(), raw)
+            print("SYNTHETIC_REVIEW_MUTANTS_KILLED: M6,M6b")
+
+    def test_three_guard_mutants_are_killed_by_independent_refusals(self):
+        """Three source-level mutants, each admitted only if a guard is removed."""
+        import psi116_topology_resolver.uxml_edit_ops as module
+        src = textwrap.dedent(inspect.getsource(module._short_canonical_operation))
+        mutants = [
+            ("deleted_record_exact_path",
+             '            if "*" in fields or any(',
+             '            if loss_path == node_path: continue\n'
+             '            if "*" in fields or any(',
+             "record"),
+            ("other_code_under_deleted",
+             'loss.get("code") == "PSI116_RAW_SOURCE_ONLY_NOT_SEMANTICALLY_CARRIED"',
+             'loss.get("code") is not None',
+             "other"),
+            ("retained_edited_position",
+             'if "*" in fields or any(loss_path.startswith(',
+             'if "*" in fields or False and any(loss_path.startswith(',
+             "position"),
+        ]
+        with tempfile.TemporaryDirectory(prefix="uxml-raw-mutants-") as temp:
+            path, original, uxml, policy, request = self.source(Path(temp))
+            valid = export_edit_ops(uxml, policy=policy, source_name=str(path))
+            edits = valid["ops"][0]["params"][0]["edits"]
+            deleted = next(r["recordKey"] for r in edits if r["field"] == "Source record")
+            retained = next(r["recordKey"] for r in edits if r["field"] == "Position")
+            result = resolve_psi116(path)
+            paths = _source_record_paths(result.document.source_text, result)
+            inputs = {
+                "record": (paths[deleted], self.RAW_ONLY_CODE),
+                "other": (paths[deleted] + "/SIF[1]", "SYNTHETIC_OTHER_CODE"),
+                "position": (paths[retained] + "/Position[1]", self.RAW_ONLY_CODE),
+            }
+            killed = []
+            for name, before, after, case in mutants:
+                self.assertEqual(src.count(before), 1,
+                                 "exact source mutation anchor changed: " + name)
+                mutated = src.replace(before, after, 1)
+                namespace = dict(vars(module))
+                exec(compile(mutated, "<synthetic-" + name + "-mutant>", "exec"),
+                     namespace)
+                variant = deepcopy(uxml)
+                source_path, code = inputs[case]
+                variant["lossContract"].append({
+                    "code": code, "details": {"sourcePath": source_path}})
+                # The real implementation refuses; each independently mutated
+                # version ACCEPTS and therefore fails the same refusal test.
+                with self.assertRaisesRegex(UxmlPatchError, "UXML_LOSS_CONTRACT_FIELD_TOUCH"):
+                    module._short_canonical_operation(
+                        variant, module.resolve_from_uxml(variant, ResolverConfig()),
+                        policy, ResolverConfig())
+                with self.assertRaises(AssertionError):
+                    with self.assertRaisesRegex(UxmlPatchError, "UXML_LOSS_CONTRACT_FIELD_TOUCH"):
+                        namespace["_short_canonical_operation"](
+                            variant, module.resolve_from_uxml(variant, ResolverConfig()),
+                            policy, ResolverConfig())
+                killed.append(name)
+            self.assertEqual(killed, [m[0] for m in mutants])
+            print("SYNTHETIC_RAW_LOSS_MUTANTS_KILLED: " + ",".join(killed))
+            self.assertEqual(path.read_bytes(), original)
+
     def test_unknown_kind_widening_and_target_drift_refused_without_output(self):
         with tempfile.TemporaryDirectory(prefix="uxml-short-refuse-") as temp:
             path, data, uxml, policy, request = self.source(Path(temp))
@@ -201,6 +479,79 @@ class UxmlShortDropHub(unittest.TestCase):
                     self.assertEqual(path.read_bytes(), data)
             self.assertEqual(sorted(p.name for p in Path(temp).iterdir()),
                              ["synthetic-gasket.xml"])
+
+        # A nonempty real canonical disclosure is essential to exercise M8:
+        # the original source() has no removedWithRecord witness at all.
+        with tempfile.TemporaryDirectory(prefix="uxml-short-op-forgeries-") as temp:
+            path, data, uxml, policy, _, _, deleted, _ = (
+                self.raw_owner_source(Path(temp)))
+            valid = export_edit_ops(uxml, policy=policy, source_name=str(path))
+            self.assertGreater(len(valid["ops"][0]["removedWithRecord"]), 0)
+            for name, mutation, code in [
+                ("m8_empty_disclosure",
+                 lambda p: p["ops"][0].update(removedWithRecord=[]),
+                 "UXML_SHORT_TARGETS_OR_PARAMS_DIFFER_FROM_AUTHORITY"),
+                ("m8_extra_disclosure",
+                 lambda p: p["ops"][0]["removedWithRecord"].append(
+                     {"recordKey": deleted, "field": "ForgedExtra"}),
+                 "UXML_SHORT_TARGETS_OR_PARAMS_DIFFER_FROM_AUTHORITY"),
+                ("m7_missing_key",
+                 lambda p: p["ops"][0].pop("removedWithRecord"),
+                 "UXML_SHORT_EXACT_ONE_OP_REQUIRED"),
+                ("m7_unknown_key",
+                 lambda p: p["ops"][0].update(unexpectedKey="forged"),
+                 "UXML_SHORT_EXACT_ONE_OP_REQUIRED"),
+            ]:
+                with self.subTest(guard=name):
+                    forged = deepcopy(valid)
+                    mutation(forged)
+                    with self.assertRaisesRegex(UxmlPatchError, code):
+                        apply_edit_ops(path, uxml, forged)
+                    self.assertEqual(path.read_bytes(), data)
+            self.assertEqual(sorted(p.name for p in Path(temp).iterdir()),
+                             ["synthetic-raw-removed-gasket.xml"])
+
+    def test_m7_m8_apply_op_schema_and_canonical_mutants_killed(self):
+        """Isolated source mutants prove both apply guards independently."""
+        import psi116_topology_resolver.uxml_edit_ops as module
+        with tempfile.TemporaryDirectory(prefix="uxml-m78-synthetic-") as temp:
+            path, raw, uxml, policy, _, _, _, _ = (
+                self.raw_owner_source(Path(temp)))
+            valid = export_edit_ops(uxml, policy=policy, source_name=str(path))
+            self.assertTrue(valid["ops"][0]["removedWithRecord"])
+            resolved = module.resolve_from_uxml(uxml, ResolverConfig())
+            src = textwrap.dedent(inspect.getsource(module._validate_ops))
+            m7_anchor = 'set(supplied[0]) == EDIT_OP_FIELDS | {"removedWithRecord"}'
+            m8_anchor = 'op == canonical, "UXML_SHORT_TARGETS_OR_PARAMS_DIFFER_FROM_AUTHORITY"'
+            self.assertEqual(src.count(m7_anchor), 1)
+            self.assertEqual(src.count(m8_anchor), 1)
+            missing = deepcopy(valid)
+            missing["ops"][0].pop("removedWithRecord")
+            with self.assertRaisesRegex(
+                    UxmlPatchError, "UXML_SHORT_EXACT_ONE_OP_REQUIRED"):
+                module._validate_ops(uxml, missing, resolved, ResolverConfig())
+            ns7 = dict(vars(module))
+            exec(compile(src.replace(m7_anchor, "True", 1),
+                         "<synthetic-M7-mutant>", "exec"), ns7)
+            # Isolate M7 from the independent M8 guard: supply a canonical
+            # witness for the deliberately malformed op ONLY in mutant scope.
+            ns7["_short_canonical_operation"] = lambda *args: missing["ops"][0]
+            self.assertEqual(ns7["_validate_ops"](
+                uxml, missing, resolved, ResolverConfig()), policy)
+
+            forged = deepcopy(valid)
+            forged["ops"][0]["removedWithRecord"] = []
+            with self.assertRaisesRegex(
+                    UxmlPatchError, "UXML_SHORT_TARGETS_OR_PARAMS_DIFFER_FROM_AUTHORITY"):
+                module._validate_ops(uxml, forged, resolved, ResolverConfig())
+            ns8 = dict(vars(module))
+            exec(compile(src.replace(m8_anchor,
+                                     'True, "UXML_SHORT_TARGETS_OR_PARAMS_DIFFER_FROM_AUTHORITY"',
+                                     1), "<synthetic-M8-mutant>", "exec"), ns8)
+            self.assertEqual(ns8["_validate_ops"](
+                uxml, forged, resolved, ResolverConfig()), policy)
+            self.assertEqual(path.read_bytes(), raw)
+            print("SYNTHETIC_REVIEW_MUTANTS_KILLED: M7,M8")
 
     def test_loss_contract_vetoes_deleted_owner_and_retained_position_only(self):
         """Kill the short-path loss veto: touched source record/field refuses."""
