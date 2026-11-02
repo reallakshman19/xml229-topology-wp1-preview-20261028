@@ -166,3 +166,42 @@ test('interacting owners never enter a shared group',async()=>{
   assert.equal(engineGroups,0);assert.equal(singles,2);
   assert.deepEqual(x.skipped.map(y=>y.id),ids);
 });
+
+
+test('atomic group refusal bisects to untouched singleton path, preserving refusal codes',async()=>{
+  const threeIds=['SHORT:0','SHORT:1','SHORT:2'];
+  const threeRows=[...rows,{id:threeIds[2],eligible:true,branchIndex:2,
+    sourceSha256:initial,nodeKeys:['D2'],leftKey:'L2',rightKey:'R2'}];
+  const attempts=[],single=[],checkpoints=[];
+  const refusal={ok:true,outputKind:'topology-sidecars',
+    acceptedFinalTransferred:false,nativeCiiReleaseAuthorized:false,
+    topoFixCommitted:false,topoFixXmlText:'',
+    topologyUxmlParity:{status:'OFF',differences:[]},
+    topologySummary:{rejectReasons:['SHORT_BATCH_VALIDATION_REJECTED']}};
+  const x=await runIndependentShortBulk({
+    source,shortElements:threeRows,selectedIds:threeIds,
+    hubEnabled:false,hash:fakeHash,
+    runEngine:async job=>{
+      attempts.push(job.options.topologyActionIds);
+      return refusal;
+    },
+    runLegacy:async({source:current,selectedIds:one})=>{
+      single.push(one[0]);
+      assert.equal(current.sourceSha256,initial,
+        'a refused parent must never publish partial XML');
+      return {stopReason:'COMPLETE',latest:null,applied:[],
+        skipped:[{id:one[0],reason:'SHORT_ELEMENT_RECONNECTION_NOT_QUALIFIED',
+          sourceSha256:current.sourceSha256}]};
+    },
+    onCheckpoint:c=>checkpoints.push(c),
+  });
+  assert.equal(x.stopReason,'COMPLETE');
+  assert.equal(x.applied.length,0);assert.equal(x.latest,null);
+  assert.equal(x.completed,3);assert.equal(x.skipped.length,3);
+  assert.deepEqual(single,threeIds);
+  assert.deepEqual(attempts.map(a=>a.length),[3,2]);
+  assert.equal(checkpoints.length,3);
+  assert.ok(checkpoints.every(c=>!c.applied.length));
+  assert.ok(x.skipped.every(s=>s.reason==='SHORT_ELEMENT_RECONNECTION_NOT_QUALIFIED'));
+  console.info('A6B_UI_MUTANT_GREEN:bisect-atomic-and-legacy-singleton-refusals=PASS');
+});
