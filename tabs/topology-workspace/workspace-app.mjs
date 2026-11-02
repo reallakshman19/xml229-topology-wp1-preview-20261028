@@ -829,7 +829,8 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       query(root,'[data-short-preview]').textContent='';
       for(const [i,pass] of applied.entries()){
         state.history.push({sourceSha256:pass.sourceSha256,fixedSha256:pass.fixedSha256,
-          actionIds:[pass.id],operations:pass.transaction.operations,
+          actionIds:[pass.id],operations:pass.ownerOperations||pass.transaction.operations,
+          ownerEvidence:pass.ownerEvidence||null,ownerRevision:pass.ownerRevision||null,
           canonicalEditOps:pass.canonicalEditOps,validation:pass.validation.checks,
           reviews:i===0?reviews:{},resolvedConnections:i===applied.length-1?state.resolutions:[]});
       }
