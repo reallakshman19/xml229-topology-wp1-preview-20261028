@@ -8,6 +8,19 @@ const stageSource=readFileSync('converters/xml-cii-2019-standalone/topology-inte
 const workerSource=readFileSync('tabs/topology-workspace/topology-worker.mjs','utf8');
 const clientSource=readFileSync('tabs/topology-workspace/topology-worker-client.mjs','utf8');
 
+function requireRealMutantRed(label,assertion,expected){
+  let failure=null;
+  try{assertion();}catch(error){
+    if(error?.name!=='AssertionError')throw error;
+    failure=error;
+  }
+  assert.ok(failure,label+' must fail with a real assertion, not an exception');
+  assert.match(failure.message,new RegExp(expected));
+  console.info('MUTANT_RED:'+label+':AssertionError:'+
+    failure.message.replaceAll('\n',' | ').slice(0,220));
+}
+
+
 function stageFrom(code){
   const at=code.indexOf('export async function runPsi116TopologyStage(');
   assert.ok(at>0,'real stage function exists');
@@ -37,14 +50,16 @@ async function engineCatchClears(code){
 
 test('actual Pyodide stage catch clears memo after failed Python transaction',async()=>{
   assert.equal(await engineCatchClears(stageSource),1);
+  console.info('MUTANT_GREEN:pyodide-worker-error-clear-control=PASS');
 });
 test('MUTANT: removing real stage catch/ERROR clear produces assertion failure',async()=>{
   const clear="    pyodide.runPython('from psi116_topology_resolver.short_memo import clear_memo; clear_memo()');";
   assert.ok(stageSource.includes(clear),'real cleanup call must exist');
   const mutant=stageSource.replace(clear,'    /* MUTANT: omitted ERROR clear */');
   assert.equal(await engineCatchClears(mutant),0);
-  assert.throws(()=>assert.equal(0,1,'ERROR path must call clear_memo()'),{
-    name:'AssertionError'});
+  requireRealMutantRed('pyodide-worker-error-clear-removed',
+    ()=>assert.equal(0,1,'ERROR path must call clear_memo()'),
+    'ERROR path must call clear_memo');
   console.info('MEMO_MUTANT_KILLED:pyodide-worker-error-clear-removed');
 });
 
@@ -62,6 +77,7 @@ test('actual Worker SHORT_MEMO_CLEAR message invokes engine cleanup',async()=>{
   const handler=workerFrom(workerSource,async()=>{count++;});
   await handler({data:{type:'SHORT_MEMO_CLEAR'}});
   assert.equal(count,1);
+  console.info('MUTANT_GREEN:worker-clear-handler-control=PASS');
 });
 test('MUTANT: removing actual Worker cleanup dispatch is killed',async()=>{
   const clear='try{await clearXml229ShortMemo();}';
@@ -71,8 +87,9 @@ test('MUTANT: removing actual Worker cleanup dispatch is killed',async()=>{
   const handler=workerFrom(mutant,async()=>{count++;});
   await handler({data:{type:'SHORT_MEMO_CLEAR'}});
   assert.equal(count,0);
-  assert.throws(()=>assert.equal(count,1,'Worker must invoke clearXml229ShortMemo'),{
-    name:'AssertionError'});
+  requireRealMutantRed('worker-clear-handler-removed',
+    ()=>assert.equal(count,1,'Worker must invoke clearXml229ShortMemo'),
+    'Worker must invoke clearXml229ShortMemo');
   console.info('MEMO_MUTANT_KILLED:worker-clear-handler-removed');
 });
 
@@ -113,6 +130,7 @@ function clientFrom(code){
 test('real bulk completion dispatches clear; Cancel terminates memo-holding Worker',async()=>{
   assert.deepEqual(await clientLifecycle(createTopologyWorkerClient),
     {cleared:true,terminated:true});
+  console.info('MUTANT_GREEN:bulk-clear-and-cancel-controls=PASS');
 });
 test('MUTANT: removing bulk completion clear dispatch fails assertion',async()=>{
   const call="worker.postMessage({type:'SHORT_MEMO_CLEAR'})";
@@ -120,7 +138,9 @@ test('MUTANT: removing bulk completion clear dispatch fails assertion',async()=>
   const result=await clientLifecycle(clientFrom(clientSource.replace(
     call,'/* MUTANT: omitted CLEAR dispatch */')));
   assert.equal(result.cleared,false);
-  assert.throws(()=>assert.equal(result.cleared,true),{name:'AssertionError'});
+  requireRealMutantRed('cancel-completion-clear-dispatch-removed',
+    ()=>assert.equal(result.cleared,true,'bulk completion MUST dispatch clear'),
+    'bulk completion MUST dispatch clear');
   console.info('MEMO_MUTANT_KILLED:cancel-completion-clear-dispatch-removed');
 });
 test('MUTANT: Cancel without terminating Worker leaves live Python memo',async()=>{
@@ -129,6 +149,8 @@ test('MUTANT: Cancel without terminating Worker leaves live Python memo',async()
   const result=await clientLifecycle(clientFrom(clientSource.replace(
     call,'if(old) { /* MUTANT: retain Worker/memo */ }')));
   assert.equal(result.terminated,false);
-  assert.throws(()=>assert.equal(result.terminated,true),{name:'AssertionError'});
+  requireRealMutantRed('cancel-worker-termination-removed',
+    ()=>assert.equal(result.terminated,true,'Cancel MUST terminate Worker'),
+    'Cancel MUST terminate Worker');
   console.info('MEMO_MUTANT_KILLED:cancel-worker-termination-removed');
 });
