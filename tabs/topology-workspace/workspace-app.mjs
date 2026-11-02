@@ -1472,6 +1472,12 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     else if(target.hasAttribute('data-short-next')){
       if(state.shortSelection&&!state.busy&&!state.batchRunning){state.shortSelection.page++;renderShortSelection();}
     }
+    else if(target.hasAttribute('data-short-independent')){
+      if(!state.busy&&!state.batchRunning){
+        state.independentShortGroups=!!target.checked;
+        renderShortSelection();
+      }
+    }
     else if(target.hasAttribute('data-run-short-drop'))dropShortElements();
     else if(target.hasAttribute('data-analyze'))analyze();
     else if(target.hasAttribute('data-cancel')&&state.fixFinalizing){
