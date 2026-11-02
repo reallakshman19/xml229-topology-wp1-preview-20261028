@@ -51,7 +51,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   cancelEngine ||= ownedWorker?()=>ownedWorker.cancel():()=>{};
   const state={epoch:0,source:null,original:null,revision:0,applied:0,history:[],resolutions:[],shortElements:[],shortSelection:null,scene:null,plan:null,findings:[],result:null,
     selected:new Set(),search:'',filter:'all',category:'all',hubEnabled:false,hubParity:null,hubRevision:null,analysisProof:null,evidenceProofReason:'EVIDENCE_ANALYSIS_REQUIRED',opsPreview:null,opsPreviewError:null,
-     activeJob:null,manualPorts:[],secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false,shortBulk:null,manualQueue:[],manualQueueRunning:false,manualQueueCheckpoint:null,manualQueueStatus:''};
+     activeJob:null,shortBulkFinalizing:false,manualPorts:[],secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false,shortBulk:null,manualQueue:[],manualQueueRunning:false,manualQueueCheckpoint:null,manualQueueStatus:''};
   // The queue lives alongside Second Pass, without changing the engineering audit.
   const queuePanel=document.createElement('section');
   queuePanel.dataset.manualQueue='';
@@ -911,19 +911,35 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       });
       if(generation!==state.epoch)return;
       bulkFinished=true;clearInterval(heartbeat);
-      state.shortBulk=null;
+      state.shortBulkFinalizing=true;state.shortBulk=null;refresh();
       await publishShortBulk(outcome,generation);
     }catch(error){
       if(generation!==state.epoch)return;
+      // Publication may already have advanced state.source. HOLD directly
+      // before trying to re-publish, which may reject the old source SHA.
+      const why=String(error?.message||error);
+      if(state.hubEnabled)holdShortHubRelease('SHORT_BULK_PUBLICATION_FAILED:'+why);
       const checkpoint=state.shortBulk||{originSha256:source.sourceSha256,latest:null,
         applied:[],skipped:[],requested:ids,completed:0};
       bulkFinished=true;clearInterval(heartbeat);
-      state.shortBulk=null;
-      await publishShortBulk({...checkpoint,stopReason:'ERROR',stopMessage:error?.message||String(error)},generation);
+      state.shortBulkFinalizing=true;state.shortBulk=null;
+      try{
+        await publishShortBulk({...checkpoint,stopReason:'ERROR',stopMessage:why},generation);
+      }catch(republishError){
+        // Never leave an unhandled source-drift rejection or restore EQUAL.
+        if(state.hubEnabled)holdShortHubRelease(
+          'SHORT_BULK_REPUBLISH_FAILED:'+String(republishError?.message||republishError));
+        const message='BULK STOPPED · ERROR · '+why+
+          (state.hubEnabled?' · corrected downloads HELD.':' · current working revision retained.');
+        query(root,'[data-progress]').textContent=message;
+        setFixStatus(message,'rejected','drop');
+        updateStatus('Bulk publication failed. Last validated working revision retained; review required.');
+      }
     }finally{
       clearInterval(heartbeat);
       if(generation===state.epoch){
-        state.batchRunning=false;state.activeJob=null;state.shortBulk=null;refresh();
+        state.batchRunning=false;state.shortBulkFinalizing=false;
+        state.activeJob=null;state.shortBulk=null;refresh();
       }
     }
   }
@@ -1223,7 +1239,8 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     const hubToggle=query(root,'[data-uxml-toggle]');
     if(hubToggle){hubToggle.checked=state.hubEnabled;hubToggle.disabled=state.busy||state.batchRunning;}
     renderHubParity();
-    query(root,'[data-cancel]').disabled=!(state.busy||state.batchRunning);
+    query(root,'[data-cancel]').disabled=
+      !(state.busy||state.batchRunning)||state.shortBulkFinalizing;
     getNodes(root,'[data-auto-fix],[data-close-joint],[data-add-second-pass]').forEach(button=>
       button.disabled=state.busy||state.batchRunning||
         (state.hubEnabled&&(state.hubParity?.status!=='EQUAL'||!button.hasAttribute('data-auto-fix'))));
@@ -1508,6 +1525,8 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     occurrences:state.scene?.records.length||0,actions:state.plan?.actions.length||0,
     selected:[...state.selected],busy:state.busy,
     hubEnabled:state.hubEnabled,hubParity:state.hubParity?.status||'OFF',
+    hubRevision:state.hubRevision,activeJob:state.activeJob,
+    shortBulkFinalizing:state.shortBulkFinalizing,
     queued:state.manualQueue.map(x=>({id:x.id,status:x.status})),queueBusy:state.manualQueueRunning}),load,analyze,
     dispose(){
       state.activeJob=null;
