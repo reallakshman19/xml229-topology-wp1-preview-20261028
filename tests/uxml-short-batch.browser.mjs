@@ -103,6 +103,11 @@ test('A6b generated 5-owner batch real Pyodide direct and UXML equals serial',
             throw Error('A6B_PREFINAL_COUNT_OR_RELEASE_DRIFT');
           if(hub&&grouped.topologyUxmlAppliedEditOps?.length!==5)
             throw Error('A6B_GROUP_CANONICAL_OPS_MISSING');
+          const adapterMemo=grouped.topologyBulkTiming?.memoStats;
+          if(hub&&(adapterMemo?.uxml_resolve_miss!==1||
+                     (adapterMemo?.uxml_resolve_hit||0)<1))
+            throw Error('A6B_UXML_ADAPTER_REPEATED_OR_UNBOUND:'+
+              JSON.stringify(adapterMemo||{}));
           let working=xml;
           const serialStarted=performance.now();
           const serialTimings=[];
