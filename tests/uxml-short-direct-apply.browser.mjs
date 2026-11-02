@@ -45,14 +45,21 @@ async function exercise(mode){
  const page=await browser.newPage({viewport:{width:1400,height:980}});
  const errors=[];page.on('pageerror',e=>errors.push(String(e)));
  try{
-  if(mode==='publishThrow'){
+  if(['publishThrow','cancelPublishThrow','earlyParseThrow'].includes(mode)){
    await page.route('**/tabs/topology-workspace/workspace-app.mjs',async route=>{
     const response=await route.fetch(),original=await response.text();
     const method=original.indexOf('  async function publishShortBulk(');
-    const needle="      canvas.setScene(scene);sourceMeta();\n      query(root,'[data-gap-review-status]')";
+    const finish=original.indexOf('  async function publishShortBulkGuarded(',method);
+    const isEarly=mode==='earlyParseThrow';
+    const needle=isEarly?
+      '      const scene=parseOccurrenceScene(next.source.sourceText,next.source.sourceSha256);':
+      "      canvas.setScene(scene);sourceMeta();\n      query(root,'[data-gap-review-status]')";
     const offset=original.indexOf(needle,method);
-    assert.ok(method>=0&&offset>method,'must inject only inside bulk publish');
-    const replacement="      canvas.setScene=()=>{throw Error('SYNTHETIC_PUBLISH_SET_SCENE_FAILURE');};"+
+    assert.ok(method>=0&&offset>method&&offset<finish,
+      'fault injection must be confined to publishShortBulk');
+    const replacement=isEarly?
+      "      throw Error('SYNTHETIC_EARLY_PARSE_FAILURE');\n"+needle:
+      "      canvas.setScene=()=>{throw Error('SYNTHETIC_PUBLISH_SET_SCENE_FAILURE');};"+
       "canvas.setScene(scene);sourceMeta();\n      query(root,'[data-gap-review-status]')";
     const injected=original.slice(0,offset)+replacement+original.slice(offset+needle.length);
     await route.fulfill({response,body:injected});
@@ -133,7 +140,7 @@ async function exercise(mode){
       forged.topologyUxmlAppliedEditOps[0].fileSha256='FORGED_SOURCE_SHA';
       return forged;
     }
-    if((mode==='cancel'&&index===2)||
+    if(((mode==='cancel'||mode==='cancelPublishThrow')&&index===2)||
        (mode==='cancelBeforeCheckpoint'&&index===1)){
      probe.holding=true;
      await new Promise(resolve=>{probe.releaseLate=resolve;});
@@ -174,7 +181,7 @@ async function exercise(mode){
   assert.equal(await page.locator('[data-run-short-drop]').isEnabled(),true,
     'hub Apply requires current analysis and EQUAL but no short preview');
   await page.locator('[data-run-short-drop]').click();
-  if(mode==='cancel'||mode==='cancelBeforeCheckpoint'){
+  if(['cancel','cancelBeforeCheckpoint','cancelPublishThrow'].includes(mode)){
    await page.waitForFunction(()=>window.__directProbe.holding,
      null,{timeout:120000});
    assert.equal(await page.locator('[data-cancel]').isEnabled(),true);
@@ -188,7 +195,7 @@ async function exercise(mode){
    assert.match(selectedCount,/3 selected/,
      'busy selection change events must not mutate native owner selection');
    assert.match(await page.locator('[data-progress]').textContent(),
-     mode==='cancel'?/Applying 2 of 3 · 1 validated · 0 skipped/:
+     mode!=='cancelBeforeCheckpoint'?/Applying 2 of 3 · 1 validated · 0 skipped/:
        /Applying 1 of 3 · 0 validated · 0 skipped/);
    assert.match(await page.evaluate(()=>window.__directProbe.firstProgress),
      /Applying 1 of 3 · 0 validated · 0 skipped/,
@@ -196,18 +203,31 @@ async function exercise(mode){
    await page.locator('[data-cancel]').click();
    await page.waitForFunction(mode=>{
     const status=document.querySelector('[data-progress]')?.textContent||'';
-    const checkpoint=mode==='cancel'?1:0;
-    return (mode==='cancel'?status.includes('BULK STOPPED · CANCELLED'):
-      status.includes('CANCELLED · working revision 0 retained'))&&
+    const checkpoint=mode==='cancelBeforeCheckpoint'?0:1;
+    return (mode==='cancelBeforeCheckpoint'?
+      status.includes('CANCELLED · working revision 0 retained'):
+      mode==='cancelPublishThrow'?status.includes('BULK STOPPED · ERROR'):
+        status.includes('BULK STOPPED · CANCELLED'))&&
       window.__directProbe.workspace.getState().revision===checkpoint;
    },mode,{timeout:120000});
    await page.evaluate(()=>window.__directProbe.releaseLate());
    await page.waitForTimeout(80);
    assert.match(await page.locator('[data-progress]').textContent(),
-     mode==='cancel'?/BULK STOPPED · CANCELLED/:
-       /CANCELLED · working revision 0 retained/);
+     mode==='cancelBeforeCheckpoint'?/CANCELLED · working revision 0 retained/:
+       mode==='cancelPublishThrow'?/BULK STOPPED · ERROR/:
+       /BULK STOPPED · CANCELLED/);
    const current=await page.evaluate(()=>window.__directProbe.workspace.getState());
-   assert.equal(current.revision,mode==='cancel'?1:0);
+   assert.equal(current.revision,mode==='cancelBeforeCheckpoint'?0:1);
+   if(mode==='cancelPublishThrow'){
+     assert.equal(current.hubParity,'DIFFERENT');
+     assert.equal(current.hubRevision,null);
+     assert.equal(await page.locator('[data-download-working]').isDisabled(),true);
+     assert.equal(await page.locator('[data-download-history]').isDisabled(),true);
+     assert.equal(await page.locator('[data-download-fix]').count(),0);
+     assert.match(await page.locator('[data-progress]').textContent(),
+       /SYNTHETIC_PUBLISH_SET_SCENE_FAILURE.*corrected downloads HELD/);
+     assert.deepEqual(errors,[],'cancel publication failure must not produce pageerror');
+   }
    assert.equal(current.busy,false);
    if(mode==='cancelBeforeCheckpoint'){
      assert.equal(current.activeJob,null,'Cancel before first checkpoint clears activeJob');
@@ -242,23 +262,28 @@ async function exercise(mode){
    },null,{timeout:120000});
    assert.match(await page.locator('[data-progress]').textContent(),/BULK COMPLETE/);
    assert.equal(await page.locator('[data-download-working]').isEnabled(),true);
-  }else if(mode==='publishThrow'){
-   await page.waitForFunction(()=>{
+  }else if(mode==='publishThrow'||mode==='earlyParseThrow'){
+   await page.waitForFunction(mode=>{
     const text=document.querySelector('[data-progress]')?.textContent||'';
     const state=window.__directProbe.workspace.getState();
-    return text.includes('BULK STOPPED · ERROR')&&
-      text.includes('SYNTHETIC_PUBLISH_SET_SCENE_FAILURE')&&
+    const expected=mode==='earlyParseThrow'?'SYNTHETIC_EARLY_PARSE_FAILURE':
+      'SYNTHETIC_PUBLISH_SET_SCENE_FAILURE';
+    return text.includes('BULK STOPPED · ERROR')&&text.includes(expected)&&
       text.includes('corrected downloads HELD')&&
       state.hubParity==='DIFFERENT'&&state.hubRevision===null&&
-      state.revision===3&&!state.busy;
-   },null,{timeout:180000});
+      state.revision===(mode==='earlyParseThrow'?0:3)&&!state.busy;
+   },mode,{timeout:180000});
    assert.equal(await page.locator('[data-download-working]').isDisabled(),true);
    assert.equal(await page.locator('[data-download-history]').isDisabled(),true);
    assert.equal(await page.locator('[data-download-fix]').count(),0,
      'HOLD must remove the corrected XML download action entirely');
    const state=await page.evaluate(()=>window.__directProbe.workspace.getState());
    assert.equal(state.hubRevision,null,'no stale EQUAL correction authority');
-   assert.equal(state.revision,3,'previously validated working revision retained');
+   assert.equal(state.revision,mode==='earlyParseThrow'?0:3,
+     'only successfully published working revisions are retained');
+   if(mode==='earlyParseThrow')
+     assert.match(await page.locator('[data-progress]').textContent(),
+       /working revision 0 retained; 3 native-validated item\(s\) in attempted publication/);
    assert.deepEqual(errors,[],'re-publish source drift must be caught');
   }else if(['receiptDrift','lineageDrift','validationDrift',
              'timeout','nonCommittedEqual','outerError'].includes(mode)){
@@ -343,5 +368,9 @@ test('publish-step canvas.setScene fault revokes hub and catches re-publish sour
  {timeout:360000},async()=>exercise('publishThrow'));
 test('Cancel during post-COMPLETE evidence recheck cannot rewrite terminal status',
  {timeout:360000},async()=>exercise('refreshHeld'));
+test('Cancel publication canvas failure catches throw and revokes hub release',
+ {timeout:360000},async()=>exercise('cancelPublishThrow'));
+test('early parse publication failure retains only old working revision and holds downloads',
+ {timeout:360000},async()=>exercise('earlyParseThrow'));
 test('cancel during direct Apply retains the last validated checkpoint and final status',
  {timeout:360000},async()=>exercise('cancel'));
