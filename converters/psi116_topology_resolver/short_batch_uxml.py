@@ -110,8 +110,7 @@ def _canonical_op(row,request,ops,uxml,records,paths,refs,sha):
 
 def qualify_short_batch_uxml(original: str|Path,uxml:dict,
                              *,policy:TransactionPolicy,
-                             config:ResolverConfig|None=None,
-                             direct_transaction=None):
+                             config:ResolverConfig|None=None):
     """One pinned UXML adapter + one UXML-native transaction for a group.
 
     Independent original-source native transaction is mandatory. A single
@@ -142,8 +141,9 @@ def qualify_short_batch_uxml(original: str|Path,uxml:dict,
              "UXML_ORIGINAL_BYTES_MISMATCH")
     original_locators=_build_locator_index(_parse_clone(
         before.document.source_text),before)
-    direct=direct_transaction or apply_independent_short_batch(
-        before,policy=policy,config=config)
+    # Never accept an externally supplied "direct" witness: that could be
+    # the SAME UXML transaction and reintroduce the fixed B1 self-parity bug.
+    direct=apply_independent_short_batch(before,policy=policy,config=config)
     patched=apply_independent_short_batch(
         adapted,policy=policy,config=config)
     _require(direct.committed and patched.committed,
