@@ -201,9 +201,12 @@ async function exercise(mode){
    const current=await page.evaluate(()=>window.__directProbe.workspace.getState());
    assert.equal(current.revision,mode==='cancel'?1:0);
    assert.equal(current.busy,false);
-   if(mode==='cancelBeforeCheckpoint')
+   if(mode==='cancelBeforeCheckpoint'){
+     assert.equal(current.activeJob,null,'Cancel before first checkpoint clears activeJob');
+     assert.equal(current.shortBulkFinalizing,false);
      assert.equal(await page.locator('[data-run-short-drop]').count(),0,
        'first-item Cancel must clear the stale pending selection');
+   }
   }else if(mode==='refreshHeld'){
    await page.waitForFunction(()=>window.__directProbe.refreshHolding,
      null,{timeout:180000});
