@@ -979,6 +979,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
         source,shortElements:state.shortElements,selectedIds:ids,runEngine,
         hubEnabled:state.hubEnabled,enableIndependentGroups:state.independentShortGroups,
         shortBatchPlanning:state.shortBatchPlanning,
+        shortBatchSourceRecords:state.scene?.records||null,
         isCurrent:()=>generation===state.epoch,
         onCheckpoint:checkpoint=>{if(generation===state.epoch)state.shortBulk=checkpoint;},
         onProgress:step=>{
