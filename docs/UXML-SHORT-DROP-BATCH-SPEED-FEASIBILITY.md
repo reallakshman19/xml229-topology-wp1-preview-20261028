@@ -149,3 +149,41 @@ the new head. No Owner data or identifying source facts are recorded here.
 **Still NOT_DONE:** item (4), skipping intermediate serialize/re-parse work,
 and any multi-owner batching or structural shortcut. No CLOS, tolerance,
 loss-contract, eligibility, review-only or one-owner policy changes.
+
+
+### Post-B1 safety repair · measured synthetic ON/OFF at the route-separated implementation
+
+Source-bound [Topology validation #41463916361](https://github.com/reallakshman19/xml229-topology-wp1-preview-20261028/actions/runs/41463916361) and [browser #41463916282](https://github.com/reallakshman19/xml229-topology-wp1-preview-20261028/actions/runs/41463916282)
+are **after** the route/document-digest safety change. The test-only circular-clear
+cleanup that followed did not change product behavior. These measurements supersede
+the earlier unsafe memo timing for any performance claim.
+
+| Synthetic fixture / scope | Memo OFF | Memo ON | OFF / ON |
+|---|---:|---:|---:|
+| Interconnected 60-TEE, 5 sequential short owners, full sourceRef/canonical authority | 13.4294s | 10.4572s | 1.28x |
+| Same 60-TEE, 20 owners, full sourceRef/canonical authority | 53.2981s | 42.7504s | 1.25x |
+| One owner, same 660-record original, native full staged direct/export/patch | 2234.054ms | 1652.880ms | 1.35x |
+| Genuine Chromium/Pyodide, separate 339-record fixture, one owner | 1485.9ms | 1348.8ms | 1.10x |
+
+All synthetic ON/OFF corrected XML and required transaction/validation/ops/
+refusal evidence were byte-for-byte equal. In the dedicated independent-route
+two-transaction proof, the memo records **2 real transaction misses and 2
+same-UXML hits**. The full browser job records **2 real misses and 3 hits**,
+because its complete workflow repeats one additional already validated check;
+this is not a third independent authority run.
+
+Native same-source sub-stages (ms), OFF → ON: direct 410.432 → 620.494;
+canonical export 559.470 → 589.301; canonical apply 1133.288 → 308.935;
+original source resolve 135.969 → 163.878; pinned UXML reader CLI
+114.999 → 114.017; final parity comparison 3.978 → 3.822. These are
+nonadditive measurements subject to runner variance, not proof that the
+native/direct analysis itself became faster.
+
+**Why below 4x:** each route must independently perform one complete native
+transaction. The canonical/sourceRef and loss checks, full original-XML
+validation, changed-source parser/analyzer work, Worker mapping and UI
+refresh also still run. The old 4-hits/one-real behavior was circular and is
+prohibited. The earlier Oracle Owner-only **2.41x ratio** predates the repair;
+new Owner original-file timing and any subsequent 89-owner estimate remain
+**NOT_RUN** by the coder. Intermediate serialize/re-parse elimination is
+**NOT_DONE** and is not covered by option C.
