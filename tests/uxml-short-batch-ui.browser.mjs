@@ -148,6 +148,9 @@ async function scenario({count=5,hub=false,group=true,mode='normal',mutation=nul
   if(mode==='cancel'||mode==='cancelMutant'){
    await page.waitForFunction(()=>window.__a6bUi.holding,null,{timeout:180000});
    assert.equal(await page.evaluate(()=>window.__a6bUi.workspace.getState().revision),0);
+   const inFlightProgress=await page.locator('[data-progress]').textContent();
+   assert.match(inFlightProgress,/Applying 5 of 5.*0 validated/,
+     'in-flight k/N must count owners rather than groups');
    await page.locator('[data-cancel]').click();
    const held=await page.evaluate(()=>window.__a6bUi.workspace.getState());
    assert.equal(held.revision,0);
@@ -156,7 +159,7 @@ async function scenario({count=5,hub=false,group=true,mode='normal',mutation=nul
    await page.waitForTimeout(200);
    const after=await page.evaluate(()=>window.__a6bUi.workspace.getState());
    return {mode,revision:after.revision,hubRevision:after.hubRevision,
-     text:await page.locator('[data-progress]').textContent(),jobs:
+     inFlightProgress,text:await page.locator('[data-progress]').textContent(),jobs:
        await page.evaluate(()=>window.__a6bUi.jobs),errors};
   }
   if(mode==='releaseHold'){
@@ -181,7 +184,8 @@ async function scenario({count=5,hub=false,group=true,mode='normal',mutation=nul
   const jobs=await page.evaluate(()=>window.__a6bUi.jobs);
   const elapsedMs=Date.now()-started;
   if(mode==='forcedRefusal'){
-   return {mode,hub,group,count,status,message,jobs,elapsedMs,errors};
+   const audit=await page.locator('[data-short-bulk-operations]').textContent();
+   return {mode,hub,group,count,status,message,jobs,elapsedMs,audit,errors};
   }
   assert.match(message,/BULK COMPLETE/,'workspace must finish: '+message);
   assert.ok(group?jobs.some(j=>j.isBatch):jobs.every(j=>!j.isBatch),
@@ -247,6 +251,8 @@ test('real workspace group refusal bisects to exactly named singleton refusal',
  assert.equal(x.jobs.filter(j=>j.isBatch).length>=2,true);
  assert.equal(x.jobs.filter(j=>!j.isBatch).length,5);
  assert.match(x.message,/5 skipped/);
+ assert.match(x.audit,/UXML_LOSS_CONTRACT_FIELD_TOUCH:SYNTHETIC_OWNER/,
+   'every bisected singleton retains its exact named historical refusal code');
  assert.deepEqual(x.errors,[]);
  console.info('A6B_UI_MUTANT_GREEN:real-workspace-bisect-named-refusal=PASS');
 });
