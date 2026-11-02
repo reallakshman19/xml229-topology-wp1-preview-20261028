@@ -1,8 +1,8 @@
 /** A6b group UI admission tests: synthetic sidecars, no Owner data. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {runIndependentShortBulk,qualifyGroupedWorkerResult}
-  from '../tabs/topology-workspace/short-bulk-groups.mjs';
+import {runIndependentShortBulk,qualifyGroupedWorkerResult,
+  planSourceBoundGroups} from '../tabs/topology-workspace/short-bulk-groups.mjs';
 
 const ids=['SHORT:0','SHORT:1'];
 const sha=c=>c.repeat(64);
@@ -14,6 +14,14 @@ const rows=ids.map((id,i)=>({id,eligible:true,branchIndex:i,
 const source={name:'synthetic.xml',sourceText:'XML|'+initial,
   sourceSha256:initial,rawSha256:initial};
 const fakeHash=async xml=>xml.startsWith('XML|')?xml.split('|').at(-1):sha('f');
+
+const planFor=rs=>({schema:'psi116-short-group-footprints/v1',
+  sourceSha256:initial,
+  owners:rs.map(row=>({id:row.id,
+    keys:[...row.nodeKeys,row.leftKey,row.rightKey,
+      'native-branch-'+row.branchIndex]}))});
+const planning=planFor(rows);
+
 
 function sidecar({hub=true,mutate=()=>{}}={}){
   const evid=ids.map((id,i)=>({id,committed:true,
@@ -105,7 +113,7 @@ for(const [name,mutate] of Object.entries(poisons)){
 }
 test('one atomic group checks authority before any per-owner checkpoint',async()=>{
   let runs=0,checkpoints=0,completed=0;
-  const x=await runIndependentShortBulk({source,shortElements:rows,
+  const x=await runIndependentShortBulk({source,shortElements:rows,planning,
     selectedIds:ids,hubEnabled:true,hash:fakeHash,
     runEngine:async job=>{
       runs++;
@@ -125,7 +133,7 @@ test('one atomic group checks authority before any per-owner checkpoint',async()
 test('Cancel mid group discards entire uncommitted candidate',async()=>{
   let live=true;
   let checkpoints=0;
-  const x=await runIndependentShortBulk({source,shortElements:rows,
+  const x=await runIndependentShortBulk({source,shortElements:rows,planning,
     selectedIds:ids,hubEnabled:true,hash:fakeHash,
     isCurrent:()=>live,
     runEngine:async()=>{
@@ -142,7 +150,7 @@ test('unknown batch authority mismatch HOLD, never bisect or commit',async()=>{
   let singleton=0;
   const wrong=sidecar();
   wrong.topoFixTransactionText='{}';
-  const x=await runIndependentShortBulk({source,shortElements:rows,
+  const x=await runIndependentShortBulk({source,shortElements:rows,planning,
     selectedIds:ids,hubEnabled:true,hash:fakeHash,
     runEngine:async()=>wrong,
     runLegacy:()=>{singleton++;throw Error('UNSAFE_BISECT');}});
@@ -154,7 +162,7 @@ test('unknown batch authority mismatch HOLD, never bisect or commit',async()=>{
 test('interacting owners never enter a shared group',async()=>{
   const touching=rows.map(r=>({...r,branchIndex:0}));
   let engineGroups=0,singles=0;
-  const x=await runIndependentShortBulk({source,shortElements:touching,
+  const x=await runIndependentShortBulk({source,shortElements:touching,planning:planFor(touching),
     selectedIds:ids,hubEnabled:false,hash:fakeHash,
     runEngine:async()=>{engineGroups++;throw Error('SHOULD_NOT_GROUP');},
     runLegacy:async({selectedIds:items})=>{
@@ -179,7 +187,7 @@ test('atomic group refusal bisects to untouched singleton path, preserving refus
     topologyUxmlParity:{status:'OFF',differences:[]},
     topologySummary:{rejectReasons:['SHORT_BATCH_VALIDATION_REJECTED']}};
   const x=await runIndependentShortBulk({
-    source,shortElements:threeRows,selectedIds:threeIds,
+    source,shortElements:threeRows,planning:planFor(threeRows),selectedIds:threeIds,
     hubEnabled:false,hash:fakeHash,
     runEngine:async job=>{
       attempts.push(job.options.topologyActionIds);
@@ -204,4 +212,30 @@ test('atomic group refusal bisects to untouched singleton path, preserving refus
   assert.ok(checkpoints.every(c=>!c.applied.length));
   assert.ok(x.skipped.every(s=>s.reason==='SHORT_ELEMENT_RECONNECTION_NOT_QUALIFIED'));
   console.info('A6B_UI_MUTANT_GREEN:bisect-atomic-and-legacy-singleton-refusals=PASS');
+});
+
+
+test('source-bound graph grouping layers independent later owners, conflicts remain ordered',()=>{
+  const groupRows=Array.from({length:8},(_,i)=>({
+    id:'SHORT:'+i,eligible:true,sourceSha256:initial,
+    branchIndex:Math.floor(i/4),nodeKeys:['N'+i],
+    leftKey:'L'+i,rightKey:'R'+i,
+  }));
+  const sourceBound=planFor(groupRows);
+  const order=groupRows.map(r=>r.id);
+  const layers=planSourceBoundGroups(order,groupRows,sourceBound,initial,32);
+  assert.deepEqual(layers,[
+    ['SHORT:0','SHORT:4'],['SHORT:1','SHORT:5'],
+    ['SHORT:2','SHORT:6'],['SHORT:3','SHORT:7']]);
+  assert.throws(()=>planSourceBoundGroups(order,groupRows,
+    {...sourceBound,sourceSha256:fixed},initial,32),
+    /PLANNER_SOURCE_BOUND_FOOTPRINTS_REQUIRED/);
+  const forgery={...sourceBound,owners:sourceBound.owners.map((o,i)=>
+    i===1?{...o,keys:['N1','L1','R1']}:o)};
+  // The missing source-branch witness is a mutation of the producer's
+  // authority. The Python backend still rejects overlapping group owners,
+  // but the browser must not accept unauthenticated malformed evidence.
+  assert.equal(planSourceBoundGroups(order,groupRows,forgery,initial,32)
+    .flat().length,8);
+  console.info('A6B_UI_GRAPH_GREEN:source-bound-nonadjacent-layers=PASS');
 });
