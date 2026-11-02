@@ -167,9 +167,12 @@ def source_resolve(source, config, *, source_name=None):
 
 
 def uxml_resolve(uxml, config, *, source_name=None, resolver=None):
+    from .uxml_adapter import resolve_from_uxml as canonical_resolver
     if resolver is None:
-        from .uxml_adapter import resolve_from_uxml as resolver
-    if _active is None:
+        resolver = canonical_resolver
+    # A test/injected reader is an independent semantic input. Do not reuse
+    # a result produced by a different resolver implementation.
+    if _active is None or resolver is not canonical_resolver:
         return resolver(uxml, config, source_name=source_name)
     # Include every structural field, raw node fragment and sourceRef in the
     # key. A malformed/changed UXML cannot receive a cached validated result.
