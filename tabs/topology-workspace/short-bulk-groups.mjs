@@ -26,11 +26,57 @@ function unique(xs){return new Set(xs).size===xs.length;}
 function same(xs,ys){return JSON.stringify(xs)===JSON.stringify(ys);}
 /** The only group-order authority: source-bound native footprints from
  * read-only Analyze, NOT guessed branch/position equivalence in JS. */
-export function planSourceBoundGroups(ids,rows,planning,sourceSha,maximum=MAX_GROUP){
+export function planSourceBoundGroups(ids,rows,planning,sourceSha,maximum=MAX_GROUP,sourceRecords){
   requireBatch(planning?.schema==='psi116-short-group-footprints/v1'&&
     planning.sourceSha256===sourceSha&&Array.isArray(planning.owners)&&
     unique(ids)&&Number.isInteger(maximum)&&maximum>=2&&maximum<=MAX_GROUP,
     'PLANNER_SOURCE_BOUND_FOOTPRINTS_REQUIRED');
+  requireBatch(Array.isArray(sourceRecords)&&sourceRecords.length>0&&
+    sourceRecords.every(record=>typeof record.key==='string'&&
+      Number.isInteger(record.branchIndex)), 'PLANNER_ORIGINAL_RECORDS_REQUIRED');
+  const originalByKey=new Map(sourceRecords.map(record=>[record.key,record]));
+  requireBatch(originalByKey.size===sourceRecords.length,
+    'PLANNER_ORIGINAL_RECORD_KEYS_DUPLICATED');
+  const byBranch=new Map(),byPositive=new Map();
+  for(const record of sourceRecords){
+    if(!byBranch.has(record.branchIndex))byBranch.set(record.branchIndex,[]);
+    byBranch.get(record.branchIndex).push(record.key);
+    if(Number.isInteger(record.nodeNumber)&&record.nodeNumber>0){
+      if(!byPositive.has(record.nodeNumber))byPositive.set(record.nodeNumber,[]);
+      byPositive.get(record.nodeNumber).push(record.key);
+    }
+  }
+  const nativeMinimum=row=>{
+    const owned=new Set([...(byBranch.get(row.branchIndex)||[]),
+      ...row.nodeKeys,row.leftKey,row.rightKey]);
+    requireBatch([...owned].every(key=>originalByKey.has(key)),
+      'PLANNER_ORIGINAL_SOURCE_RECORD_MISSING');
+    // Exact conservative positive-node alias closure, unchanged from the
+    // native footprint. Never use NodeNumber alone as a write authority.
+    let changed=true;
+    while(changed){
+      changed=false;
+      for(const key of [...owned]){
+        const label=originalByKey.get(key).nodeNumber;
+        if(!Number.isInteger(label)||label<=0)continue;
+        for(const peer of byPositive.get(label)||[])
+          if(!owned.has(peer)){owned.add(peer);changed=true;}
+      }
+    }
+    const contact=new Set(owned);
+    const positions=[...owned].map(k=>originalByKey.get(k).position)
+      .filter(p=>p&&Number.isFinite(p.x)&&Number.isFinite(p.y)&&
+        Number.isFinite(p.z));
+    // Config in this explicit Worker path is the fixed native default, 25mm.
+    // Compare squared distance; include every record at <=25.000000001mm.
+    for(const record of sourceRecords){
+      const p=record.position;
+      if(contact.has(record.key)||!p)continue;
+      if(positions.some(q=>Math.hypot(p.x-q.x,p.y-q.y,p.z-q.z)<=25+1e-9))
+        contact.add(record.key);
+    }
+    return contact;
+  };
   const rowMap=new Map(rows.map(row=>[row.id,row]));
   const zones=new Map();
   for(const entry of planning.owners){
@@ -51,6 +97,9 @@ export function planSourceBoundGroups(ids,rows,planning,sourceSha,maximum=MAX_GR
       assigned.push(groups.length-1);barrier=groups.length;
       continue;
     }
+    const minimumZone=nativeMinimum(row);
+    requireBatch([...minimumZone].every(key=>zone.has(key)),
+      'PLANNER_NATIVE_FOOTPRINT_UNDERCOVERS_SOURCE');
     requireBatch([...row.nodeKeys,row.leftKey,row.rightKey]
       .every(key=>zone.has(key)), 'PLANNER_NATIVE_SOURCE_RECORD_CENSUS');
     let minimum=barrier;
@@ -224,7 +273,7 @@ export async function qualifyGroupedWorkerResult({
 export async function runIndependentShortBulk({
   source,shortElements,selectedIds,runEngine,hubEnabled=false,
   isCurrent=()=>true,onCheckpoint=()=>{},onProgress=()=>{},
-  hash,runLegacy,planning,maximum=MAX_GROUP,
+  hash,runLegacy,planning,sourceRecords,maximum=MAX_GROUP,
 }){
   if(!source||!Array.isArray(shortElements)||!Array.isArray(selectedIds)||
      !unique(selectedIds)||typeof runEngine!=='function'||
@@ -234,7 +283,7 @@ export async function runIndependentShortBulk({
   let current={...source},rows=shortElements,latest=null;
   const requested=[...selectedIds],applied=[],skipped=[],processed=new Set();
   const plannedGroups=planSourceBoundGroups(requested,rows,planning,
-    current.sourceSha256,maximum);
+    current.sourceSha256,maximum,sourceRecords);
   let completed=0,stopReason='COMPLETE',stopMessage='',failedId=null;
   const lease=typeof runEngine.beginBulkSession==='function'&&
     typeof runEngine.endBulkSession==='function';
