@@ -55,13 +55,17 @@ test('336 generated PSI116 occurrences: real Worker/Pyodide one short-drop with 
   });
   await page.route('**/tabs/topology-workspace/workspace-app.mjs',async route=>{
    const response=await route.fetch(),s=await response.text();
-   const marker='  async function publishShortBulk(outcome,generation=state.epoch){';
-   const end='\n  }\n  async function dropShortElements(){';
-   assert.ok(s.includes(marker)&&s.includes(end),'test-only UI timing anchors');
+   // Timing attaches to the guarded publisher, not the raw publisher:
+   // product state.hubRevision=state.revision stays the FINAL statement.
+   const marker='  async function publishShortBulkGuarded(outcome,generation=state.epoch){';
+   const completed='      await publishShortBulk(outcome,generation);\\n      return true;';
+   assert.ok(s.includes(marker)&&s.includes(completed),'guarded UI timing anchors');
    const patched=s.replace(marker,marker+
-     '\n    const __speedUiStarted=performance.now();')
-    .replace(end,
-     '\n    window.__bulkSpeedUiRefreshMs=performance.now()-__speedUiStarted;'+end);
+     '\\n    const __speedUiStarted=performance.now();')
+    .replace(completed,
+     '      await publishShortBulk(outcome,generation);\\n'+
+     '      window.__bulkSpeedUiRefreshMs=performance.now()-__speedUiStarted;\\n'+
+     '      return true;');
    await route.fulfill({response,body:patched});
   });
   const url='http://127.0.0.1:'+server.address().port+'/index.html';
