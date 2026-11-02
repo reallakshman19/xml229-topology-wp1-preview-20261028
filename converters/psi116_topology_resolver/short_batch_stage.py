@@ -139,5 +139,10 @@ def run_explicit_batch_job(input_path:str,uxml:dict|None,
         if uxml is not None:
             status["hubParity"]={"status":"DIFFERENT",
                                   "differences":["/batch:"+code]}
+    # Counts only: prove the exact UXML projection is computed once for
+    # parity and then cache-hit for the group-wide canonical witness.
+    # These counters never identify or serialize Owner source contents.
+    from .short_memo import stats as short_memo_stats
+    status["bulkTimings"]["memoStats"]=short_memo_stats()
     _emit(paths["status"],status)
     return status
