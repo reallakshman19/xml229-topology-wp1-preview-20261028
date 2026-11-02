@@ -24,6 +24,28 @@ function fixture(count){
     node(-1,'FLAN','F'+r,1,x+103)+node(40+k,'RIGID','F'+r,2,x+189)+'</Branch>';
   }).join('')+'</PipeStressExport>';
 }
+/** Two source branches x four adjacent short owners, faithfully reproducing
+ * the native public dense fixture's conflict-graph layering requirement. */
+function denseFixture(){
+ const branches=[];
+ for(let i=0;i<2;i++){
+  const parts=[];
+  for(let j=0;j<4;j++){
+   const x=i*3000+j*189,k=(i+1)*1000+j*100;
+   parts.push(
+    node(k+10,'PIPE','P'+i+'-'+j,1,x)+
+    node(k+20,'PIPE','P'+i+'-'+j,2,x+100)+
+    node(-1,'GASK','SHORT-'+i+'-'+j,1,x+100)+
+    node(k+30,'RIGID','SHORT-'+i+'-'+j,2,x+103)+
+    node(-1,'FLAN','F'+i+'-'+j,1,x+103)+
+    node(k+40,'RIGID','F'+i+'-'+j,2,x+189));
+  }
+  branches.push('<Branch><Branchname>A6B-DENSE-'+i+'</Branchname>'+
+    parts.join('')+'</Branch>');
+ }
+ return '<PipeStressExport xmlns="http://aveva.com/pipeStress116.xsd">'+
+  branches.join('')+'</PipeStressExport>';
+}
 const server=createServer(async(req,res)=>{
  try{
   const rel=decodeURIComponent(new URL(req.url,'http://localhost').pathname)
@@ -50,7 +72,7 @@ const mutationPatches={
  cancelStaleAllowed:["query(root,'[data-short-preview]').textContent='';state.epoch++;state.busy=false;state.batchRunning=false;",
    "query(root,'[data-short-preview]').textContent='';state.busy=false;state.batchRunning=false;"],
 };
-async function scenario({count=5,hub=false,group=true,mode='normal',mutation=null}={}){
+async function scenario({count=5,hub=false,group=true,dense=false,mode='normal',mutation=null}={}){
  const page=await browser.newPage({viewport:{width:1400,height:960},acceptDownloads:true});
  const errors=[];page.on('pageerror',e=>errors.push(String(e)));
  const url='http://127.0.0.1:'+server.address().port+'/index.html';
@@ -124,7 +146,7 @@ async function scenario({count=5,hub=false,group=true,mode='normal',mutation=nul
    window.__a6bUi=probe;
    await probe.workspace.load(new File([xml],'public-a6b-ui.xml',
     {type:'text/xml'}));
-  },{xml:fixture(count),mode});
+  },{xml:dense?denseFixture():fixture(count),mode});
   if(hub)await page.locator('[data-uxml-toggle]').check();
   await page.evaluate(()=>window.__a6bUi.workspace.analyze());
   await page.waitForFunction(hub=>
@@ -289,3 +311,25 @@ for(const [name,config,verify,needle] of [
   console.info('A6B_UI_MUTANT_RED:'+name+':AssertionError:'+needle);
  });
 }
+
+
+test('real Chromium dense adjacent 8-owner source uses four 2-owner native graph layers, exact serial bytes both routes',
+ {timeout:600000},async()=>{
+ for(const hub of [false,true]){
+  const grouped=await scenario({count:8,dense:true,hub,group:true});
+  const serial=await scenario({count:8,dense:true,hub,group:false});
+  assert.equal(grouped.xml,serial.xml,'A6B_DENSE_WORKSPACE_SERIAL_BYTES_DIFFERENT');
+  assert.deepEqual(grouped.jobs.filter(j=>j.isBatch).map(j=>j.ids.length),
+    [2,2,2,2],'A6B_DENSE_WORKSPACE_GRAPH_NOT_FOUR_LAYERS');
+  assert.equal(grouped.status.historyOwnerEvidenceCount,8);
+  assert.equal(serial.jobs.length,8);
+  assert.equal(grouped.status.revision,8);
+  assert.deepEqual(grouped.errors,[]);
+  assert.deepEqual(serial.errors,[]);
+  console.info('A6B_DENSE_WORKSPACE_GRAPH_GREEN='+JSON.stringify({
+    route:hub?'UXML':'DIRECT',owners:8,
+    groupSizes:[2,2,2,2],
+    groupElapsedMs:grouped.elapsedMs,serialElapsedMs:serial.elapsedMs,
+    bytesEqual:true,ownerEvidenceEqual:true}));
+ }
+});
