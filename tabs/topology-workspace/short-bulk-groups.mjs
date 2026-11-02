@@ -98,9 +98,15 @@ export async function qualifyGroupedWorkerResult({
     txn.batch.ownerCount===ids.length&&
     Array.isArray(ownerEvidence)&&ownerEvidence.length===ids.length&&
     Array.isArray(ownerRevisions)&&ownerRevisions.length===ids.length&&
-    preFinal?.requiresFreshWorkerBasis===true&&
+    preFinal?.schema==='psi116-short-batch-prefinal-handoff/v1'&&
+    preFinal.requiresFreshWorkerBasis===true&&
+    preFinal.acceptedFinalTransferred===false&&
     preFinal.nativeCiiReleaseAuthorized===false&&
+    preFinal.sourceXmlSha256===sourceSha&&
+    preFinal.fixedXmlSha256===fixedSha&&
+    same(preFinal.reviewedActionIds,ids)&&
     preFinal.ownerEvidenceCount===ids.length&&
+    same(preFinal.sourceLineage,lineage)&&
     lineage?.state==='PRE_FINAL_ONLY'&&lineage.sourceXmlMutated===false&&
     lineage.sourceXmlSha256===sourceSha&&lineage.fixedXmlSha256===fixedSha&&
     findings?.source?.sha256===fixedSha&&plan?.source?.sha256===fixedSha&&
