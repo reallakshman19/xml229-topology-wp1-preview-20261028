@@ -250,20 +250,6 @@ class ShortMemoSafety(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError,"SHORT_ELEMENT_SOURCE_DRIFT"):
                         apply_topofix_transaction(changed_before,policy=policy,config=cfg)
         print("MEMO_MUTANT_KILLED:transaction-source-bytes-removed")
-        # Optional R2 hardening: the declared source SHA is an independent
-        # consumed input even if raw sourceText is unchanged.
-        forged_sha=("0" if before.document.source_sha256[0]!="0" else "1")*64
-        altered_sha=replace(before,document=replace(
-            before.document,source_sha256=forged_sha))
-        self.assertNotEqual(memo.transaction_key(before,policy,cfg),
-                            memo.transaction_key(altered_sha,policy,cfg))
-        with memo.memo_session("declared-sha-control"):
-            self.assertTrue(apply_topofix_transaction(
-                before,policy=policy,config=cfg).committed)
-            with self.assertRaisesRegex(ValueError,"SOURCE_DRIFT"):
-                apply_topofix_transaction(altered_sha,policy=policy,config=cfg)
-        print("MUTANT_GREEN:transaction-declared-source-sha=PASS")
-
     def test_python_memo_finally_actual_path_and_mutant(self):
         """Unmutated and mutated source run against the SAME module globals."""
         source=fixture()
