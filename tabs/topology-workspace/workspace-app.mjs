@@ -822,11 +822,9 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     const nowEligible=state.shortElements.filter(r=>r.eligible).length;
     if(checked+unprocessed!==selected)throw Error('SHORT_BULK_COUNT_RECONCILIATION_FAILED');
     const reason=outcome.stopReason||'COMPLETE';
-    const hubMismatch=state.hubEnabled&&(
-      outcome.hubMismatch===true||
-      /^UXML_SHORT_PARITY_/.test(String(outcome.stopMessage||''))||
-      String(outcome.stopMessage||'').startsWith(
-        'UXML_SHORT_APPLY_CANONICAL_OP_RECEIPT_MISSING_OR_DRIFT'));
+    // Stop reason, not error spelling, controls the entire hub release gate.
+    // In particular an outer-catch ERROR is a HOLD just like lineage drift.
+    const hubMismatch=state.hubEnabled&&reason!=='COMPLETE'&&reason!=='CANCELLED';
     const message=(reason==='COMPLETE'?'BULK COMPLETE':'BULK STOPPED · '+reason)+
       ' · selected '+selected+' = '+done+' validated + '+skipped+' skipped + '+failed+
       ' failed + '+unprocessed+' unprocessed · eligible on CURRENT XML '+nowEligible+
@@ -838,10 +836,12 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     if(hubMismatch){
       // Fail closed BEFORE a status refresh can expose a previous EQUAL
       // checkpoint, including while an asynchronous evidence recheck runs.
-      state.hubParity={status:'DIFFERENT',differences:[outcome.stopMessage]};
+      state.hubParity={status:'DIFFERENT',differences:[
+        outcome.stopMessage||'SHORT_BULK_HUB_HOLD:'+reason]};
       state.hubRevision=null;state.opsPreview=null;
       clearEvidenceProof('EVIDENCE_RECHECK_PARITY_NOT_EQUAL');
       renderHubParity();
+      opsPanel.render();
     }
     query(root,'[data-progress]').textContent=message;
     setFixStatus(message,hubMismatch?'rejected':
@@ -1389,7 +1389,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       refresh();
     }
     else if(target.hasAttribute('data-cancel')){cancelEngine();state.secondPass=null;state.shortSelection=null;
-      query(root,'[data-short-preview]').textContent='';state.epoch++;state.busy=false;state.batchRunning=false;refresh();
+      query(root,'[data-short-preview]').textContent='';state.epoch++;state.busy=false;state.batchRunning=false;state.activeJob=null;refresh();
       state.batch=null;query(root,'[data-batch-confirm]').textContent='';
       query(root,'[data-progress]').textContent='CANCELLED · working revision '+state.revision+' retained.';
       setFixStatus('Operation cancelled. No new working revision applied.','rejected');
