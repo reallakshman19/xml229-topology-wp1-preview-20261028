@@ -195,6 +195,7 @@ test('336 generated PSI116 occurrences: real Worker/Pyodide one short-drop with 
     memoEnabled:m.enabled,elapsedMs:+m.elapsedMs.toFixed(1),
     enginePyodideMs:+m.phases.enginePyodideMs.toFixed(1),
     pythonTopologyMs:+m.phases.pythonTopologyMs.toFixed(1),
+    memoStats:m.phases.shortMemoStats||{},
     parity:m.parity,committed:m.committed,byteAndEvidenceEqual:true}))));
   console.log('UXML_BULK_SPEED_REAL_BROWSER_TIMING '+JSON.stringify({
    syntheticElements:336,syntheticNodeRecords:source.match(/<Node>/g)?.length,
