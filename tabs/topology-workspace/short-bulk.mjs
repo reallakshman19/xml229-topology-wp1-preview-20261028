@@ -1,4 +1,3 @@
-import {runIndependentShortBulk} from './short-bulk-groups.mjs';
 /** Source-bound bulk short-element orchestration without intermediate canvas renders.
  * Existing Python atomic transactions and full pre-Final replay remain the authority.
  * A failed later transaction cannot publish unvalidated bytes.
@@ -39,6 +38,7 @@ export async function runShortBulk({
   hash=digestXml,shortMemoEnabled=true,enableIndependentGroups=false,
 }){
   if(enableIndependentGroups){
+    const {runIndependentShortBulk}=await import('./short-bulk-groups.mjs');
     return runIndependentShortBulk({source,shortElements,selectedIds,runEngine,
       hubEnabled,isCurrent,onCheckpoint,onProgress,hash,
       runLegacy:options=>runShortBulk({...options,
