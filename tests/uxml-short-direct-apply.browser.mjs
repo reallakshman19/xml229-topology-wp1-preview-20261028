@@ -45,6 +45,16 @@ async function exercise(mode){
  const page=await browser.newPage({viewport:{width:1400,height:980}});
  const errors=[];page.on('pageerror',e=>errors.push(String(e)));
  try{
+  if(mode==='publishThrow'){
+   await page.route('**/tabs/topology-workspace/workspace-app.mjs',async route=>{
+    const response=await route.fetch(),original=await response.text();
+    const needle="      canvas.setScene(scene);sourceMeta();\n      query(root,'[data-gap-review-status]')";
+    assert.equal(original.split(needle).length,2,'pin exact publish mutation location');
+    const replacement="      canvas.setScene=()=>{throw Error('SYNTHETIC_PUBLISH_SET_SCENE_FAILURE');};"+
+      "canvas.setScene(scene);sourceMeta();\n      query(root,'[data-gap-review-status]')";
+    await route.fulfill({response,body:original.replace(needle,replacement)});
+   });
+  }
   await page.route('**/index.html',async route=>{
    const response=await route.fetch(),html=await response.text();
    const tag='<script type="module" src="./tabs/topology-workspace/workspace-app.mjs"></script>';
@@ -65,6 +75,10 @@ async function exercise(mode){
       job.options?.topologyShortElementRequests?.length);
     if(!bulk){
      const r=await client.run(job);
+     if(mode==='refreshHeld'&&probe.bulkCount===3){
+      probe.refreshHolding=true;
+      await new Promise(resolve=>{probe.releaseRefresh=resolve;});
+     }
      return mode==='different'?{...r,topologyUxmlParity:{status:'DIFFERENT',
        differences:['/synthetic: forced distinct reader']}}:r;
     }
