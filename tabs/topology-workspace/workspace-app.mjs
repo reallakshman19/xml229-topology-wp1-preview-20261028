@@ -1629,6 +1629,8 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     selected:[...state.selected],busy:state.busy,
     hubEnabled:state.hubEnabled,hubParity:state.hubParity?.status||'OFF',
     hubRevision:state.hubRevision,activeJob:state.activeJob,
+    independentShortGroups:state.independentShortGroups,
+    historyOwnerEvidenceCount:state.history.filter(h=>h.ownerEvidence&&h.ownerRevision).length,
     shortBulkFinalizing:state.shortBulkFinalizing,fixFinalizing:state.fixFinalizing,
     queued:state.manualQueue.map(x=>({id:x.id,status:x.status})),queueBusy:state.manualQueueRunning}),load,analyze,
     dispose(){
