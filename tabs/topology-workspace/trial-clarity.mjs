@@ -35,17 +35,16 @@ export function trialDisabledReason(button,state,{proofCurrent=false,hubCanRelea
   if(!button?.disabled)return '';
   const has=name=>button.hasAttribute('data-'+name);
   const busy=state.busy||state.batchRunning;
-  if(busy&&state.activeJob==='preview'&&!has('cancel'))
-    return 'Finish or cancel the active preview first.';
-  if(has('preview-short')||has('run-short-drop')||has('select-gaskets')||
-     has('short-hub-preview')){
+  if(busy&&state.activeJob==='short-bulk'&&!has('cancel'))
+    return 'Finish or cancel the active short-element Apply first.';
+  if(busy&&state.manualQueueRunning&&!has('cancel'))
+    return 'Finish or cancel the active manual repair queue first.';
+  if(has('select-short')||has('run-short-drop')||has('select-gaskets')){
     if(!state.plan)return 'Analyze the current XML to identify eligible short elements.';
     if(busy)return 'Finish or cancel the active validation first.';
     if(state.hubEnabled&&state.hubParity?.status!=='EQUAL')
       return 'Universal XML parity must be EQUAL before short-element changes.';
-    if(has('run-short-drop')&&state.hubEnabled&&!state.shortHubPreview)
-      return 'Preview the selected UXML short-drop operations before Apply.';
-    return 'Select at least one eligible short element in the preview.';
+    return 'Select at least one eligible short element to Apply.';
   }
   if(has('auto-fix-all')||has('auto-fix')){
     if(busy)return 'Finish or cancel the active validation first.';
