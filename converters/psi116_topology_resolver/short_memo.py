@@ -16,7 +16,7 @@ from hashlib import sha256
 import json
 from pathlib import Path
 
-CODE_VERSION = "uxml-short-memo-v1-sourcebound-20261102"
+CODE_VERSION = "uxml-short-memo-v2-route-document-bound-20261102"
 _active = None
 
 
@@ -97,21 +97,43 @@ def stats():
     return dict(_active.counts) if _active is not None else {}
 
 
-def transaction_key(before, policy, config):
+def _document_digest(before):
+    """Hash ALL topology witnesses consumed by native short-drop authority.
+
+    The source-byte key separately covers original XML text and its exact SHA.
+    Do not fold source_text/source_sha256 into this digest: independently
+    removing the byte-key component must remain a detectable safety mutant.
+    Include every reconstructed UXML record, raw fragment, span, finding,
+    fix-action blocker and connection resolution. Never trust sourceText as
+    proof that a UXML-fed document contains identical semantic records.
+    """
+    payload = asdict(before)
+    for field in ("source_text", "source_sha256", "source_path"):
+        payload["document"].pop(field, None)
+    return _digest(_json(payload))
+
+
+def transaction_key(before, policy, config, *, route="native"):
+    if route not in ("native", "uxml"):
+        raise ValueError("SHORT_MEMO_TRANSACTION_ROUTE_INVALID")
     source = before.document
+    # Independent key components: exact XML bytes, policy/config/code/path,
+    # route custody, and the complete analyzed record/authority witness.
+    # A direct result can NEVER satisfy a UXML transaction cache lookup,
+    # even when both consume the same original XML and source_name.
     return _key("transaction", source.source_text.encode("utf-8"),
-                policy, config, source.source_path)
+                policy, config, source.source_path) + (route, _document_digest(before))
 
 
-def lookup_transaction(before, policy, config):
+def lookup_transaction(before, policy, config, *, route="native"):
     if _active is None:
         return None
-    return _active.get("transaction", transaction_key(before, policy, config))
+    return _active.get("transaction", transaction_key(before, policy, config, route=route))
 
 
-def remember_transaction(before, policy, config, result):
+def remember_transaction(before, policy, config, result, *, route="native"):
     if _active is not None:
-        _active.put("transaction", transaction_key(before, policy, config), result)
+        _active.put("transaction", transaction_key(before, policy, config, route=route), result)
     return result
 
 
@@ -135,6 +157,9 @@ def source_resolve(source, config, *, source_name=None):
     key = _key("source_resolve", exact_bytes, None, config)
     hit = _active.get("source_resolve", key)
     if hit is not None:
+        # read_psi116_xml() also calls ET.register_namespace("", namespace).
+        # This hit skips that process-global serializer side effect.
+        # Serializers must not rely on a cache miss to set namespace state.
         return replace(hit, document=replace(hit.document, source_path=name))
     value = analyze_document(read_psi116_xml(source, source_name=source_name), config)
     _active.put("source_resolve", key, value)
