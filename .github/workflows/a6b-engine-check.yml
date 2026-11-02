@@ -23,3 +23,13 @@ jobs:
         run: |
           set -euo pipefail
           python3 -B -m unittest discover -s tests -p 'test_short_batch_engine.py' -v
+      - name: Immutable pinned XCU reader
+        run: bash tools/fetch-uxml-reader.sh dist
+      - name: Independent canonical batch sourceRef loss and parity
+        env:
+          PYTHONPATH: ${{ github.workspace }}/converters
+          XCU_UXML_ROOT: ${{ github.workspace }}/dist/vendor/uxml
+          A6B_ENGINE_QUAL: '1'
+        run: |
+          set -euo pipefail
+          python3 -B -m unittest discover -s tests -p 'bench_short_batch_uxml.py' -v
