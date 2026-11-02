@@ -80,7 +80,30 @@ async function exercise(mode){
        topoFixCommitted:false,topoFixXmlText:'',
        topologyUxmlParity:{status:'DIFFERENT',
          differences:['/patchBack: UxmlPatchError: UXML_LOSS_CONTRACT_FIELD_TOUCH:SYNTHETIC_OWNER']}};
+    if(mode==='timeout'&&index===2)
+      throw Error('TOPOLOGY_WORKER_TIMEOUT: synthetic dropped Worker message');
+    if(mode==='nonCommittedEqual'&&index===2)
+      return {ok:true,outputKind:'topology-sidecars',
+        acceptedFinalTransferred:false,nativeCiiReleaseAuthorized:false,
+        topoFixCommitted:false,topoFixXmlText:'',
+        topologyUxmlParity:{status:'EQUAL',differences:[]}};
+    if(mode==='outerError'&&index===2)
+      return {ok:false,error:'SYNTHETIC_SECOND_JOB_STOPPED',
+        topologyUxmlParity:{status:'EQUAL',differences:[]}};
     const actual=await client.run(job);
+    if((mode==='lineageDrift'||mode==='validationDrift')&&index===2){
+      const forged=structuredClone(actual);
+      if(mode==='lineageDrift'){
+        const lineage=JSON.parse(forged.topoFixLineageText);
+        lineage.fixedXmlSha256='SYNTHETIC_FORGED_LINEAGE';
+        forged.topoFixLineageText=JSON.stringify(lineage);
+      }else{
+        const validation=JSON.parse(forged.topoFixValidationText);
+        validation.summary.blockingFailureCount=1;
+        forged.topoFixValidationText=JSON.stringify(validation);
+      }
+      return forged;
+    }
     if(mode==='receiptDrift'&&index===2){
       // A forged canonical witness on an otherwise EQUAL native result must
       // invalidate hub parity, not merely stop this one item.
@@ -88,12 +111,19 @@ async function exercise(mode){
       forged.topologyUxmlAppliedEditOps[0].fileSha256='FORGED_SOURCE_SHA';
       return forged;
     }
-    if(mode==='cancel'&&index===2){
+    if((mode==='cancel'&&index===2)||
+       (mode==='cancelBeforeCheckpoint'&&index===1)){
      probe.holding=true;
      await new Promise(resolve=>{probe.releaseLate=resolve;});
     }
     return actual;
    };
+   if(mode==='outerError'){
+     runEngine.beginBulkSession=()=>{};
+     runEngine.endBulkSession=()=>{
+       throw Error('SYNTHETIC_BULK_SESSION_RELEASE_FAILED');
+     };
+   }
    probe.client=client;
    probe.workspace=mountTopologyWorkspace(root,{
      runEngine,cancelEngine:()=>{probe.cancelled=true;client.cancel();}});
@@ -122,35 +152,53 @@ async function exercise(mode){
   assert.equal(await page.locator('[data-run-short-drop]').isEnabled(),true,
     'hub Apply requires current analysis and EQUAL but no short preview');
   await page.locator('[data-run-short-drop]').click();
-  if(mode==='cancel'){
+  if(mode==='cancel'||mode==='cancelBeforeCheckpoint'){
    await page.waitForFunction(()=>window.__directProbe.holding,
      null,{timeout:120000});
    assert.equal(await page.locator('[data-cancel]').isEnabled(),true);
    assert.match(await page.locator('[data-progress]').textContent(),
-     /Applying 2 of 3 · 1 validated · 0 skipped/);
+     mode==='cancel'?/Applying 2 of 3 · 1 validated · 0 skipped/:
+       /Applying 1 of 3 · 0 validated · 0 skipped/);
    assert.match(await page.evaluate(()=>window.__directProbe.firstProgress),
      /Applying 1 of 3 · 0 validated · 0 skipped/,
      'first owner is displayed as 1 of N while its Worker is running');
    await page.locator('[data-cancel]').click();
-   await page.waitForFunction(()=>{
+   await page.waitForFunction(mode=>{
     const status=document.querySelector('[data-progress]')?.textContent||'';
-    return status.includes('BULK STOPPED · CANCELLED')&&
-      window.__directProbe.workspace.getState().revision===1;
-   },null,{timeout:120000});
+    const checkpoint=mode==='cancel'?1:0;
+    return (mode==='cancel'?status.includes('BULK STOPPED · CANCELLED'):
+      status.includes('CANCELLED · working revision 0 retained'))&&
+      window.__directProbe.workspace.getState().revision===checkpoint;
+   },mode,{timeout:120000});
    await page.evaluate(()=>window.__directProbe.releaseLate());
    await page.waitForTimeout(80);
    assert.match(await page.locator('[data-progress]').textContent(),
-     /BULK STOPPED · CANCELLED/);
-   assert.equal((await page.evaluate(()=>
-     window.__directProbe.workspace.getState())).revision,1);
-  }else if(mode==='receiptDrift'){
-   await page.waitForFunction(()=>{
+     mode==='cancel'?/BULK STOPPED · CANCELLED/:
+       /CANCELLED · working revision 0 retained/);
+   const current=await page.evaluate(()=>window.__directProbe.workspace.getState());
+   assert.equal(current.revision,mode==='cancel'?1:0);
+   assert.equal(current.busy,false);
+   if(mode==='cancelBeforeCheckpoint')
+     assert.equal(await page.locator('[data-run-short-drop]').count(),0,
+       'first-item Cancel must clear the stale pending selection');
+  }else if(['receiptDrift','lineageDrift','validationDrift',
+             'timeout','nonCommittedEqual','outerError'].includes(mode)){
+   const expected={
+    receiptDrift:'UXML_SHORT_APPLY_CANONICAL_OP_RECEIPT_MISSING_OR_DRIFT',
+    lineageDrift:'SHORT_BULK_SOURCE_LINEAGE_OR_RECHECK_DRIFT',
+    validationDrift:'SHORT_BULK_SOURCE_LINEAGE_OR_RECHECK_DRIFT',
+    timeout:'TOPOLOGY_WORKER_TIMEOUT',
+    nonCommittedEqual:'SHORT_BULK_TRANSACTION_REJECTED',
+    outerError:'SYNTHETIC_BULK_SESSION_RELEASE_FAILED',
+   }[mode];
+   await page.waitForFunction(({expected,mode})=>{
     const status=document.querySelector('[data-progress]')?.textContent||'';
     const state=window.__directProbe.workspace.getState();
-    return status.includes('BULK STOPPED · TRANSACTION_FAILED')&&
-      status.includes('UXML_SHORT_APPLY_CANONICAL_OP_RECEIPT_MISSING_OR_DRIFT')&&
-      state.hubParity==='DIFFERENT'&&state.revision===1&&!state.busy;
-   },null,{timeout:180000});
+    return status.includes(mode==='outerError'?'BULK STOPPED · ERROR':
+      'BULK STOPPED · TRANSACTION_FAILED')&&
+      status.includes(expected)&&state.hubParity==='DIFFERENT'&&
+      state.revision===1&&!state.busy;
+   },{expected,mode},{timeout:180000});
    assert.equal(await page.locator('[data-download-working]').isDisabled(),true,
      'canonical witness drift revokes hub parity and corrected downloads');
    assert.equal(await page.locator('[data-download-fix]').count(),0);
@@ -200,5 +248,17 @@ test('hub parity DIFFERENT blocks short-element direct Apply',
  {timeout:180000},async()=>exercise('different'));
 test('canonical receipt drift revokes parity after one validated checkpoint',
  {timeout:360000},async()=>exercise('receiptDrift'));
+test('hub lineage drift at item two HOLDS last validated checkpoint and download',
+ {timeout:360000},async()=>exercise('lineageDrift'));
+test('hub validation drift at item two HOLDS last validated checkpoint and download',
+ {timeout:360000},async()=>exercise('validationDrift'));
+test('hub Worker timeout at item two HOLDS last validated checkpoint and download',
+ {timeout:360000},async()=>exercise('timeout'));
+test('hub non-committed EQUAL at item two HOLDS last validated checkpoint and download',
+ {timeout:360000},async()=>exercise('nonCommittedEqual'));
+test('hub outer-catch ERROR after item two HOLDS last validated checkpoint and download',
+ {timeout:360000},async()=>exercise('outerError'));
+test('Cancel before first item retains original revision zero',
+ {timeout:360000},async()=>exercise('cancelBeforeCheckpoint'));
 test('cancel during direct Apply retains the last validated checkpoint and final status',
  {timeout:360000},async()=>exercise('cancel'));
