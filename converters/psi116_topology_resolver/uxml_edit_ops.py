@@ -287,7 +287,7 @@ def _short_canonical_operation(uxml: dict, result: ResolutionResult,
     # Only the existing native short_element routine can remove and reclose
     # an owner. This is a disposable in-memory clone, never an output write.
     try:
-        transaction = apply_topofix_transaction(result, policy=policy, config=config)
+        transaction = apply_topofix_transaction(result, policy=policy, config=config, memo_route="uxml")
     except (ValueError, KeyError) as exc:
         raise UxmlPatchError("UXML_SHORT_NATIVE_REFUSED:" + type(exc).__name__) from exc
     _require(transaction.committed and transaction.fixed_xml is not None,
@@ -536,7 +536,7 @@ def apply_edit_ops(
 
     # Do not reinterpret any FixAction, reconstruct any normalized XML, or
     # bypass native validation. Existing transaction.py has sole write authority.
-    return apply_topofix_transaction(result, policy=policy, config=config)
+    return apply_topofix_transaction(result, policy=policy, config=config, memo_route="uxml")
 
 
 
