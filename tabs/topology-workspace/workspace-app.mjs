@@ -1291,6 +1291,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     state.batchRunning=false;refresh();
   }
   function refresh() {
+    try{
     root.setAttribute('aria-busy',String(state.busy||state.batchRunning));
     renderRecords();renderActions();renderSelection();renderSecondPass();renderManualQueue();opsPanel.render();
     renderTrialResult();
@@ -1308,6 +1309,25 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     getNodes(root,'[data-download-fix],[data-download-batch-report]').forEach(button=>
       button.disabled=state.busy||state.batchRunning||!hubCanRelease(true));
     explainDisabledActions();
+    }catch(error){
+      // A renderer exception cannot strand Busy or preserve a stale hub release.
+      const detail='WORKSPACE_REFRESH_ERROR:'+String(error?.message||error);
+      try{cancelEngine();}catch{}
+      state.epoch++;state.busy=false;state.batchRunning=false;
+      state.shortBulkFinalizing=false;state.fixFinalizing=false;
+      state.activeJob=null;state.shortBulk=null;state.lastFailure=detail;
+      if(state.hubEnabled)holdShortHubRelease(detail);
+      try{
+        root.setAttribute('aria-busy','false');
+        getNodes(root,'[data-download-working],[data-download-history],[data-download-fix],[data-download-batch-report]')
+          .forEach(button=>{button.disabled=true;});
+        query(root,'[data-cancel]').disabled=true;
+        query(root,'[data-progress]').textContent='BULK STOPPED · ERROR · '+detail+
+          ' · working revision '+state.revision+' retained.'+
+          (state.hubEnabled?' · corrected downloads HELD.':'');
+        setFixStatus('ERROR · '+detail+' · last validated revision retained.','rejected');
+      }catch{/* already revoked; no secondary render exception escapes */}
+    }
   }
   function select(ids,add=false) {
     if(!add)state.selected.clear();
