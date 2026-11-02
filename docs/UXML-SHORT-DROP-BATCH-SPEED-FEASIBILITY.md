@@ -346,3 +346,76 @@ native engine was qualified on public synthetic only; the Oracle alone
 runs the private Owner-model counts/timing trial. The displayed UI numbers
 are not production or Owner-file ETA guarantees. Independent non-author
 review and merge remain HOLD until all exact-head workflows are green.
+
+
+## A6b dense-model planner addendum — 3 Nov 2026
+
+**Owner-local evidence (Oracle-provided counts and native timings ONLY):**
+89/89 owners committed, final bytes EQUAL, zero refusals or bisections.
+The old input-order planner formed 65 groups: 54 singletons, eight pairs,
+one size-4, one size-7 and one size-8. Batch native 208.8 s vs serial
+243.7 s, only 1.17×. All 11 multi-owner UXML groups (35 owners) were
+EQUAL. **The new graph planner has NOT been timed on the Owner model.**
+
+**Root cause:** upon one owner-footprint intersection, the adjacent-only
+planner permanently closed the current group. Subsequent independent
+owners from other branches could never join it. This is selection-order
+fragmentation, not proof that the native footprint can be narrowed.
+
+**Safety-preserving graph fix:** an earlier conflicting owner must always
+run in an earlier group. Nonconflicting owners may commute into the
+earliest available group (up to 32 owners); unknown/ineligible owners
+create hard singleton ordering barriers. Group members are again
+pairwise checked with authoritative native owner_footprint on the
+CURRENT source by the engine, then independently sourceRef/loss/parity
+checked before publication. Bisect and the unchanged historical
+singleton remain the only refusal fallback. The reported owner census
+is presented in original selection order, without falsifying per-owner
+commit source hashes.
+
+The UI gets exact native footprint keys from a **read-only** Python
+Analyze result with the source SHA. It independently verifies full
+original branch coverage, positive node-number alias closure and
+original-position 25 mm physical-contact coverage before any
+out-of-order graph scheduling. Missing/stale/undercovered evidence
+fails closed. The legacy UI serial mode remains available; **the
+comparison toggle defaults OFF** until exact-head browser qualification.
+
+**Public dense fixture:** 24 physically separate branches, each with four
+adjacent eligible short owners; the 89-owner selection produces 132
+overlap pairs. All 132 are same-branch pairs **without shared direct
+drop/port source keys**. This directly demonstrates conservative
+whole-branch reservations, but does NOT prove those retained records
+can be excluded from the transaction's read set. Cross-branch positive
+alias and spatial-contact conflicts were zero in this public shape.
+
+| Public native qualified timing | 5 owners | 20 owners | 89 owners |
+|---|---:|---:|---:|
+| Serial native | 2.051 s | 8.066 s | 30.802 s |
+| Old adjacent-only group count | 4 | 16 | 67 |
+| Old native batch time | 1.840 s | 6.980 s | 25.338 s |
+| Conflict-graph group count | 4 | 4 | 4 |
+| Graph batch time | 1.854 s | 2.559 s | 4.496 s |
+| Final bytes / normalized evidence | EQUAL | EQUAL | EQUAL |
+| Refused owners and splits | 0 | 0 | 0 |
+
+At 89 the old public plan contained 45 singletons and 22 pairs;
+the new plan contains one 23-owner group and three 22-owner groups.
+Graph speedups are approximately 5.6× vs old planner and 6.9× vs
+serial on THIS public fixture, not on the Owner model. Five owners
+are slightly slower under graph scheduling.
+
+**Footprint narrowing: NOT_DONE.** The entire owner branch includes
+records not directly dropped or moved in this fixture. A narrower
+read/write union can only be proposed after tracing every PortModel
+read, closure movement, positive-ID alias, 25 mm contact candidate,
+transaction validation and UXML sourceRef/loss contract dependency,
+with negative mutants for retained-but-read records, alias peers and
+spatial contacts. Do NOT remove the whole-branch footprint or lower
+tolerances on this evidence alone.
+
+**Remaining:** exact-head dense browser direct/UXML graph-vs-serial,
+real Pyodide results, Cancel and bisect source mutations, unchanged skip
+counts, full CI, independent review, and Owner-model graph retiming
+(Oracle only) must be recorded separately. No CLOS/240.6mm/6-25mm,
+eligibility, policy, loss, review-only or Lane B change.
