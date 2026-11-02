@@ -58,13 +58,13 @@ test('336 generated PSI116 occurrences: real Worker/Pyodide one short-drop with 
    // Timing attaches to the guarded publisher, not the raw publisher:
    // product state.hubRevision=state.revision stays the FINAL statement.
    const marker='  async function publishShortBulkGuarded(outcome,generation=state.epoch){';
-   const completed='      await publishShortBulk(outcome,generation);\\n      return true;';
+   const completed='      await publishShortBulk(outcome,generation);\n      return true;';
    assert.ok(s.includes(marker)&&s.includes(completed),'guarded UI timing anchors');
    const patched=s.replace(marker,marker+
-     '\\n    const __speedUiStarted=performance.now();')
+     '\n    const __speedUiStarted=performance.now();')
     .replace(completed,
-     '      await publishShortBulk(outcome,generation);\\n'+
-     '      window.__bulkSpeedUiRefreshMs=performance.now()-__speedUiStarted;\\n'+
+     '      await publishShortBulk(outcome,generation);\n'+
+     '      window.__bulkSpeedUiRefreshMs=performance.now()-__speedUiStarted;\n'+
      '      return true;');
    await route.fulfill({response,body:patched});
   });
