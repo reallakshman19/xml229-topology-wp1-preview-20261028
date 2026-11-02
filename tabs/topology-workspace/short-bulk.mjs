@@ -25,6 +25,7 @@ export function namedHubOwnerRefusal(result){
     match[1]+(match[2]===undefined?'':':'+match[2]):null;
 }
 
+let memoSessionOrdinal=0;
 async function digestXml(text) {
   const bytes=new TextEncoder().encode(text);
   const hash=await crypto.subtle.digest('SHA-256',bytes);
