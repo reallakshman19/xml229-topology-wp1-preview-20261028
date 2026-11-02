@@ -246,3 +246,45 @@ test('source-bound graph grouping layers independent later owners, conflicts rem
   console.info('A6B_UI_GRAPH_RED:source-branch-footprint-omitted:AssertionError:PLANNER_NATIVE_FOOTPRINT_UNDERCOVERS_SOURCE');
   console.info('A6B_UI_GRAPH_GREEN:source-bound-nonadjacent-layers=PASS');
 });
+
+
+test('failed first split child never becomes CANCELLED and second child never runs',async()=>{
+ const four=[...rows,
+  {...rows[0],id:'SHORT:2',nodeKeys:['D2'],leftKey:'L2',
+    rightKey:'R2'},
+  {...rows[1],id:'SHORT:3',nodeKeys:['D3'],leftKey:'L3',
+    rightKey:'R3'}];
+ const requested=four.map(x=>x.id);
+ const groups=planSourceBoundGroups(requested,four,planFor(four),
+   initial,32,sourceRecordsFor(four));
+ assert.deepEqual(groups,[requested.slice(0,2),requested.slice(2)]);
+ let engineCalls=0,legacyCalls=[];
+ const result=await runIndependentShortBulk({
+  source,shortElements:four,selectedIds:requested,
+  planning:planFor(four),sourceRecords:sourceRecordsFor(four),
+  hash:fakeHash,hubEnabled:false,
+  runEngine:async()=>{
+   engineCalls++;
+   return sidecar({hub:false,mutate:({findings})=>{
+    findings.shortElements=[
+      {...four[2],eligible:false,sourceSha256:fixed},
+      {...four[3],eligible:true,sourceSha256:fixed}];
+   }});
+  },
+  runLegacy:async({selectedIds})=>{
+   legacyCalls.push(...selectedIds);
+   return {stopReason:'TRANSACTION_FAILED',
+     stopMessage:'SYNTHETIC_SINGLETON_AUTHORITY_STOP',
+     latest:null,applied:[],skipped:[]};
+  },
+ });
+ assert.equal(engineCalls,1,'only first committed group runs');
+ assert.deepEqual(legacyCalls,['SHORT:2'],
+   'second bisect child must never run after unknown singleton failure');
+ assert.equal(result.stopReason,'TRANSACTION_FAILED',
+   'failure must not be downgraded to CANCELLED');
+ assert.equal(result.failedId,'SHORT:2');
+ assert.deepEqual(result.pendingIds,['SHORT:3']);
+ assert.deepEqual(result.applied.map(x=>x.id),requested.slice(0,2));
+ console.info('A6B_UI_MUTANT_GREEN:bisect-first-failure-never-cancel-downgrade=PASS');
+});
