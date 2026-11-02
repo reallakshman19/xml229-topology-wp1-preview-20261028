@@ -170,6 +170,15 @@ async function exercise(mode){
    await page.waitForFunction(()=>window.__directProbe.holding,
      null,{timeout:120000});
    assert.equal(await page.locator('[data-cancel]').isEnabled(),true);
+   const selectedCount=await page.evaluate(()=>{
+    const checkbox=document.querySelector('[data-short-index]:checked');
+    checkbox.checked=false;checkbox.dispatchEvent(new Event('change',{bubbles:true}));
+    document.querySelector('[data-select-gaskets]').dispatchEvent(
+      new MouseEvent('click',{bubbles:true}));
+    return document.querySelector('[data-short-selection-count]')?.textContent;
+   });
+   assert.match(selectedCount,/3 selected/,
+     'busy selection change events must not mutate native owner selection');
    assert.match(await page.locator('[data-progress]').textContent(),
      mode==='cancel'?/Applying 2 of 3 · 1 validated · 0 skipped/:
        /Applying 1 of 3 · 0 validated · 0 skipped/);
@@ -195,6 +204,50 @@ async function exercise(mode){
    if(mode==='cancelBeforeCheckpoint')
      assert.equal(await page.locator('[data-run-short-drop]').count(),0,
        'first-item Cancel must clear the stale pending selection');
+  }else if(mode==='refreshHeld'){
+   await page.waitForFunction(()=>window.__directProbe.refreshHolding,
+     null,{timeout:180000});
+   const before=await page.evaluate(()=>window.__directProbe.workspace.getState());
+   assert.equal(before.revision,3,'all validated revisions already published');
+   assert.equal(before.shortBulkFinalizing,true);
+   assert.equal(before.activeJob,'short-bulk');
+   assert.equal(await page.locator('[data-cancel]').isDisabled(),true,
+     'no Cancel is permitted after native Apply has completed');
+   assert.match(await page.locator('[data-progress]').textContent(),/BULK COMPLETE/);
+   await page.locator('[data-cancel]').evaluate(el=>
+     el.dispatchEvent(new MouseEvent('click',{bubbles:true})));
+   assert.match(await page.locator('[data-progress]').textContent(),/BULK COMPLETE/);
+   assert.doesNotMatch(await page.locator('[data-progress]').textContent(),
+     /No new working revision applied|CANCELLED/);
+   const after=await page.evaluate(()=>window.__directProbe.workspace.getState());
+   assert.equal(after.revision,3);
+   assert.equal(after.hubParity,'EQUAL');
+   assert.equal(after.shortBulkFinalizing,true);
+   await page.evaluate(()=>window.__directProbe.releaseRefresh());
+   await page.waitForFunction(()=>{
+    const state=window.__directProbe.workspace.getState();
+    return !state.busy&&!state.shortBulkFinalizing&&
+      state.hubParity==='EQUAL'&&state.hubRevision===3;
+   },null,{timeout:120000});
+   assert.match(await page.locator('[data-progress]').textContent(),/BULK COMPLETE/);
+   assert.equal(await page.locator('[data-download-working]').isEnabled(),true);
+  }else if(mode==='publishThrow'){
+   await page.waitForFunction(()=>{
+    const text=document.querySelector('[data-progress]')?.textContent||'';
+    const state=window.__directProbe.workspace.getState();
+    return text.includes('BULK STOPPED · ERROR')&&
+      text.includes('SYNTHETIC_PUBLISH_SET_SCENE_FAILURE')&&
+      text.includes('corrected downloads HELD')&&
+      state.hubParity==='DIFFERENT'&&state.hubRevision===null&&
+      state.revision===3&&!state.busy;
+   },null,{timeout:180000});
+   assert.equal(await page.locator('[data-download-working]').isDisabled(),true);
+   assert.equal(await page.locator('[data-download-history]').isDisabled(),true);
+   assert.equal(await page.locator('[data-download-fix]').isDisabled(),true);
+   const state=await page.evaluate(()=>window.__directProbe.workspace.getState());
+   assert.equal(state.hubRevision,null,'no stale EQUAL correction authority');
+   assert.equal(state.revision,3,'previously validated working revision retained');
+   assert.deepEqual(errors,[],'re-publish source drift must be caught');
   }else if(['receiptDrift','lineageDrift','validationDrift',
              'timeout','nonCommittedEqual','outerError'].includes(mode)){
    const expected={
@@ -274,5 +327,9 @@ test('hub outer-catch ERROR after item two HOLDS last validated checkpoint and d
  {timeout:360000},async()=>exercise('outerError'));
 test('Cancel before first item retains original revision zero',
  {timeout:360000},async()=>exercise('cancelBeforeCheckpoint'));
+test('publish-step canvas.setScene fault revokes hub and catches re-publish source drift',
+ {timeout:360000},async()=>exercise('publishThrow'));
+test('Cancel during post-COMPLETE evidence recheck cannot rewrite terminal status',
+ {timeout:360000},async()=>exercise('refreshHeld'));
 test('cancel during direct Apply retains the last validated checkpoint and final status',
  {timeout:360000},async()=>exercise('cancel'));
