@@ -224,7 +224,12 @@ def apply_independent_short_batch(
         _require(len(kept)==len(mid_branch.nodes),
                  "SHORT_BATCH_INTERMEDIATE_RECORD_CENSUS_MISMATCH")
         for prior,updated in zip(kept,mid_branch.nodes):
-            _require(prior.raw_xml==updated.raw_xml,
+            # ET.indent/namespace presentation changes on the shared
+            # serialize; require EXACT source-record fields/attributes/order,
+            # rather than representation-sensitive raw_xml whitespace.
+            from .lineage import _canonical
+            _require(_canonical(ET.fromstring(prior.raw_xml))==
+                     _canonical(ET.fromstring(updated.raw_xml)),
                      "SHORT_BATCH_INTERMEDIATE_SOURCE_RECORD_DRIFT")
             middle_to_original[updated.key]=prior
             original_to_middle[prior.key]=updated
