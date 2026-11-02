@@ -1,0 +1,25 @@
+name: A6b short batch engine qualification
+on:
+  pull_request:
+    paths:
+      - 'converters/psi116_topology_resolver/short_batch.py'
+      - 'tests/test_short_batch_engine.py'
+      - '.github/workflows/a6b-engine-check.yml'
+  push:
+    branches:
+      - 'feat/uxml-short-memo-digest-20261102'
+jobs:
+  short-batch-engine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Atomic, source-bound, serial-equivalent engine tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}/converters
+        run: |
+          set -euo pipefail
+          python3 -B -m unittest discover -s tests -p 'test_short_batch_engine.py' -v
