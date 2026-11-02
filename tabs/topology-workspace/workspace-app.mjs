@@ -51,7 +51,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   cancelEngine ||= ownedWorker?()=>ownedWorker.cancel():()=>{};
   const state={epoch:0,source:null,original:null,revision:0,applied:0,history:[],resolutions:[],shortElements:[],shortSelection:null,scene:null,plan:null,findings:[],result:null,
     selected:new Set(),search:'',filter:'all',category:'all',hubEnabled:false,hubParity:null,hubRevision:null,analysisProof:null,evidenceProofReason:'EVIDENCE_ANALYSIS_REQUIRED',opsPreview:null,opsPreviewError:null,
-     activeJob:null,shortBulkFinalizing:false,manualPorts:[],secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false,shortBulk:null,manualQueue:[],manualQueueRunning:false,manualQueueCheckpoint:null,manualQueueStatus:''};
+     activeJob:null,shortBulkFinalizing:false,fixFinalizing:false,manualPorts:[],secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false,shortBulk:null,manualQueue:[],manualQueueRunning:false,manualQueueCheckpoint:null,manualQueueStatus:''};
   // The queue lives alongside Second Pass, without changing the engineering audit.
   const queuePanel=document.createElement('section');
   queuePanel.dataset.manualQueue='';
@@ -533,6 +533,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       return;
     }
     const generation=state.epoch,source=state.source,batch=receiptKey==='batch';
+    let readyForHubRelease=false;
     const skippedByPlan=batch?[...(state.batch?.skipped||[])]:[];
     const skippedByEngine=[];
     state.busy=true;state.lastFailure='';refresh();
@@ -621,6 +622,8 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
         throw Error('UXML_RECHECK_PARITY_BLOCKED: '+state.hubParity?.differences.join(' | '));
       const current=acceptAnalysis(recheck,fixedSha);
       const priorReviews=Object.fromEntries(state.gapReviews);
+      // A changed working source can never inherit an earlier release.
+      state.hubRevision=null;state.fixFinalizing=true;
       state.source=nextSource;state.scene=nextScene;state.plan=current.plan;
       invalidateManualQueue();
       state.resolutions=current.resolutions;
@@ -632,7 +635,6 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       establishCurrentAnalysisProof(recheck,{epoch:generation,
         revision:state.revision,sourceRef:state.source,sourceSha256:fixedSha,
         accepted:current});
-      state.hubRevision=state.hubEnabled?state.revision:null;
       state.history.push({sourceSha256:source.sourceSha256,fixedSha256:fixedSha,
         actionIds:ids,operations:txn.operations,validation:validation.checks,jointRepairs,reviews:priorReviews,
         resolvedConnections:current.resolutions});
@@ -664,9 +666,11 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
         '. Canvas and counts rechecked. Download the validated copy for review. Original unchanged; '+
         'not connectivity certification or engineering acceptance.','ready',receiptKey);
       updateStatus('Repair applied and rechecked. Working revision '+state.revision+'.');
+      readyForHubRelease=true;
     }catch(error){
       if(generation===state.epoch){
         const detail=error?.message||String(error);
+        if(state.hubEnabled)holdShortHubRelease('RUN_FIX_PUBLICATION_FAILED:'+detail);
         const message=drop?(detail.includes('RECONNECTION')?
           'The element was retained because its surrounding ports could not reconnect. Check restraints, mating diameters and port directions.':
           'Drop and close failed validation. The element was retained; reopen the preview and check its current source ports.'):detail;
@@ -678,8 +682,19 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
         'Current working revision retained.','rejected');
       }
     }finally{
-      if(generation===state.epoch){state.busy=false;state.batch=null;
-        query(root,'[data-batch-confirm]').textContent='';refresh();}
+      if(generation===state.epoch){
+        state.busy=false;state.batch=null;
+        try{query(root,'[data-batch-confirm]').textContent='';}catch{}
+        // The UI is refreshed while release is still withheld.
+        // A rendering exception is a fail-closed ERROR, not an open gate.
+        refresh();
+        state.fixFinalizing=false;
+        if(readyForHubRelease&&state.hubEnabled&&
+           state.hubParity?.status==='EQUAL'&&analysisProofCurrent()){
+          state.hubRevision=state.revision;
+          refresh(); // guarded; on failure refresh() revokes release
+        }
+      }
     }
   }
   function autoFix(actionId){return runFix([actionId],'single');}
@@ -1276,6 +1291,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     state.batchRunning=false;refresh();
   }
   function refresh() {
+    try{
     root.setAttribute('aria-busy',String(state.busy||state.batchRunning));
     renderRecords();renderActions();renderSelection();renderSecondPass();renderManualQueue();opsPanel.render();
     renderTrialResult();
@@ -1284,7 +1300,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     if(hubToggle){hubToggle.checked=state.hubEnabled;hubToggle.disabled=state.busy||state.batchRunning;}
     renderHubParity();
     query(root,'[data-cancel]').disabled=
-      !(state.busy||state.batchRunning)||state.shortBulkFinalizing;
+      !(state.busy||state.batchRunning)||state.shortBulkFinalizing||state.fixFinalizing;
     getNodes(root,'[data-auto-fix],[data-close-joint],[data-add-second-pass]').forEach(button=>
       button.disabled=state.busy||state.batchRunning||
         (state.hubEnabled&&(state.hubParity?.status!=='EQUAL'||!button.hasAttribute('data-auto-fix'))));
@@ -1293,6 +1309,25 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     getNodes(root,'[data-download-fix],[data-download-batch-report]').forEach(button=>
       button.disabled=state.busy||state.batchRunning||!hubCanRelease(true));
     explainDisabledActions();
+    }catch(error){
+      // A renderer exception cannot strand Busy or preserve a stale hub release.
+      const detail='WORKSPACE_REFRESH_ERROR:'+String(error?.message||error);
+      try{cancelEngine();}catch{}
+      state.epoch++;state.busy=false;state.batchRunning=false;
+      state.shortBulkFinalizing=false;state.fixFinalizing=false;
+      state.activeJob=null;state.shortBulk=null;state.lastFailure=detail;
+      if(state.hubEnabled)holdShortHubRelease(detail);
+      try{
+        root.setAttribute('aria-busy','false');
+        getNodes(root,'[data-download-working],[data-download-history],[data-download-fix],[data-download-batch-report]')
+          .forEach(button=>{button.disabled=true;});
+        query(root,'[data-cancel]').disabled=true;
+        query(root,'[data-progress]').textContent='BULK STOPPED · ERROR · '+detail+
+          ' · working revision '+state.revision+' retained.'+
+          (state.hubEnabled?' · corrected downloads HELD.':'');
+        setFixStatus('ERROR · '+detail+' · last validated revision retained.','rejected');
+      }catch{/* already revoked; no secondary render exception escapes */}
+    }
   }
   function select(ids,add=false) {
     if(!add)state.selected.clear();
@@ -1435,6 +1470,9 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     }
     else if(target.hasAttribute('data-run-short-drop'))dropShortElements();
     else if(target.hasAttribute('data-analyze'))analyze();
+    else if(target.hasAttribute('data-cancel')&&state.fixFinalizing){
+      return; // completed native fix cannot be cancelled mid-publication
+    }
     else if(target.hasAttribute('data-cancel')&&state.shortBulkFinalizing){
       // Native Apply is complete; recheck is still running. Preserve
       // the truthful terminal status and committed working revisions.
@@ -1580,7 +1618,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     selected:[...state.selected],busy:state.busy,
     hubEnabled:state.hubEnabled,hubParity:state.hubParity?.status||'OFF',
     hubRevision:state.hubRevision,activeJob:state.activeJob,
-    shortBulkFinalizing:state.shortBulkFinalizing,
+    shortBulkFinalizing:state.shortBulkFinalizing,fixFinalizing:state.fixFinalizing,
     queued:state.manualQueue.map(x=>({id:x.id,status:x.status})),queueBusy:state.manualQueueRunning}),load,analyze,
     dispose(){
       state.activeJob=null;

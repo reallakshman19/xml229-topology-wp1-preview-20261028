@@ -25,6 +25,7 @@ export function namedHubOwnerRefusal(result){
     match[1]+(match[2]===undefined?'':':'+match[2]):null;
 }
 
+let memoSessionOrdinal=0;
 async function digestXml(text) {
   const bytes=new TextEncoder().encode(text);
   const hash=await crypto.subtle.digest('SHA-256',bytes);
@@ -34,7 +35,7 @@ async function digestXml(text) {
 export async function runShortBulk({
   source,shortElements,selectedIds,runEngine,hubEnabled=false,
   isCurrent=()=>true,onCheckpoint=()=>{},onProgress=()=>{},
-  hash=digestXml,
+  hash=digestXml,shortMemoEnabled=true,
 }){
   if(!source?.sourceSha256||typeof source.sourceText!=='string'||
      !Array.isArray(shortElements)||!Array.isArray(selectedIds)||
@@ -42,6 +43,10 @@ export async function runShortBulk({
     throw Error('SHORT_BULK_INVALID_SELECTION');
   let current={...source},rows=shortElements;
   const applied=[],skipped=[],requested=[...selectedIds];
+  // One unique Worker/Python memo scope for the UI bulk selection.
+  // Completion, ERROR and Cancel clear it through endBulkSession.
+  const shortMemoSession='short:'+source.sourceSha256.slice(0,20)+':'+
+    Date.now().toString(36)+':'+(++memoSessionOrdinal).toString(36);
   let latest=null,completed=0,stopReason='COMPLETE',stopMessage='',failedId=null;
   const lease=hubEnabled&&typeof runEngine.beginBulkSession==='function'&&
     typeof runEngine.endBulkSession==='function';
@@ -72,7 +77,9 @@ export async function runShortBulk({
         options:{outputMode:'enriched-only',analyzeTopology:true,generateTopoFix:true,
           useTopoFixForCii:false,topologyActionIds:[id],
           topologyShortElementRequests:[request],topologyUxmlPreview:hubEnabled,
-          topologyBulkSession:hubEnabled,topologyBulkSpeedProfile:hubEnabled},
+          topologyBulkSession:hubEnabled,topologyBulkSpeedProfile:hubEnabled,
+          topologyShortMemo:shortMemoEnabled,
+          topologyShortMemoSession:shortMemoSession},
         sourceRawSha256:current.rawSha256||current.sourceSha256,
       });
       if(!isCurrent()){stopReason='CANCELLED';break;}

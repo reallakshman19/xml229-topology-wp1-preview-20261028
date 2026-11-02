@@ -191,6 +191,21 @@ async function runCii(pyodide, job, paths, jobDir, stdout, stderr) {
   return { ciiText: pyodide.FS.readFile(invocation.outputPath, { encoding: 'utf8' }), ciiName: invocation.outputName, argv: invocation.argv.slice(1) };
 }
 
+/** End a short-drop session only AFTER all queued engine jobs complete.
+ * Cancel/model load terminates the Worker, and this also clears the last
+ * in-memory Python memo when the bulk lease ends normally or on error.
+ */
+export async function clearXml229ShortMemo(){
+  await engineQueue;
+  if(!pyodidePromise)return;
+  const pyodide=await pyodidePromise;
+  pyodide.runPython(`import sys
+_short_memo_module=sys.modules.get("psi116_topology_resolver.short_memo")
+if _short_memo_module is not None:
+    _short_memo_module.clear_memo()
+`);
+}
+
 // Pyodide globals (stdout, sys.argv and imported Python modules) are shared.
 // A new auto Run must never race a manually requested conversion.
 let engineQueue=Promise.resolve();

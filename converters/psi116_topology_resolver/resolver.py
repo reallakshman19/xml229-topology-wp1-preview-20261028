@@ -99,7 +99,10 @@ def resolve_psi116(
     *,
     source_name: str | None = None,
 ) -> ResolutionResult:
-    return analyze_document(read_psi116_xml(source, source_name=source_name), config)
+    # Optional per-Apply cache is scoped to exact bytes, source name and
+    # ResolverConfig. Without a live memo this is the unchanged parser/analyzer.
+    from .short_memo import source_resolve
+    return source_resolve(source, config or ResolverConfig(), source_name=source_name)
 
 
 def write_sidecars(

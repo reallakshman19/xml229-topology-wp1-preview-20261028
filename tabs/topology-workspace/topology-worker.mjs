@@ -1,7 +1,7 @@
 /** Disposable PSI116 topology Worker: legacy direct or opt-in UXML handshake.
  * No native CII, Final, review-case Apply or widening of Auto-fix policy.
  */
-import {runXmlCii2019StandaloneEngine} from '../../converters/xml-cii-2019-standalone/engine.js';
+import {runXmlCii2019StandaloneEngine,clearXml229ShortMemo} from '../../converters/xml-cii-2019-standalone/engine.js';
 import {loadPinnedPsi116Reader} from './uxml-browser-reader.mjs';
 let bulkPinnedReaderPromise=null;
 function pinnedReaderForJob(job){
@@ -25,6 +25,10 @@ async function sourceHash(sourceText){
 }
 self.onmessage=async ({data})=>{
  const {id,job,type}=data||{};
+ if(type==='SHORT_MEMO_CLEAR'){
+  try{await clearXml229ShortMemo();}catch{/* cleanup cannot publish output */}
+  return;
+ }
  if(type!=='RUN'||!Number.isSafeInteger(id))return;
  try{
   const speed=job?.options?.topologyBulkSpeedProfile===true;

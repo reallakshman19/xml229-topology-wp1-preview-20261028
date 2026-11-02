@@ -13,6 +13,7 @@ const TOPOLOGY_PACKAGE_FILES = Object.freeze([
   'manual_connections.py',
   'connection_ports.py',
   'short_elements.py',
+  'short_memo.py',
   'lineage.py',
   'uxml_adapter.py',
   'uxml_compare.py',
@@ -63,9 +64,9 @@ hub_parity = {"status": "OFF", "differences": []}
 ops_preview = None
 if hub_doc is not None:
     # The same Python resolver consumes either ORIGINAL PSI116 or XCU's UXML.
-    from psi116_topology_resolver.uxml_adapter import resolve_from_uxml
+    from psi116_topology_resolver.short_memo import uxml_resolve
     try:
-        adapted = resolve_from_uxml(hub_doc, cfg, source_name=str(job_topology_input_path))
+        adapted = uxml_resolve(hub_doc, cfg, source_name=str(job_topology_input_path))
         differences = []
         compare_hub_values("/findings", result.findings_payload(cfg), adapted.findings_payload(cfg), differences)
         compare_hub_values("/fixPlan", result.fix_plan_payload(cfg), adapted.fix_plan_payload(cfg), differences)
@@ -206,6 +207,9 @@ if job_generate_topofix:
 
 _speed_marks['pyValidationRecheckMs'] = (_speed_time.perf_counter() - _speed_started) * 1000 - sum(_speed_marks.values())
 status['bulkTimings'] = _speed_marks if globals().get('job_bulk_speed_profile', False) else None
+if status['bulkTimings'] is not None:
+    from psi116_topology_resolver.short_memo import stats as _short_memo_stats
+    status['bulkTimings']['shortMemoStats'] = _short_memo_stats()
 status["appliedEditOps"] = applied_edit_ops if (job_generate_topofix and status["committed"] and hub_parity["status"] == "EQUAL") else None
 status["opsPreview"] = ops_preview if hub_parity["status"] == "EQUAL" else None
 status["hubParity"] = hub_parity
@@ -335,9 +339,33 @@ export async function runPsi116TopologyStage(pyodide, job, inputPath, jobDir, st
   pyodide.globals.set('job_connection_preview_json', JSON.stringify(options.topologyConnectionPreview || null));
   pyodide.globals.set('job_short_elements_json', JSON.stringify(options.topologyShortElementRequests || []));
   pyodide.globals.set('job_bulk_speed_profile', speed);
+  // A source-keyed bulk token keeps the bounded memo for only this selection.
+  // Every ordinary one-owner run uses a fresh, disposable jobDir identity.
+  const shortRequests=Array.isArray(options.topologyShortElementRequests)?
+    options.topologyShortElementRequests:[];
+  const memoEnabled=generateTopoFix&&shortRequests.length===1&&
+    options.topologyShortMemo!==false;
+  const crossOwnerMemo=memoEnabled&&options.topologyBulkSession===true&&
+    typeof options.topologyShortMemoSession==='string'&&
+    /^[a-zA-Z0-9_.:-]{1,160}$/.test(options.topologyShortMemoSession);
+  const memoToken=crossOwnerMemo?options.topologyShortMemoSession:
+    'single:'+jobDir.replace(/[^a-zA-Z0-9_.:-]/g,'_').slice(-140);
+  pyodide.globals.set('topology_short_memo_token',memoToken);
+  pyodide.globals.set('topology_short_memo_enabled',memoEnabled);
+  pyodide.runPython(`from psi116_topology_resolver.short_memo import start_memo
+start_memo(topology_short_memo_token, enabled=topology_short_memo_enabled)`);
   const pythonStart=performance.now();
-  await pyodide.runPythonAsync(TOPOLOGY_SNIPPET);
-  const pythonElapsed=performance.now()-pythonStart;
+  let pythonElapsed=0;
+  try {
+    await pyodide.runPythonAsync(TOPOLOGY_SNIPPET);
+    pythonElapsed=performance.now()-pythonStart;
+  } catch(error) {
+    pyodide.runPython('from psi116_topology_resolver.short_memo import clear_memo; clear_memo()');
+    throw error;
+  } finally {
+    if(!crossOwnerMemo)
+      pyodide.runPython('from psi116_topology_resolver.short_memo import clear_memo; clear_memo()');
+  }
 
   const status = JSON.parse(readOptional(pyodide, paths.status) || '{}');
   const topologyUxmlParity = status.hubParity || null;
