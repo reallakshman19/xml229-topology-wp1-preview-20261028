@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections import OrderedDict, Counter
 from contextlib import contextmanager
 from copy import deepcopy
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -128,10 +128,14 @@ def source_resolve(source, config, *, source_name=None):
     if _active is None:
         return analyze_document(read_psi116_xml(source, source_name=source_name), config)
     exact_bytes, name = _source_input(source, source_name)
-    key = _key("source_resolve", exact_bytes, None, config, name)
+    # Analysis has no dependency on source_path; only its receipt metadata
+    # does. Key by exact bytes and config, then rewrite ONLY the requested
+    # path in an isolated copy. This allows the next owner's original source
+    # to reuse the prior owner's post-closure resolve despite .topofix paths.
+    key = _key("source_resolve", exact_bytes, None, config)
     hit = _active.get("source_resolve", key)
     if hit is not None:
-        return hit
+        return replace(hit, document=replace(hit.document, source_path=name))
     value = analyze_document(read_psi116_xml(source, source_name=source_name), config)
     _active.put("source_resolve", key, value)
     return value
