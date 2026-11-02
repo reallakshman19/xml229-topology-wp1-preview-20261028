@@ -1473,12 +1473,6 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     else if(target.hasAttribute('data-short-next')){
       if(state.shortSelection&&!state.busy&&!state.batchRunning){state.shortSelection.page++;renderShortSelection();}
     }
-    else if(target.hasAttribute('data-short-independent')){
-      if(!state.busy&&!state.batchRunning){
-        state.independentShortGroups=!!target.checked;
-        renderShortSelection();
-      }
-    }
     else if(target.hasAttribute('data-run-short-drop'))dropShortElements();
     else if(target.hasAttribute('data-analyze'))analyze();
     else if(target.hasAttribute('data-cancel')&&state.fixFinalizing){
@@ -1568,6 +1562,14 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     else if(target.hasAttribute('data-focus'))canvas.focus(state.selected);
   };
   const changed=event=>{
+    if(event.target.matches('[data-short-independent]')){
+      if(state.busy||state.batchRunning){
+        event.target.checked=state.independentShortGroups;
+      }else{
+        state.independentShortGroups=event.target.checked;
+        renderShortSelection();
+      }
+    }
     if(event.target.matches('[data-short-index]')&&!state.busy&&!state.batchRunning){
       const p=state.shortSelection,r=state.shortElements[Number(event.target.dataset.shortIndex)];
       if(p&&r?.eligible&&p.epoch===state.epoch&&p.sha===state.source?.sourceSha256){
