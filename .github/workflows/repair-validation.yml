@@ -64,6 +64,11 @@ jobs:
             echo 'A6B_FEASIBILITY_SKIP_REFUSED' >&2
             exit 1
           fi
+          A6B_ENGINE_BENCH=1 python3 -B -m unittest discover -s tests -p bench_short_batch_engine.py -v 2>&1 | tee /tmp/topofix-a6b-engine-serial-equivalence.log
+          if grep -Fq 'skipped' /tmp/topofix-a6b-engine-serial-equivalence.log; then
+            echo 'A6B_ENGINE_EQUIVALENCE_SKIP_REFUSED' >&2
+            exit 1
+          fi
           A6B_ENGINE_QUAL=1 python3 -B -m unittest discover -s tests -p bench_short_batch_uxml.py -v 2>&1 | tee /tmp/topofix-a6b-batch-uxml-witness.log
           if grep -Fq 'skipped' /tmp/topofix-a6b-batch-uxml-witness.log; then
             echo 'A6B_UXML_BATCH_QUALIFICATION_SKIP_REFUSED' >&2
