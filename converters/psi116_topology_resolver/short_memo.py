@@ -137,10 +137,11 @@ def source_resolve(source, config, *, source_name=None):
     return value
 
 
-def uxml_resolve(uxml, config, *, source_name=None):
-    from .uxml_adapter import resolve_from_uxml
+def uxml_resolve(uxml, config, *, source_name=None, resolver=None):
+    if resolver is None:
+        from .uxml_adapter import resolve_from_uxml as resolver
     if _active is None:
-        return resolve_from_uxml(uxml, config, source_name=source_name)
+        return resolver(uxml, config, source_name=source_name)
     # Include every structural field, raw node fragment and sourceRef in the
     # key. A malformed/changed UXML cannot receive a cached validated result.
     source = uxml.get("sources") if isinstance(uxml, dict) else None
