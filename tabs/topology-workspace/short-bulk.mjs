@@ -77,7 +77,9 @@ export async function runShortBulk({
         options:{outputMode:'enriched-only',analyzeTopology:true,generateTopoFix:true,
           useTopoFixForCii:false,topologyActionIds:[id],
           topologyShortElementRequests:[request],topologyUxmlPreview:hubEnabled,
-          topologyBulkSession:hubEnabled,topologyBulkSpeedProfile:hubEnabled},
+          topologyBulkSession:hubEnabled,topologyBulkSpeedProfile:hubEnabled,
+          topologyShortMemo:shortMemoEnabled,
+          topologyShortMemoSession:shortMemoSession},
         sourceRawSha256:current.rawSha256||current.sourceSha256,
       });
       if(!isCurrent()){stopReason='CANCELLED';break;}
