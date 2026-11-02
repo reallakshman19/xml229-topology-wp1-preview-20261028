@@ -783,7 +783,13 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   async function publishShortBulk(outcome,generation=state.epoch){
     // Decide and enforce hub authority before ANY working-source mutation.
     const reason=outcome?.stopReason||'COMPLETE';
-    const hubMismatch=state.hubEnabled&&reason!=='COMPLETE'&&reason!=='CANCELLED';
+    // The Worker may carry a stronger hub-HOLD witness than its stop label.
+    // A COMPLETE/CANCELLED label never overrides an explicit native mismatch.
+    const hubMismatch=state.hubEnabled&&(
+      (reason!=='COMPLETE'&&reason!=='CANCELLED')||outcome?.hubMismatch===true);
+    // RELEASE LAST: revoke previous authority until every parse, UI write,
+    // source-count check and evidence recheck has succeeded.
+    state.hubRevision=null;
     if(hubMismatch)holdShortHubRelease(outcome?.stopMessage||'SHORT_BULK_HUB_HOLD:'+reason);
     if(!outcome||outcome.originSha256!==state.source?.sourceSha256)
       throw Error('SHORT_BULK_ORIGINAL_SOURCE_DRIFT');
@@ -810,7 +816,6 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       }
       state.revision+=applied.length;
       state.applied+=applied.length;
-      state.hubRevision=state.hubEnabled&&!hubMismatch?state.revision:null;
       clearEvidenceProof('EVIDENCE_RECHECK_PENDING');
       state.fix={sourceSha256:state.source.sourceSha256,receiptKey:'drop',
         hubRoute:state.hubEnabled,
@@ -861,6 +866,57 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       query(root,'[data-progress]').textContent=
         state.hubEnabled&&state.hubParity?.status!=='EQUAL'?
           message+' · HUB EVIDENCE HOLD: re-analyse before download.':message;
+    // FINAL statement. Never add any throwable UI work after hub release:
+    // even CANCELLED outcomes must finish all writes/recheck first.
+    if(state.hubEnabled&&!hubMismatch&&generation===state.epoch&&
+       state.hubParity?.status==='EQUAL'&&analysisProofCurrent())
+      state.hubRevision=state.revision;
+  }
+
+  /** All short-bulk publication paths (finish, engine ERROR, Cancel) go here.
+   * A publication failure never rethrows and cannot unlock a corrected download.
+   * Retry uses the ACTUAL outcome, not a fabricated zero-progress checkpoint.
+   */
+  async function publishShortBulkGuarded(outcome,generation=state.epoch){
+    try{
+      await publishShortBulk(outcome,generation);
+      return true;
+    }catch(error){
+      const why=String(error?.message||error);
+      const label='SHORT_BULK_PUBLICATION_FAILED:'+why;
+      if(state.hubEnabled)holdShortHubRelease(label);
+      // If parse/scene setup failed before source publication, the original
+      // SHA still matches and the same validated outcome can be re-presented.
+      // If source already advanced, retry is source-bound and must refuse;
+      // NEVER silently re-apply a transaction against the advanced source.
+      const retry={...outcome,stopReason:'ERROR',stopMessage:label,
+        hubMismatch:state.hubEnabled};
+      try{
+        if(generation===state.epoch&&state.source?.sourceSha256===outcome?.originSha256)
+          await publishShortBulk(retry,generation);
+      }catch(republishError){
+        if(state.hubEnabled)holdShortHubRelease(
+          'SHORT_BULK_REPUBLISH_FAILED:'+String(republishError?.message||republishError));
+      }
+      // No second publication or renderer is trusted for release custody.
+      if(state.hubEnabled)holdShortHubRelease(label);
+      const retained=state.revision;
+      const validated=outcome?.applied?.length||0;
+      const report='BULK STOPPED · ERROR · '+label+
+        ' · working revision '+retained+' retained; '+
+        validated+' native-validated item(s) in attempted publication'+
+        (state.hubEnabled?' · corrected downloads HELD.':
+          ' · working-source release requires review.');
+      try{
+        if(generation===state.epoch){
+          query(root,'[data-progress]').textContent=report;
+          setFixStatus(report,'rejected','drop');
+          updateStatus('Publication failed; working revision '+retained+
+            ' retained. Inspect the source-bound receipt before retry.');
+        }
+      }catch{/* no UI exception may escape the source-release gate */}
+      return false;
+    }
   }
   async function dropShortElements(){
     if(state.hubEnabled&&
@@ -912,29 +968,17 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       if(generation!==state.epoch)return;
       bulkFinished=true;clearInterval(heartbeat);
       state.shortBulkFinalizing=true;state.shortBulk=null;refresh();
-      await publishShortBulk(outcome,generation);
+      await publishShortBulkGuarded(outcome,generation);
     }catch(error){
       if(generation!==state.epoch)return;
-      // Publication may already have advanced state.source. HOLD directly
-      // before trying to re-publish, which may reject the old source SHA.
-      const why=String(error?.message||error);
-      if(state.hubEnabled)holdShortHubRelease('SHORT_BULK_PUBLICATION_FAILED:'+why);
+      // The native job itself failed before a terminal outcome. Preserve
+      // its latest validated checkpoint rather than inventing an empty batch.
       const checkpoint=state.shortBulk||{originSha256:source.sourceSha256,latest:null,
         applied:[],skipped:[],requested:ids,completed:0};
       bulkFinished=true;clearInterval(heartbeat);
       state.shortBulkFinalizing=true;state.shortBulk=null;
-      try{
-        await publishShortBulk({...checkpoint,stopReason:'ERROR',stopMessage:why},generation);
-      }catch(republishError){
-        // Never leave an unhandled source-drift rejection or restore EQUAL.
-        if(state.hubEnabled)holdShortHubRelease(
-          'SHORT_BULK_REPUBLISH_FAILED:'+String(republishError?.message||republishError));
-        const message='BULK STOPPED · ERROR · '+why+
-          (state.hubEnabled?' · corrected downloads HELD.':' · current working revision retained.');
-        query(root,'[data-progress]').textContent=message;
-        setFixStatus(message,'rejected','drop');
-        updateStatus('Bulk publication failed. Last validated working revision retained; review required.');
-      }
+      await publishShortBulkGuarded({...checkpoint,stopReason:'ERROR',
+        stopMessage:String(error?.message||error),hubMismatch:state.hubEnabled},generation);
     }finally{
       clearInterval(heartbeat);
       if(generation===state.epoch){
@@ -1412,7 +1456,8 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       cancelEngine();state.epoch++;state.busy=false;state.batchRunning=false;
       state.activeJob=null;
       state.shortBulk=null;
-      await publishShortBulk({...saved,stopReason:'CANCELLED',stopMessage:'User cancelled active batch'},state.epoch);
+      await publishShortBulkGuarded({...saved,stopReason:'CANCELLED',
+        stopMessage:'User cancelled active batch'},state.epoch);
       refresh();
     }
     else if(target.hasAttribute('data-cancel')){cancelEngine();state.secondPass=null;state.shortSelection=null;
