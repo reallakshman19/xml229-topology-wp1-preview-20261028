@@ -146,7 +146,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     const findings=JSON.parse(result.topologyFindingsText||'null');
     if(plan?.source?.sha256!==sourceSha||findings?.source?.sha256!==sourceSha||
        !Array.isArray(plan.actions)||!Array.isArray(findings.findings))throw Error('TOPOFIX_PLAN_SOURCE_DRIFT');
-    return {plan,findings:findings.findings,resolutions:findings.resolvedConnections||[],shortElements:findings.shortElements||[],manualPorts:findings.manualConnectionPorts||[]};
+    return {plan,findings:findings.findings,resolutions:findings.resolvedConnections||[],shortElements:findings.shortElements||[],shortBatchPlanning:findings.shortBatchPlanning||null,manualPorts:findings.manualConnectionPorts||[]};
   }
   function renderSelection() {
     const ids=[...state.selected],records=ids.map(id=>state.scene?.byId.get(id)).filter(Boolean);
@@ -470,6 +470,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
         {epoch:generation,revision,sourceRef,sourceSha256,hubEnabled});
       state.plan=current.plan;state.findings=current.findings;
       state.resolutions=current.resolutions;state.shortElements=current.shortElements;
+      state.shortBatchPlanning=current.shortBatchPlanning;
       state.manualPorts=current.manualPorts;
       return true;
     }catch(error){
@@ -823,6 +824,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       state.scene=scene;state.plan=next.plan;state.findings=next.findings.findings;
       state.resolutions=next.findings.resolvedConnections||[];
       state.shortElements=next.findings.shortElements||[];
+      state.shortBatchPlanning=null; // previous source graph is no longer authoritative
       state.manualPorts=next.findings.manualConnectionPorts||[];
       state.secondPass=null;state.shortSelection=null;state.selected.clear();
       state.gapReviews.clear();state.openCases.clear();
@@ -976,6 +978,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       const outcome=await runShortBulk({
         source,shortElements:state.shortElements,selectedIds:ids,runEngine,
         hubEnabled:state.hubEnabled,enableIndependentGroups:state.independentShortGroups,
+        shortBatchPlanning:state.shortBatchPlanning,
         isCurrent:()=>generation===state.epoch,
         onCheckpoint:checkpoint=>{if(generation===state.epoch)state.shortBulk=checkpoint;},
         onProgress:step=>{
@@ -1062,6 +1065,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       state.plan=next.plan;state.findings=next.findings.findings;
       state.resolutions=next.findings.resolvedConnections||[];
       state.shortElements=next.findings.shortElements||[];
+      state.shortBatchPlanning=null; // previous source graph is no longer authoritative
       state.manualPorts=next.findings.manualConnectionPorts||[];
       state.selected.clear();state.openCases.clear();state.gapReviews.clear();
       state.secondPass=null;state.shortSelection=null;
@@ -1358,7 +1362,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     cancelEngine();
     const generation=++state.epoch;
     state.shortBulk=null;
-    state.source=null;state.original=null;state.revision=0;state.hubParity=null;state.hubRevision=null;clearEvidenceProof('EVIDENCE_ANALYSIS_REQUIRED');state.opsPreview=null;state.opsPreviewError=null;state.applied=0;state.history=[];state.resolutions=[];state.shortElements=[];state.shortSelection=null;
+    state.source=null;state.original=null;state.shortBatchPlanning=null;state.revision=0;state.hubParity=null;state.hubRevision=null;clearEvidenceProof('EVIDENCE_ANALYSIS_REQUIRED');state.opsPreview=null;state.opsPreviewError=null;state.applied=0;state.history=[];state.resolutions=[];state.shortElements=[];state.shortSelection=null;
     const shortPanel=query(root,'[data-short-preview]');if(shortPanel)shortPanel.textContent='';
     state.manualPorts=[];state.secondPass=null;state.manualQueue=[];
     state.manualQueueCheckpoint=null;state.manualQueueRunning=false;
@@ -1408,6 +1412,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       const current=acceptAnalysis(result,source.sourceSha256);
       state.plan=current.plan;state.findings=current.findings;
       state.resolutions=current.resolutions;state.shortElements=current.shortElements;
+      state.shortBatchPlanning=current.shortBatchPlanning;
       state.manualPorts=current.manualPorts;
       if(!state.hubEnabled||state.hubParity?.status==='EQUAL')
         establishCurrentAnalysisProof(result,{epoch:generation,
