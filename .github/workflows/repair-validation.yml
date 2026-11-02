@@ -66,6 +66,11 @@ jobs:
             echo 'SHORT_MEMO_EQUIVALENCE_SKIP_REFUSED' >&2
             exit 1
           fi
+          UXML_SHORT_MEMO_STAGE_PROFILE=1 python3 -B -m unittest discover -s tests -p test_uxml_short_memo_stage_profile.py -v 2>&1 | tee /tmp/topofix-short-memo-native-stage.log
+          if grep -Fq 'skipped' /tmp/topofix-short-memo-native-stage.log; then
+            echo 'SHORT_MEMO_STAGE_PROFILE_SKIP_REFUSED' >&2
+            exit 1
+          fi
       - name: Full Chromium and Pyodide repair journey
         run: |
           npm install --no-save --ignore-scripts --package-lock=false playwright@1.52.0
