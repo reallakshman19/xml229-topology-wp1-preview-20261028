@@ -96,3 +96,56 @@ No product writer, native short-drop engine, workflow Apply, CLOS, policy/tolera
 - Private Owner-source 89-item timing (private only, Oracle operator).
 - No Writer/Worker batch path, no K=16 toggle or bisection (intentionally NOT_IMPLEMENTED).
 - Independent non-author review / merge / release.
+
+
+## Option C B1 · independent route custody and memo safety (2 Nov 2026, PR #33 repair)
+
+**Historical caution:** The earlier measured option-C implementation indexed the
+native transaction solely by original `sourceText`, policy, config and source
+path. But the UXML adapter constructs records, geometry, weights, types,
+findings and fix actions from UXML JSON; those records may differ even while
+the embedded source text and SHA agree. Reusing a *direct-source* transaction
+for UXML therefore made direct/patch comparison circular (B1 independent
+review, 71/100). This is a safety defect, not an acceptable performance trade.
+
+The repaired transaction key separates **all** of these inputs:
+
+| Memo entry | Complete identity and input handling | Safety decision |
+|---|---|---|
+| `transaction` | Code-version tag, transaction kind, exact original UTF-8 source bytes SHA-256, every policy field, resolver-config digest, source path, **explicit `native` or `uxml` route**, plus digest of all analyzed document records, raw node fragments, occurrences/spans, findings, proposed actions/blockers and connection resolutions | Separate native and UXML misses are mandatory. Canonical export, canonical re-validation and patch application of the **same** unchanged UXML witness can reuse a UXML-route transaction; independent sourceRef/loss/policy validation still runs |
+| `source_resolve` | Code version, exact current raw input bytes, config; parser/analyzer function fixed. The source path affects only receipt metadata and is rebound on an isolated cache copy | Independent source hash must differ when any input byte differs; no cached value may carry a stale returned source path. Note the cached path skips the parser's process-global `ET.register_namespace` side effect; callers must never rely on the cache miss to set serializer registry state |
+| `uxml_resolve` | Code version, UXML `sourceText` bytes, complete canonical UXML JSON SHA-256 (including sourceRefs, raw fields and ports), config and source name. Noncanonical/injected resolver functions are **never cached** | A modified UXML field or adapter-injected function cannot reuse earlier analyzed evidence |
+| `analyze_document` | **Not separately memoized**: it runs inside the two exact-input resolver entries above | No naked analysis-result cache lacking document/config provenance |
+
+**Lifetime and clears:** A per-selection in-memory memo uses bounded deep-copy
+stores, never disk or persistent state. Python `memo_session` restores its
+previous state in `finally`; individual jobs clear in
+`topology-integration.js` `finally`, engine ERROR clears in its `catch`;
+normal bulk termination sends `SHORT_MEMO_CLEAR` through Worker queue to
+`clearXml229ShortMemo`, and Cancel/model load terminates the Worker, losing
+the entire Python heap. Tests explicitly execute these actual clear points and
+kill mutants deleting their dispatch/cleanup.
+
+The expected per-owner pattern on an untampered hub source is now **2 real
+native short transactions + 2 memo hits**: one direct, one independent UXML,
+then two repeat UXML calls. This deliberately sacrifices some of the old
+unsafe memo's speed. A forged retained weight, position or type in UXML must
+refuse ON with the same code as OFF; exact original XML bytes, sourceRefs and
+independent validation remain binding. No unsafe shortcut is authorized.
+
+**Timing ledger, synthetic only, before B1 repair:** 5 sequential synthetic
+owners OFF 8.808s / ON 5.579s (1.58x); 20 OFF 35.600s / ON
+24.957s (1.43x). One 660-record stage OFF 1,443ms / ON 904ms (1.60x);
+single-item browser/Pyodide OFF 1,127ms / ON 697ms (1.62x). These
+measurements represent the prior B1-defective memo and are NOT an approval
+of its parity behavior. New exact-head timing must be taken after the
+route-separated implementation and independently reviewed.
+
+**Oracle Owner-model observation (ratio only, private data excluded):**
+prior memo ON was **2.41x** OFF for the same local five-step session, with
+fixed XML equality; this predates the B1 safety repair and is not a claim for
+the new head. No Owner data or identifying source facts are recorded here.
+
+**Still NOT_DONE:** item (4), skipping intermediate serialize/re-parse work,
+and any multi-owner batching or structural shortcut. No CLOS, tolerance,
+loss-contract, eligibility, review-only or one-owner policy changes.
