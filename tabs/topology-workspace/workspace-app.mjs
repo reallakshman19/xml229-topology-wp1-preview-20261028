@@ -719,7 +719,11 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       ' eligible under source checks. Select owners, then Apply. '+
       'Each hub transaction independently checks canonical UXML operation authority, '+
       'loss contract, original source and native validation before retaining a revision.</p>'+
-      '<p data-short-selection-count>'+p.selected.size+' selected · page '+(p.page+1)+' of '+pages+'</p>'+
+      '<label><input type="checkbox" data-short-independent '+
+         '(state.independentShortGroups?'checked ':'')+
+         '(state.busy||state.batchRunning?'disabled ':'')+'>'+ 
+         'Group independent owners (up to 32; OFF = legacy one-owner comparison)</label>'+
+       '<p data-short-selection-count>'+p.selected.size+' selected · page '+(p.page+1)+' of '+pages+'</p>'+
       '<button data-select-gaskets '+(state.busy||state.batchRunning?'disabled':'')+
         '>Select eligible gaskets (all pages)</button>'+
       '<ul>'+visible.map((r,i)=>'<li><label><input type="checkbox" data-short-index="'+(start+i)+'" '+
