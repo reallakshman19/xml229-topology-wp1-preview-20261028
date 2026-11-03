@@ -245,7 +245,67 @@ def normalized_owner_evidence(transaction):
     return tuple(evidence)
 
 
-def _replay_owner_revisions(before,operations,requests,candidate_xml):
+def _verify_order_preserving_owner_step(prior_xml, request, expected_xml, config):
+    """Native per-owner admission after all earlier selected owners' moves.
+
+    The group middle is NOT authority here: it omits prior closures. Fresh
+    source geometry, candidate discovery, preflight and stage validation
+    must match the group's exact per-owner XML operation replay. No group
+    bytes escape on any error; bisect delegates to the unchanged singleton.
+    """
+    refusal="SHORT_BATCH_SEQUENTIAL_OWNER_QUALIFICATION_REFUSED"
+    try:
+        before=resolve_psi116(prior_xml,config)
+        row=next((r for r in short_elements(before.document,config)
+                  if r["id"]==request["id"]),None)
+        _require(row is not None and row["eligible"] and
+                 row["nodeKeys"]==list(request["nodeKeys"]),refusal)
+        policy=TransactionPolicy(
+            selected_action_ids=(request["id"],),
+            short_element_requests=({key:row[key] for key in
+                ("id","sourceSha256","nodeKeys")},))
+        _require(not _preflight(before,(),policy),refusal)
+        root=_parse_clone(prior_xml)
+        locators=_build_locator_index(root,before)
+        removed=set(row["nodeKeys"])
+        for key in removed:
+            locator=locators[key]
+            locator.branch_element.remove(locator.node_element)
+        middle=resolve_psi116(_serialize(root,before.document.namespace),config)
+        prior_to_middle={}
+        for old_branch,new_branch in zip(before.document.branches,
+                                         middle.document.branches):
+            kept=[n for n in old_branch.nodes if n.key not in removed]
+            _require(len(kept)==len(new_branch.nodes),refusal)
+            for old,new in zip(kept,new_branch.nodes):
+                prior_to_middle[old.key]=new
+        left=prior_to_middle[row["leftKey"]]
+        right=prior_to_middle[row["rightKey"]]
+        repair_needed=(left.position.distance_to(right.position)>1e-7 or
+            (left.positive and right.positive and
+             left.node_number!=right.node_number))
+        if repair_needed:
+            ports={left.key,right.key}
+            closure=next((a for a in middle.fix_actions if
+                a.disposition=="CLOSE_PORT_CONNECTION" and
+                {a.proposed_changes[0]["movePortKey"],
+                 a.proposed_changes[0]["targetPortKey"]}==ports),None)
+            _require(closure is not None,refusal)
+            _require(not _preflight(middle,(closure,),policy),refusal)
+            locators_mid=_build_locator_index(root,middle)
+            operations=_apply_port_connection(middle,closure,locators_mid,config,1)
+            after=resolve_psi116(_serialize(root,before.document.namespace),config)
+            checks=_validate_transaction(middle,after,(closure,),operations)
+            _require(all(not c.blocking or c.passed for c in checks),refusal)
+        else:
+            after=middle
+        _require(_no_new_blocking_findings(before,after),refusal)
+        _require(_serialize(root,before.document.namespace)==expected_xml,refusal)
+    except (ValueError,KeyError,TypeError,IndexError) as error:
+        raise ShortBatchRefused(refusal) from error
+
+
+def _replay_owner_revisions(before,operations,requests,candidate_xml,config):
     """Exact sequential per-owner hashes from group-authorized operations.
 
     This is a lightweight deterministic XML field replay, NOT another native
@@ -266,6 +326,7 @@ def _replay_owner_revisions(before,operations,requests,candidate_xml):
         owner=request["id"]
         edits=by_id.pop(owner,[])
         _require(bool(edits),"SHORT_BATCH_OWNER_REPLAY_OP_MISSING")
+        prior_xml=current
         source_sha=sha256(current.encode("utf-8")).hexdigest()
         removed_keys=[]
         changed_keys=[]
@@ -300,6 +361,7 @@ def _replay_owner_revisions(before,operations,requests,candidate_xml):
                  len(removed_keys)==len(request["nodeKeys"]),
                  "SHORT_BATCH_OWNER_REPLAY_REMOVAL_MISMATCH")
         current=_serialize(root,before.document.namespace)
+        _verify_order_preserving_owner_step(prior_xml,request,current,config)
         revisions.append({
             "id":owner,"sourceSha256":source_sha,
             "fixedSha256":sha256(current.encode("utf-8")).hexdigest(),
@@ -549,7 +611,7 @@ def apply_independent_short_batch(
              sum(x["operationCount"] for x in owners)==len(operations),
              "SHORT_BATCH_PER_OWNER_ACCOUNTING_REJECTED")
     revisions=_replay_owner_revisions(
-        before,candidate.operations,policy.short_element_requests,final_xml)
+        before,candidate.operations,policy.short_element_requests,final_xml,config)
     _require(len(revisions)==len(owners) and
              [x["id"] for x in revisions]==[x["id"] for x in owners],
              "SHORT_BATCH_OWNER_REVISION_CENSUS_MISMATCH")
