@@ -203,6 +203,7 @@ export async function qualifyGroupedWorkerResult({
   const fixedSha=await hash(result.topoFixXmlText);
   const sourceSha=current.sourceSha256;
   const ownerEvidence=txn?.batch?.owners,ownerRevisions=txn?.batch?.ownerRevisions;
+  const sourceFootprints=txn?.batch?.sourceFootprints;
   requireBatch(txn?.schema==='psi116-topofix-transaction/v1'&&
     validation?.schema==='psi116-topofix-validation/v1'&&
     txn.committed===true&&txn.atomic===true&&txn.sourceXmlMutated===false&&
@@ -215,6 +216,10 @@ export async function qualifyGroupedWorkerResult({
     txn.batch.ownerCount===ids.length&&
     Array.isArray(ownerEvidence)&&ownerEvidence.length===ids.length&&
     Array.isArray(ownerRevisions)&&ownerRevisions.length===ids.length&&
+    Array.isArray(sourceFootprints)&&sourceFootprints.length===ids.length&&
+    sourceFootprints.every((v,i)=>v?.id===ids[i]&&
+      Array.isArray(v.keys)&&v.keys.length>0&&unique(v.keys)&&
+      v.keys.every(k=>typeof k==='string'&&k.length>0))&&
     preFinal?.schema==='psi116-short-batch-prefinal-handoff/v1'&&
     preFinal.requiresFreshWorkerBasis===true&&
     preFinal.acceptedFinalTransferred===false&&
@@ -256,7 +261,7 @@ export async function qualifyGroupedWorkerResult({
   const allAffected=new Set();
   for(let i=0;i<ids.length;i++){
     const id=ids[i],ev=ownerEvidence[i],req=rowMap.get(id);
-    const ops=perOps.get(id);
+    const ops=perOps.get(id),footprint=new Set(sourceFootprints[i].keys);
     requireBatch(req?.eligible===true&&req.sourceSha256===sourceSha&&
       same([...ev.sourceRecordKeys].sort(),[...req.nodeKeys].sort())&&
       ev.operationCount===ops.length&&ops.length>=req.nodeKeys.length&&
@@ -265,6 +270,14 @@ export async function qualifyGroupedWorkerResult({
           .map(op=>op.source_node_key).sort(),[...req.nodeKeys].sort())&&
       ev.portEdits.length===ops.filter(op=>op.operation==='CLOSE_COMPONENT_PORT').length,
       'BATCH_PER_OWNER_ACCOUNTING');
+    // This witness is recomputed by the Python group transaction from
+    // its CURRENT source; JS validates actual edits against it before any
+    // checkpoint. A removed native guard cannot be papered over by JS.
+    requireBatch([...req.nodeKeys,req.leftKey,req.rightKey]
+      .every(k=>footprint.has(k))&&
+      ops.every(op=>footprint.has(op.source_node_key))&&
+      ev.portEdits.every(edit=>footprint.has(edit.key)),
+      'BATCH_OWNER_EDITS_OUTSIDE_FOOTPRINT');
     for(const op of ops){
       requireBatch(!allAffected.has(op.source_node_key),
         'BATCH_INTERACTING_SOURCE_RECORDS');
