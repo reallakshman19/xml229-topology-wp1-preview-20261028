@@ -2,10 +2,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
-import {
+// Only the top-level auto-mount selector is DOM dependent. Keep mount inert
+// without loading a browser; the exact production helpers remain imported.
+globalThis.document={querySelector:()=>null};
+const {
   shortBulkWorkspaceEngineArgs,shortBulkWorkspaceHistoryEntry,
   shortBulkWorkspaceNeedsAnalysis,settleShortBulkPublication,
-} from '../tabs/topology-workspace/workspace-app.mjs';
+}=await import('../tabs/topology-workspace/workspace-app.mjs');
 
 const source=await readFile(
   new URL('../tabs/topology-workspace/workspace-app.mjs',import.meta.url),'utf8');
