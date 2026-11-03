@@ -304,6 +304,7 @@ def _replay_owner_revisions(before,operations,requests,candidate_xml):
 class IndependentShortBatchResult(TopoFixTransactionResult):
     owner_evidence: tuple[dict,...] = field(default_factory=tuple)
     owner_revisions: tuple[dict,...] = field(default_factory=tuple)
+    owner_footprints: tuple[dict,...] = field(default_factory=tuple)
 
     def transaction_payload(self):
         result=super().transaction_payload()
@@ -311,6 +312,7 @@ class IndependentShortBatchResult(TopoFixTransactionResult):
                          "ownerCount":len(self.owner_evidence),
                          "owners":list(self.owner_evidence),
                          "ownerRevisions":list(self.owner_revisions),
+                         "sourceFootprints":list(self.owner_footprints),
                          "atomic":True}
         return result
 
@@ -538,7 +540,10 @@ def apply_independent_short_batch(
              [x["id"] for x in revisions]==[x["id"] for x in owners],
              "SHORT_BATCH_OWNER_REVISION_CENSUS_MISMATCH")
     candidate=replace(candidate,owner_evidence=owners,
-                      owner_revisions=revisions)
+                      owner_revisions=revisions,
+                      owner_footprints=tuple({
+                          "id":row["id"],"keys":sorted(footprints_by_owner[row["id"]])
+                      } for row in rows))
     # Full source occurrence lineage replays ALL changes from original XML.
     # Includes exact original/after attributes and forbids undeclared writes.
     from .lineage import build_topofix_source_lineage
