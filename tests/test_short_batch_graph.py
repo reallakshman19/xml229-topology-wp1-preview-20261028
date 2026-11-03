@@ -88,6 +88,56 @@ def moving_contact_n1_fixture(reverse=False):
     return verified_synthetic(doc(a,b))
 
 
+
+def span_overlap_n2_fixture(*,third=False,mirror=False):
+    """Public N2: moved PIPE span overlaps a remote parallel PIPE span.
+
+    Endpoint distances are hundreds of mm, so R2's node-only 39-mm runtime
+    certificate wrongly skipped the singleton overlap/blocking gates. An
+    optional C owner lies along the z axis and precedes owners A and B.
+    Reflection in the yz plane tests the reverse x-direction geometry.
+    """
+    sign=-1 if mirror else 1
+    p=lambda x,y,z=0: f"{sign*x:g} {y:g} {z:g}"
+    a=(node(10,"PIPE","A-PIPE",1,p(0,0))+
+       node(20,"PIPE","A-PIPE",2,p(1000,5))+
+       node(-1,"GASK","SHORT-A",1,p(1000,5))+
+       node(30,"RIGID","SHORT-A",2,p(1000,0))+
+       node(-1,"FLAN","A-FLAN",1,p(1000,0))+
+       node(40,"RIGID","A-FLAN",2,p(1086,0)))
+    b=(node(50,"PIPE","B-PIPE",1,p(400,0))+
+       node(60,"PIPE","B-PIPE",2,p(600,0))+
+       node(-1,"GASK","SHORT-B",1,p(600,0))+
+       node(70,"RIGID","SHORT-B",2,p(600,5))+
+       node(-1,"FLAN","B-FLAN",1,p(600,5))+
+       node(80,"RIGID","B-FLAN",2,p(686,5)))
+    c=(node(90,"PIPE","C-PIPE",1,p(0,0,2000))+
+       node(100,"PIPE","C-PIPE",2,p(100,0,2000))+
+       node(-1,"GASK","SHORT-C",1,p(100,0,2000))+
+       node(110,"RIGID","SHORT-C",2,p(103,0,2000))+
+       node(-1,"FLAN","C-FLAN",1,p(103,0,2000))+
+       node(120,"RIGID","C-FLAN",2,p(189,0,2000)))
+    return verified_synthetic(doc(*(c,a,b) if third else (a,b)))
+
+
+def serial_with_refusals(source,ids,cfg):
+    """The unchanged one-owner transaction is the ONLY acceptance oracle."""
+    receipts=[]
+    for identifier in ids:
+        try:
+            txn=batch._single_attempt(source,identifier,cfg)
+            if not txn.committed:
+                receipts.append((identifier,"REFUSED",
+                                 ",".join(txn.reject_reasons)))
+                continue
+        except (ValueError,KeyError) as error:
+            receipts.append((identifier,"REFUSED",str(error)))
+            continue
+        source=txn.fixed_xml
+        receipts.append((identifier,"COMMITTED",""))
+    return source,receipts
+
+
 def eligible_owners(before,cfg,n):
     rows=[row for row in short_elements(before.document,cfg)
           if row["componentRefNo"].startswith("SHORT-") and row["eligible"]]
@@ -238,9 +288,6 @@ class DenseGraphPlanning(unittest.TestCase):
                               actual.skipped[0]["reason"])
                 self.assertEqual(batch.plan_short_groups(before,ids,self.cfg),
                                  ((ids[0],),(ids[1],)))
-                self.assertFalse(batch._strict_runtime_order_isolation(
-                    before,owners,self.cfg),
-                    "N1 cross-owner contact forbids runtime fast certificate")
                 print("A6B_R2_N1_GREEN:move-direction="+
                       ("REVERSED" if reverse else "FORWARD")+
                       ":later-refused-serial-bytes-EQUAL=PASS")
@@ -251,41 +298,75 @@ class DenseGraphPlanning(unittest.TestCase):
                     self.assertEqual(batch.plan_short_groups(
                         before,ids,self.cfg),(tuple(ids),))
                     with self.assertRaisesRegex(batch.ShortBatchRefused,
-                        "SHORT_BATCH_SEQUENTIAL_OWNER_QUALIFICATION_REFUSED"):
+                        "SHORT_BATCH_OWNER_NATIVE_SINGLETON_REFUSED"):
                         batch.apply_independent_short_batch(
                             before,policy=owner_policy(before,ids,self.cfg),
                             config=self.cfg)
                 print("A6B_R2_N1_GUARD_GREEN:old-radius-group-refused=PASS")
-                # Remove ONLY the runtime sequential gate as a real negative
-                # mutation; old grouping must now admit bytes that serial
-                # never accepts. No hand-edited expected tuples.
+                # Mutate ONLY the real singleton acceptance call. The
+                # formerly refused group then admits bytes unlike serial.
                 with patch.object(batch,"_contact_reservation_radius",
                                   return_value=25.),\
-                     patch.object(batch,"_verify_order_preserving_owner_step",
+                     patch.object(batch,"_check_replayed_owner_with_native_singleton",
                                   return_value=None):
                     unsafe=batch.apply_independent_short_batch(
                         before,policy=owner_policy(before,ids,self.cfg),
                         config=self.cfg)
                 self.assertTrue(unsafe.committed)
                 self.assertNotEqual(unsafe.fixed_xml,first.fixed_xml)
-                # Also kill a mutation of ONLY the independent runtime
-                # certificate: planner is still the old 25-mm grouping
-                # mutation and the fresh sequential gate remains present,
-                # but a forged true certificate must expose unsafe bytes.
-                with patch.object(batch,"_contact_reservation_radius",
-                                  return_value=25.),\
-                     patch.object(batch,"_strict_runtime_order_isolation",
-                                  return_value=True):
-                    certificate_mutant=batch.apply_independent_short_batch(
-                        before,policy=owner_policy(before,ids,self.cfg),
-                        config=self.cfg)
-                self.assertTrue(certificate_mutant.committed)
-                self.assertNotEqual(certificate_mutant.fixed_xml,
-                                    first.fixed_xml)
-                print("A6B_R2_N1_MUTANT_RED:strict-runtime-certificate-forced-true:"+
-                      "SHORT_BATCH_SEQUENTIAL_OWNER_QUALIFICATION_REFUSED missing")
-                print("A6B_R2_N1_MUTANT_RED:sequential-admission-removed:"+
-                      "SHORT_BATCH_SEQUENTIAL_OWNER_QUALIFICATION_REFUSED absent")
+                print("A6B_R3_N1_MUTANT_RED:singleton-owner-check-removed:"+
+                      "SHORT_BATCH_OWNER_NATIVE_SINGLETON_REFUSED absent")
+
+    def _n2_variant(self,third=False,mirror=False):
+        source=span_overlap_n2_fixture(third=third,mirror=mirror)
+        before=resolve_psi116(source,self.cfg)
+        rows=eligible_owners(before,self.cfg,3 if third else 2)
+        ids=[row["id"] for row in rows]
+        expected=(["SHORT:0:SHORT-C","SHORT:1:SHORT-A",
+                   "SHORT:2:SHORT-B"] if third else
+                  ["SHORT:0:SHORT-A","SHORT:1:SHORT-B"])
+        self.assertEqual(ids,expected)
+        serial,receipts=serial_with_refusals(source,ids,self.cfg)
+        self.assertEqual([r[1] for r in receipts],
+            (["COMMITTED","REFUSED","COMMITTED"] if third else
+             ["REFUSED","COMMITTED"]))
+        self.assertIn("NO_NEW_",receipts[-2 if third else 0][2])
+        with self.assertRaisesRegex(batch.ShortBatchRefused,
+            "SHORT_BATCH_OWNER_NATIVE_SINGLETON_REFUSED"):
+            batch.apply_independent_short_batch(
+                before,policy=owner_policy(before,ids,self.cfg),
+                config=self.cfg)
+        actual=batch.apply_short_batch_bisect(source,ids,config=self.cfg)
+        self.assertEqual(actual.fixed_xml,serial,
+            "N2 grouped/bisected bytes differ from sequential singleton")
+        self.assertEqual([r["status"] for r in actual.owner_results],
+                         [r[1] for r in receipts])
+        self.assertEqual([r["id"] for r in actual.owner_results],ids)
+        self.assertIn("SHORT-A",actual.skipped[0]["id"])
+        name=("CAB" if third else "AB")+("_MIRROR" if mirror else "")
+        print("A6B_R3_N2_GREEN:"+name+":native-singleton-refusal"+
+              ":group-bisect-bytes-EQUAL=PASS")
+        # Direct Python source-call mutation: the actual grouped engine must
+        # then publish both owners, violating the singleton refusal. The
+        # isolated source mutation runner confirms named RED+GREEN separately.
+        with patch.object(batch,"_check_replayed_owner_with_native_singleton",
+                          return_value=None):
+            unsafe=batch.apply_independent_short_batch(
+                before,policy=owner_policy(before,ids,self.cfg),
+                config=self.cfg)
+        self.assertTrue(unsafe.committed)
+        self.assertNotEqual(unsafe.fixed_xml,serial)
+        print("A6B_R3_N2_MUTANT_RED:"+name+":"+
+              "SHORT_BATCH_OWNER_NATIVE_SINGLETON_REFUSED absent")
+
+    def test_n2_ab_span_overlap_owner_postapply_refusal(self):
+        self._n2_variant()
+
+    def test_n2_cab_z_axis_span_overlap_owner_postapply_refusal(self):
+        self._n2_variant(third=True)
+
+    def test_n2_ab_mirrored_span_overlap_owner_postapply_refusal(self):
+        self._n2_variant(mirror=True)
 
     def test_overlapping_owner_admission_mutant_red(self):
         before=resolve_psi116(dense_fixture(2),self.cfg)
