@@ -209,6 +209,45 @@ def owner_footprint(before, row, config):
     return frozenset(contact)
 
 
+def _strict_runtime_order_isolation(before, rows, config):
+    """Independent runtime proof that no prior short move can affect a peer.
+
+    Unlike planner/owner_footprint this does NOT call the grouping-radius
+    helper: removing/weakening that planner guard cannot manufacture this
+    certificate. Recompute full finite/positive closure + contact reservation
+    from the ORIGINAL current document. Any common record, including a third
+    branch contacted by two owners, forces fresh sequential owner admission.
+    A certified disjoint group has no path by which up to 6mm of motion by
+    either owner could introduce a new physical <=25mm competitor.
+    """
+    nodes=_records(before)
+    by_key={n.key:n for n in nodes}
+    radius=(max(25.,config.joint_repair_threshold_mm,
+                config.connection_tolerance_mm)+
+            2*(config.short_span_threshold_mm+
+               config.connection_tolerance_mm))
+    zones=[]
+    for row in rows:
+        branch=before.document.branches[row["branchIndex"]]
+        seed={n.key for n in branch.nodes}
+        seed.update(row["nodeKeys"])
+        seed.update((row["leftKey"],row["rightKey"]))
+        _require(all(k in by_key for k in seed),
+                 "SHORT_BATCH_RUNTIME_CERTIFICATE_SOURCE_MISSING")
+        reach=_expand_owner_closure_keys(before,seed,config)
+        zone=set(reach)
+        for n in nodes:
+            if n.key in zone or not n.position:continue
+            if any(by_key[k].position and
+                   n.position.distance_to(by_key[k].position)<=radius+1e-9
+                   for k in reach):
+                zone.add(n.key)
+        if any(zone.intersection(other) for other in zones):
+            return False
+        zones.append(zone)
+    return True
+
+
 def assert_independent(before, rows, config):
     footprints=[owner_footprint(before,row,config) for row in rows]
     for index,keys in enumerate(footprints):
@@ -332,7 +371,8 @@ def _verify_order_preserving_owner_step(prior_xml, request, expected_xml, config
         raise ShortBatchRefused(refusal) from error
 
 
-def _replay_owner_revisions(before,operations,requests,candidate_xml,config):
+def _replay_owner_revisions(before,operations,requests,candidate_xml,config,
+                            *,strictly_isolated=False):
     """Exact sequential per-owner hashes from group-authorized operations.
 
     This is a lightweight deterministic XML field replay, NOT another native
@@ -388,7 +428,8 @@ def _replay_owner_revisions(before,operations,requests,candidate_xml,config):
                  len(removed_keys)==len(request["nodeKeys"]),
                  "SHORT_BATCH_OWNER_REPLAY_REMOVAL_MISMATCH")
         current=_serialize(root,before.document.namespace)
-        _verify_order_preserving_owner_step(prior_xml,request,current,config)
+        if not strictly_isolated:
+            _verify_order_preserving_owner_step(prior_xml,request,current,config)
         revisions.append({
             "id":owner,"sourceSha256":source_sha,
             "fixedSha256":sha256(current.encode("utf-8")).hexdigest(),
@@ -630,12 +671,24 @@ def apply_independent_short_batch(
     _require(len(owners)==len(rows) and
              sum(x["operationCount"] for x in owners)==len(operations),
              "SHORT_BATCH_PER_OWNER_ACCOUNTING_REJECTED")
+    strictly_isolated=_strict_runtime_order_isolation(before,rows,config)
     revisions=_replay_owner_revisions(
-        before,candidate.operations,policy.short_element_requests,final_xml,config)
+        before,candidate.operations,policy.short_element_requests,
+        final_xml,config,strictly_isolated=strictly_isolated)
     _require(len(revisions)==len(owners) and
              [x["id"] for x in revisions]==[x["id"] for x in owners],
              "SHORT_BATCH_OWNER_REVISION_CENSUS_MISMATCH")
-    candidate=replace(candidate,owner_evidence=owners,
+    candidate=replace(candidate,
+                      checks=candidate.checks+(ValidationCheck(
+                          "ORDER_PRESERVING_OWNER_ADMISSION",True,True,
+                          "Every owner is qualified on earlier-owner state, or"
+                          " an independent strict isolation certificate proves"
+                          " no prior move can alter a later owner's contacts.",
+                          details={"mode":"STRICT_DISJOINT_RUNTIME_CERTIFICATE"
+                                   if strictly_isolated else
+                                   "FRESH_SEQUENTIAL_OWNER_REQUALIFICATION",
+                                   "ownerCount":len(rows)}),),
+                      owner_evidence=owners,
                       owner_revisions=revisions,
                       owner_footprints=tuple({
                           "id":row["id"],"keys":sorted(footprints_by_owner[row["id"]])
