@@ -16,12 +16,11 @@ const between=(start,end)=>{
 };
 const publish=between('  async function publishShortBulk(', '  /** All short-bulk publication paths');
 const wrapper=between('  async function publishShortBulkGuarded(', '  async function dropShortElements()');
+const settle=between('export async function settleShortBulkPublication(', 'async function sha256(');
 
-function assertReleaseLast(body){
-  const release=/state\.hubRevision=state\.revision;/g;
-  const found=[...body.matchAll(release)];
-  assert.equal(found.length,1,'one and only one source-release promotion');
-  const at=found[0].index;
+function assertReleaseLast(body,finalizer=settle){
+  const call=body.lastIndexOf('await settleShortBulkPublication(');
+  assert.ok(call>=0,'workspace MUST invoke the audited release-last finalizer');
   for(const required of [
     "parseOccurrenceScene(next.source.sourceText",
     'canvas.setScene(scene);sourceMeta();',
@@ -30,30 +29,42 @@ function assertReleaseLast(body){
     "setFixStatus(message,",
     'showShortBulkAudit(outcome);',
     'updateStatus(',
-    'await refreshPublishedEvidence(',
+    "refreshEvidence:()=>refreshPublishedEvidence(",
+  ]){
+    const at=body.indexOf(required);
+    assert.ok(at>=0&&at<call,
+      'workspace finalizer must follow every prior potentially throwing step: '+required);
+  }
+  const release=/state\\.hubRevision=state\\.revision;/g;
+  const found=[...finalizer.matchAll(release)];
+  assert.equal(found.length,1,'one and only one source-release promotion');
+  const at=found[0].index;
+  for(const required of [
+    'await refreshEvidence();','renderTerminal();',
     "state.hubParity?.status==='EQUAL'&&analysisProofCurrent()",
   ]){
-    const position=body.indexOf(required);
-    assert.ok(position>=0&&position<at,
-      'hub release must follow every throwing step: '+required);
+    const index=finalizer.indexOf(required);
+    assert.ok(index>=0&&index<at,
+      'finalizer release must FOLLOW evidence and final rendering: '+required);
   }
-  assert.match(body.slice(at),/^state\.hubRevision=state\.revision;\s*}\s*$/,
-    'hub revision must be assigned by the FINAL statement, without any later work');
+  assert.match(finalizer.slice(at),/^state\\.hubRevision=state\\.revision;\\s*}\\s*$/,
+    'finalizer promotion is the last statement with no further throwable work');
   assert.ok(body.indexOf('state.hubRevision=null;')<body.indexOf('state.source=next.source;'),
-    'any previously valid release must be revoked before source mutation');
-  assert.match(body,/outcome\?\.hubMismatch===true/,
-    'UI may not discard the Worker-side HOLD witness');
+    'previous authority must be revoked before source mutation');
+  assert.match(body,/outcome\\?\\.hubMismatch===true/,
+    'UI must retain Worker explicit mismatch HOLD');
 }
+
 test('hub revision is released LAST after canvas, reconciliation, status and evidence recheck',()=>{
   assertReleaseLast(publish);
 });
 test('KILL in-memory RELEASE-EARLY mutant: moving promotion before canvas must fail source-order proof',()=>{
   const release='state.hubRevision=state.revision;';
-  const mutant=publish.replace(release,'').replace(
-    'canvas.setScene(scene);sourceMeta();',
-    release+'\n      canvas.setScene(scene);sourceMeta();');
+  const mutant=settle.replace(release,'').replace(
+    'if(outcome.latest&&done&&!hubMismatch)await refreshEvidence();',
+    release+'\n  if(outcome.latest&&done&&!hubMismatch)await refreshEvidence();');
   let killed=false;
-  try{assertReleaseLast(mutant);}catch(error){
+  try{assertReleaseLast(publish,mutant);}catch(error){
     assert.equal(error.name,'AssertionError');
     killed=true;
   }
