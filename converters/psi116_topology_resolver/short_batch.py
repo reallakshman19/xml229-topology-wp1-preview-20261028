@@ -302,9 +302,13 @@ def _check_replayed_owner_with_native_singleton(prior_xml,request,expected_xml,c
 def _replay_owner_revisions(before,operations,requests,candidate_xml,config):
     """Exact sequential per-owner hashes from group-authorized operations.
 
-    This is a lightweight deterministic XML field replay, NOT another native
-    transaction. Each removed/changed source key is independently accounted
-    and every intermediate XML revision is serialized in selection order.
+    Each removed/changed source key is independently accounted and every
+    intermediate XML revision is serialized in selection order. After EACH
+    owner, the unchanged native singleton transaction is actually rerun on
+    that owner’s prior XML to check every qualification, post-apply finding
+    and validation gate. It must accept and emit identical bytes; otherwise
+    the whole group is refused and bisected. This is intentionally more
+    expensive than the previous invalid distance-only certificate.
     The last byte string MUST equal the native group output.
     """
     root=_parse_clone(before.document.source_text)
@@ -395,8 +399,11 @@ def apply_independent_short_batch(
     """One atomic, source-bound transaction for 2..32 disjoint owners.
 
     On ANY failure, raise ShortBatchRefused and return NO result/XML. The
-    original file is never written. The old exactly-one entrypoint is NOT
-    called for this group and is unchanged.
+    original file is never written. The historical exactly-one
+    implementation is NOT EDITED; it IS called read-only for every owner's
+    admission against its true previous-revision XML. Its authority is not
+    bypassed by the group and the grouping-only distance check proves
+    neither finding safety nor speed.
     """
     config=config or ResolverConfig()
     config.validate()
