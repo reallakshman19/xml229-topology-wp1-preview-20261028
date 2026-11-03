@@ -32,6 +32,30 @@ jobs:
           set -euo pipefail
           node --check tabs/topology-workspace/workspace-app.mjs
           node --test tests/short-bulk-groups.test.mjs
+      - name: Windows-style CRLF Node regression (checkout conversion)
+        run: |
+          set -euo pipefail
+          backup="$(mktemp -d)"
+          cp tests/short-bulk-groups.test.mjs "$backup/groups.test.mjs"
+          cp tabs/topology-workspace/short-bulk-groups.mjs "$backup/groups.mjs"
+          restore() {
+            cp "$backup/groups.test.mjs" tests/short-bulk-groups.test.mjs
+            cp "$backup/groups.mjs" tabs/topology-workspace/short-bulk-groups.mjs
+            rm -rf "$backup"
+          }
+          trap restore EXIT
+          python3 - <<'PY'
+          from pathlib import Path
+          for name in ("tests/short-bulk-groups.test.mjs",
+                       "tabs/topology-workspace/short-bulk-groups.mjs"):
+              path=Path(name)
+              data=path.read_bytes().replace(b"\r\n",b"\n")
+              path.write_bytes(data.replace(b"\n",b"\r\n"))
+              assert b"\r\n" in path.read_bytes()
+          print("A6B_R2_WINDOWS_CRLF_SOURCE=CONFIRMED")
+          PY
+          node --test tests/*.test.mjs
+          echo 'A6B_R2_WINDOWS_CRLF_NODE=PASS'
       - name: Immutable pinned XCU reader
         run: bash tools/fetch-uxml-reader.sh dist
       - name: Independent canonical batch sourceRef loss and parity
