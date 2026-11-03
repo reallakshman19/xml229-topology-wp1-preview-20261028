@@ -12,7 +12,11 @@ from dataclasses import replace
 from hashlib import sha256
 import inspect
 import textwrap
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
+from collections import defaultdict
+from functools import wraps
+import gc
+import importlib
 import os
 from pathlib import Path
 import subprocess
@@ -51,6 +55,58 @@ def check_refusal(source, policy, cfg):
         return type(exc).__name__+":"+str(exc)
     return "COMMITTED" if result.committed else (
         "REFUSED:"+json.dumps(result.reject_reasons))
+
+
+@contextmanager
+def instrument_digest_transactions():
+    """Measurement ONLY: wrappers restore every real function on exit.
+
+    Timings overlap (memo.get includes deepcopy). Keep individual counts
+    and wall timings, never sum nested phases into an elapsed total.
+    """
+    if os.environ.get("UXML_SHORT_MEMO_DIGEST_PROFILE")!="1":
+        yield lambda:{}
+        return
+    short_module=importlib.import_module("psi116_topology_resolver.short_elements")
+    measurements=defaultdict(lambda:{"calls":0,"ns":0})
+    gc_started=[]
+    def timed(label,original):
+        @wraps(original)
+        def wrapped(*args,**kwargs):
+            started=time.perf_counter_ns()
+            try:
+                return original(*args,**kwargs)
+            finally:
+                item=measurements[label]
+                item["calls"]+=1
+                item["ns"]+=time.perf_counter_ns()-started
+        return wrapped
+    def on_gc(phase,info):
+        if phase=="start":
+            gc_started.append(time.perf_counter_ns())
+        elif phase=="stop" and gc_started:
+            elapsed=time.perf_counter_ns()-gc_started.pop()
+            item=measurements["gc_collections"]
+            item["calls"]+=1
+            item["ns"]+=elapsed
+    with ExitStack() as stack:
+        stack.enter_context(patch.object(memo,"_document_digest",
+            timed("document_digest",memo._document_digest)))
+        stack.enter_context(patch.object(memo,"deepcopy",
+            timed("deepcopy",memo.deepcopy)))
+        stack.enter_context(patch.object(memo.ShortMemo,"get",
+            timed("memo_get",memo.ShortMemo.get)))
+        stack.enter_context(patch.object(memo.ShortMemo,"put",
+            timed("memo_put",memo.ShortMemo.put)))
+        stack.enter_context(patch.object(short_module,"apply_short_element",
+            timed("real_native_short_transaction",short_module.apply_short_element)))
+        gc.callbacks.append(on_gc)
+        stack.callback(gc.callbacks.remove,on_gc)
+        yield lambda:{name:{"calls":data["calls"],
+                             "totalMs":round(data["ns"]/1e6,3),
+                             "meanMs":round(data["ns"]/1e6/max(data["calls"],1),3)}
+                      for name,data in sorted(measurements.items())}
+
 
 
 class ShortMemoSafety(unittest.TestCase):
@@ -502,51 +558,59 @@ class ShortMemoSafety(unittest.TestCase):
                     source=Path(tmp)/"source.xml"; source.write_bytes(base)
                     outcomes=[]
                     started=time.perf_counter()
-                    with memo.memo_session("selected-"+str(count),enabled=enabled):
-                        for identifier in selected:
-                            old=source.read_bytes()
-                            cli=subprocess.run(
-                                ["node",str(reader/"tools"/"psi116-to-uxml.mjs"),str(source)],
-                                cwd=reader,capture_output=True,text=True,timeout=120)
-                            self.assertEqual(cli.returncode,0,cli.stderr)
-                            uxml=json.loads(cli.stdout)
-                            before=resolve_psi116(source,cfg)
-                            row=next(r for r in short_elements(before.document,cfg)
-                                     if r["id"]==identifier)
-                            self.assertTrue(row["eligible"],identifier)
-                            request={k:row[k] for k in ("id","sourceSha256","nodeKeys")}
-                            policy=TransactionPolicy(selected_action_ids=(identifier,),
-                                                     short_element_requests=(request,))
-                            direct=apply_topofix_transaction(before,policy=policy,config=cfg)
-                            canonical=export_edit_ops(uxml,policy=policy,
-                                                      source_name=str(source),config=cfg)
-                            patched=apply_edit_ops(source,uxml,canonical,config=cfg)
-                            self.assertTrue(direct.committed and patched and patched.committed)
-                            self.assertEqual(compare_hub_patch(direct,patched),[])
-                            self.assertEqual(direct.fixed_xml,patched.fixed_xml)
-                            self.assertEqual(source.read_bytes(),old)
-                            txn=patched.transaction_payload()
-                            # Temporary-directory paths are distinct between
-                            # ON/OFF invocations. Only the chosen file path
-                            # varies, not any source bytes or authority proof.
-                            txn["source"]["path"]="<synthetic-source>"
-                            outcomes.append({
-                                "xml":patched.fixed_xml,
-                                "txn":txn,
-                                "validation":patched.validation_payload(),
-                                "ops":canonical["ops"],
-                                "refusalForForgedPolicy":check_refusal(
-                                    patched.fixed_xml,TransactionPolicy(
-                                        selected_action_ids=(identifier,),
-                                        short_element_requests=({**request,
-                                            "nodeKeys":["FORGED_KEY"]},)),cfg),
-                            })
-                            source.write_bytes(patched.fixed_xml.encode("utf-8"))
-                        counters=memo.stats()
+                    with instrument_digest_transactions() as profile:
+                        with memo.memo_session("selected-"+str(count),enabled=enabled):
+                            for identifier in selected:
+                                old=source.read_bytes()
+                                cli=subprocess.run(
+                                    ["node",str(reader/"tools"/"psi116-to-uxml.mjs"),str(source)],
+                                    cwd=reader,capture_output=True,text=True,timeout=120)
+                                self.assertEqual(cli.returncode,0,cli.stderr)
+                                uxml=json.loads(cli.stdout)
+                                before=resolve_psi116(source,cfg)
+                                row=next(r for r in short_elements(before.document,cfg)
+                                         if r["id"]==identifier)
+                                self.assertTrue(row["eligible"],identifier)
+                                request={k:row[k] for k in ("id","sourceSha256","nodeKeys")}
+                                policy=TransactionPolicy(selected_action_ids=(identifier,),
+                                                         short_element_requests=(request,))
+                                direct=apply_topofix_transaction(before,policy=policy,config=cfg)
+                                canonical=export_edit_ops(uxml,policy=policy,
+                                                          source_name=str(source),config=cfg)
+                                patched=apply_edit_ops(source,uxml,canonical,config=cfg)
+                                self.assertTrue(direct.committed and patched and patched.committed)
+                                self.assertEqual(compare_hub_patch(direct,patched),[])
+                                self.assertEqual(direct.fixed_xml,patched.fixed_xml)
+                                self.assertEqual(source.read_bytes(),old)
+                                txn=patched.transaction_payload()
+                                # Temporary-directory paths are distinct between
+                                # ON/OFF invocations. Only the chosen file path
+                                # varies, not any source bytes or authority proof.
+                                txn["source"]["path"]="<synthetic-source>"
+                                outcomes.append({
+                                    "xml":patched.fixed_xml,
+                                    "txn":txn,
+                                    "validation":patched.validation_payload(),
+                                    "ops":canonical["ops"],
+                                    "refusalForForgedPolicy":check_refusal(
+                                        patched.fixed_xml,TransactionPolicy(
+                                            selected_action_ids=(identifier,),
+                                            short_element_requests=({**request,
+                                                "nodeKeys":["FORGED_KEY"]},)),cfg),
+                                })
+                                source.write_bytes(patched.fixed_xml.encode("utf-8"))
+                                counters=memo.stats()
                     tracks[enabled]={"outcomes":outcomes,
                                      "elapsedSeconds":round(time.perf_counter()-started,4),
-                                     "memoStats":counters}
+                                     "memoStats":counters,"instrument":profile()}
             self.assertEqual(tracks[True]["outcomes"],tracks[False]["outcomes"])
+            if os.environ.get("UXML_SHORT_MEMO_DIGEST_PROFILE")=="1":
+                print("UXML_SHORT_MEMO_DIGEST_PROFILE_"+str(count)+"="+json.dumps({
+                    "owners":count,
+                    "OFF":tracks[False]["instrument"],
+                    "ON":tracks[True]["instrument"],
+                    "wallOffSec":tracks[False]["elapsedSeconds"],
+                    "wallOnSec":tracks[True]["elapsedSeconds"]},sort_keys=True))
             print("UXML_SHORT_MEMO_EQUIVALENT_"+str(count)+"="+json.dumps({
                 "owners":count,"memoOffSeconds":tracks[False]["elapsedSeconds"],
                 "memoOnSeconds":tracks[True]["elapsedSeconds"],

@@ -59,9 +59,24 @@ jobs:
             echo 'SYNTHETIC_BATCH_BASELINE_SKIP_REFUSED' >&2
             exit 1
           fi
+          UXML_SHORT_BATCH_FEASIBILITY=1 python3 -B -m unittest discover -s tests -p bench_uxml_short_batch_feasibility.py -v 2>&1 | tee /tmp/topofix-a6b-step1-feasibility.log
+          if grep -Fq 'skipped' /tmp/topofix-a6b-step1-feasibility.log; then
+            echo 'A6B_FEASIBILITY_SKIP_REFUSED' >&2
+            exit 1
+          fi
+          A6B_ENGINE_BENCH=1 python3 -B -m unittest discover -s tests -p bench_short_batch_engine.py -v 2>&1 | tee /tmp/topofix-a6b-engine-serial-equivalence.log
+          if grep -Fq 'skipped' /tmp/topofix-a6b-engine-serial-equivalence.log; then
+            echo 'A6B_ENGINE_EQUIVALENCE_SKIP_REFUSED' >&2
+            exit 1
+          fi
+          A6B_ENGINE_QUAL=1 python3 -B -m unittest discover -s tests -p bench_short_batch_uxml.py -v 2>&1 | tee /tmp/topofix-a6b-batch-uxml-witness.log
+          if grep -Fq 'skipped' /tmp/topofix-a6b-batch-uxml-witness.log; then
+            echo 'A6B_UXML_BATCH_QUALIFICATION_SKIP_REFUSED' >&2
+            exit 1
+          fi
           python3 -B tools/short-memo-qualification.py --enabled off
           python3 -B tools/short-memo-qualification.py --enabled on
-          UXML_SHORT_MEMO_EQUIVALENCE=1 python3 -B -m unittest discover -s tests -p test_uxml_short_memo.py -v 2>&1 | tee /tmp/topofix-short-memo-equivalence.log
+          UXML_SHORT_MEMO_EQUIVALENCE=1 UXML_SHORT_MEMO_DIGEST_PROFILE=1 python3 -B -m unittest discover -s tests -p test_uxml_short_memo.py -v 2>&1 | tee /tmp/topofix-short-memo-equivalence.log
           if grep -Fq 'skipped' /tmp/topofix-short-memo-equivalence.log; then
             echo 'SHORT_MEMO_EQUIVALENCE_SKIP_REFUSED' >&2
             exit 1
@@ -77,6 +92,8 @@ jobs:
           npx playwright install --with-deps chromium
           node --test tests/uxml-evidence-refresh.browser.mjs
           node --test tests/uxml-short-direct-apply.browser.mjs
+          node --test tests/uxml-short-batch.browser.mjs
+          node --test tests/uxml-short-batch-ui.browser.mjs
           node --test tests/uxml-operations-preview.browser.mjs
           node --test tests/uxml-ui-different.browser.mjs
           node tests/audit-browser.mjs

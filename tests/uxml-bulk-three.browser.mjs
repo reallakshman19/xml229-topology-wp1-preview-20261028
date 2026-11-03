@@ -101,6 +101,9 @@ async function exercise(mismatchAt=Infinity){
   const initial=await page.evaluate(()=>window.__triple.workspace.getState());
   assert.equal(initial.hubParity,'EQUAL','3-branch source hub parity required');
   await page.locator('[data-select-short]').click();
+  // This regression deliberately measures three separate original-source
+  // transactions; keep OFF even when the A6b comparison defaults ON.
+  await page.locator('[data-short-independent]').uncheck();
   await page.locator('[data-select-gaskets]').click();
   assert.equal(await page.locator('[data-short-index]:checked').count(),3,
     'all three generated qualified short owners selected');

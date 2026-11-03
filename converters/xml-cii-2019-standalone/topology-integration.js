@@ -14,6 +14,9 @@ const TOPOLOGY_PACKAGE_FILES = Object.freeze([
   'connection_ports.py',
   'short_elements.py',
   'short_memo.py',
+  'short_batch.py',
+  'short_batch_uxml.py',
+  'short_batch_stage.py',
   'lineage.py',
   'uxml_adapter.py',
   'uxml_compare.py',
@@ -94,6 +97,25 @@ if hub_doc is not None and hub_parity["status"] == "EQUAL" and not job_generate_
 # When EQUAL, publish the UXML-fed Python findings and plan, not the direct copies.
 published = adapted if hub_doc is not None and hub_parity["status"] == "EQUAL" else result
 findings_payload = published.findings_payload(cfg)
+# A6b: give the browser the EXACT native source-footprint graph from a
+# READ-ONLY Analyze. Reordering is forbidden without these source-bound
+# keys; the Apply engine independently recomputes and refuses overlaps.
+# Never compute them from untrusted UXML JSON or a guessed UI radius.
+if not job_generate_topofix:
+    from psi116_topology_resolver.short_batch import owner_footprint
+    native_short_rows = result.findings_payload(cfg).get("shortElements", [])
+    footprints = []
+    for row in native_short_rows:
+        if row.get("eligible") is True:
+            footprints.append({
+                "id": row["id"],
+                "keys": sorted(owner_footprint(result, row, cfg)),
+            })
+    findings_payload["shortBatchPlanning"] = {
+        "schema": "psi116-short-group-footprints/v1",
+        "sourceSha256": result.document.source_sha256,
+        "owners": footprints,
+    }
 preview_request = json.loads(job_connection_preview_json)
 if preview_request:
     from psi116_topology_resolver.manual_connections import preview_connection
@@ -219,6 +241,29 @@ Path(job_topology_status_path).write_text(
 )
 `;
 
+const SHORT_BATCH_SNIPPET = `
+from pathlib import Path
+import json
+from psi116_topology_resolver.short_batch_stage import run_explicit_batch_job
+run_explicit_batch_job(
+    str(job_topology_input_path),
+    json.loads(job_topology_uxml_json),
+    list(job_topology_action_ids),
+    json.loads(job_short_elements_json),
+    {
+        "findings":job_topology_findings_path,
+        "plan":job_topology_plan_path,
+        "transaction":job_topology_transaction_path,
+        "validation":job_topology_validation_path,
+        "fixed":job_topology_fixed_path,
+        "lineage":job_topology_lineage_path,
+        "handoff":job_topology_handoff_path,
+        "postFindings":job_topology_post_findings_path,
+        "postPlan":job_topology_post_plan_path,
+        "status":job_topology_status_path,
+    },
+)
+`;
 let topologyPackageLoaded = false;
 
 function text(value) {
@@ -293,6 +338,7 @@ export async function runPsi116TopologyStage(pyodide, job, inputPath, jobDir, st
   const options = job.options || {};
   const generateTopoFix = options.generateTopoFix === true;
   const useTopoFixForCii = options.useTopoFixForCii === true;
+  const explicitBatch = options.topologyShortBatchExplicit === true;
   const actionIds = Array.isArray(options.topologyActionIds)
     ? options.topologyActionIds.map((value) => text(value).trim()).filter(Boolean)
     : [];
@@ -302,6 +348,17 @@ export async function runPsi116TopologyStage(pyodide, job, inputPath, jobDir, st
   }
   if (useTopoFixForCii && !generateTopoFix) {
     throw new Error('Using TopoFix for CII requires Generate TopoFix XML to be enabled.');
+  }
+  // A6b is a separate explicitly selected Pre-Final group API. Historical
+  // one-owner, CII, Final and topology Analyze routes are unchanged.
+  if(explicitBatch){
+    const requested=options.topologyShortElementRequests;
+    if(!generateTopoFix||job.topologyPreFinalOnly!==true||useTopoFixForCii||
+       !Array.isArray(requested)||requested.length<2||requested.length>32||
+       requested.length!==actionIds.length||
+       actionIds.some((id,i)=>id!==requested[i]?.id)||
+       (options.topologyJointRepairs||[]).length)
+      throw Error('SHORT_BATCH_EXPLICIT_PREFINAL_GROUP_REQUIRED');
   }
 
   const stem = safeStem(job.sourceName);
@@ -343,7 +400,12 @@ export async function runPsi116TopologyStage(pyodide, job, inputPath, jobDir, st
   // Every ordinary one-owner run uses a fresh, disposable jobDir identity.
   const shortRequests=Array.isArray(options.topologyShortElementRequests)?
     options.topologyShortElementRequests:[];
-  const memoEnabled=generateTopoFix&&shortRequests.length===1&&
+  // Explicit A6b group uses the SAME full-UXMl+source-bound resolver memo
+  // within this one job: initial hub parity and canonical qualification
+  // share one actual adapter pass. Native vs UXML batch transactions remain
+  // independent; no group transaction result is memoized.
+  const memoEnabled=generateTopoFix&&
+    (shortRequests.length===1||explicitBatch)&&
     options.topologyShortMemo!==false;
   const crossOwnerMemo=memoEnabled&&options.topologyBulkSession===true&&
     typeof options.topologyShortMemoSession==='string'&&
@@ -357,7 +419,7 @@ start_memo(topology_short_memo_token, enabled=topology_short_memo_enabled)`);
   const pythonStart=performance.now();
   let pythonElapsed=0;
   try {
-    await pyodide.runPythonAsync(TOPOLOGY_SNIPPET);
+    await pyodide.runPythonAsync(explicitBatch?SHORT_BATCH_SNIPPET:TOPOLOGY_SNIPPET);
     pythonElapsed=performance.now()-pythonStart;
   } catch(error) {
     pyodide.runPython('from psi116_topology_resolver.short_memo import clear_memo; clear_memo()');

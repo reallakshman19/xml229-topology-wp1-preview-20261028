@@ -198,6 +198,7 @@ test('injected Worker: short-element bulk publishes new-revision evidence, stale
     try{
       await loadAndAnalyze(page,shortXML);
       await page.locator('[data-select-short]').click();
+      await page.locator('[data-short-independent]').uncheck();
       const shortApply=page.locator('[data-run-short-drop]');
       assert.equal(await shortApply.isDisabled(),true);
       assert.match(await shortApply.getAttribute('title'),/Select at least one eligible short element/);
@@ -273,6 +274,7 @@ test('revision-race negative: in-flight read-only recheck cannot enable evidence
  try{
    await loadAndAnalyze(page,shortXML);
    await page.locator('[data-select-short]').click();
+   await page.locator('[data-short-independent]').uncheck();
    await page.locator('[data-select-gaskets]').click();
    assert.equal(await page.locator('[data-short-index]:checked').count(),1);
    await page.locator('[data-run-short-drop]').click();
@@ -467,6 +469,7 @@ async function prepareHubShort(page){
   assert.equal(await short.isEnabled(),true,'EQUAL hub must enable short drop preview');
   assert.equal(await short.getAttribute('title'),null);
   await short.click();
+  await page.locator('[data-short-independent]').uncheck();
   await page.locator('[data-select-gaskets]').click();
   assert.equal(await page.locator('[data-short-index]:checked').count(),1);
   const apply=page.locator('[data-run-short-drop]');
@@ -497,6 +500,7 @@ test('hub deleted-owner raw-only children: canonical removedWithRecord disclosed
       ?.textContent?.includes('Authoritative topology analysis complete.'),
       null,{timeout:120000});
     await page.locator('[data-select-short]').click();
+    await page.locator('[data-short-independent]').uncheck();
     await page.locator('[data-select-gaskets]').click();
     assert.equal(await page.locator('[data-short-index]:checked').count(),1);
     assert.equal(await page.locator('[data-run-short-drop]').isEnabled(),true);
@@ -582,6 +586,7 @@ async function prepareTwoShort(page){
     ?.textContent?.includes('Authoritative topology analysis complete.'),
     null,{timeout:120000});
   await page.locator('[data-select-short]').click();
+  await page.locator('[data-short-independent]').uncheck();
   const candidates=page.locator('[data-short-index]:not([disabled])');
   assert.ok(await candidates.count()>=2,
     'two independent selected synthetic owners must qualify');

@@ -1,0 +1,68 @@
+name: A6b short batch engine qualification
+on:
+  pull_request:
+    paths:
+      - 'converters/psi116_topology_resolver/short_batch.py'
+      - 'tests/test_short_batch_engine.py'
+      - '.github/workflows/a6b-engine-check.yml'
+  push:
+    branches:
+      - 'feat/uxml-short-memo-digest-20261102'
+jobs:
+  short-batch-engine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Atomic, source-bound, serial-equivalent engine tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}/converters
+        run: |
+          set -euo pipefail
+          python3 -B -m unittest discover -s tests -p 'test_short_batch_engine.py' -v
+          python3 -B -m unittest discover -s tests -p 'test_short_batch_graph.py' -v
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Owner-accounting UI batch guards and unchanged workspace syntax
+        run: |
+          set -euo pipefail
+          node --check tabs/topology-workspace/workspace-app.mjs
+          node --test tests/short-bulk-groups.test.mjs
+      - name: Windows-style CRLF Node regression (checkout conversion)
+        run: |
+          set -euo pipefail
+          backup="$(mktemp -d)"
+          cp tests/short-bulk-groups.test.mjs "$backup/groups.test.mjs"
+          cp tabs/topology-workspace/short-bulk-groups.mjs "$backup/groups.mjs"
+          restore() {
+            cp "$backup/groups.test.mjs" tests/short-bulk-groups.test.mjs
+            cp "$backup/groups.mjs" tabs/topology-workspace/short-bulk-groups.mjs
+            rm -rf "$backup"
+          }
+          trap restore EXIT
+          python3 - <<'PY'
+          from pathlib import Path
+          for name in ("tests/short-bulk-groups.test.mjs",
+                       "tabs/topology-workspace/short-bulk-groups.mjs"):
+              path=Path(name)
+              data=path.read_bytes().replace(b"\r\n",b"\n")
+              path.write_bytes(data.replace(b"\n",b"\r\n"))
+              assert b"\r\n" in path.read_bytes()
+          print("A6B_R2_WINDOWS_CRLF_SOURCE=CONFIRMED")
+          PY
+          node --test tests/*.test.mjs
+          echo 'A6B_R2_WINDOWS_CRLF_NODE=PASS'
+      - name: Immutable pinned XCU reader
+        run: bash tools/fetch-uxml-reader.sh dist
+      - name: Independent canonical batch sourceRef loss and parity
+        env:
+          PYTHONPATH: ${{ github.workspace }}/converters
+          XCU_UXML_ROOT: ${{ github.workspace }}/dist/vendor/uxml
+          A6B_ENGINE_QUAL: '1'
+        run: |
+          set -euo pipefail
+          python3 -B -m unittest discover -s tests -p 'bench_short_batch_uxml.py' -v

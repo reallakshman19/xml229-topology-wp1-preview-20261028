@@ -35,8 +35,17 @@ async function digestXml(text) {
 export async function runShortBulk({
   source,shortElements,selectedIds,runEngine,hubEnabled=false,
   isCurrent=()=>true,onCheckpoint=()=>{},onProgress=()=>{},
-  hash=digestXml,shortMemoEnabled=true,
+  hash=digestXml,shortMemoEnabled=true,enableIndependentGroups=false,
+  shortBatchPlanning=null,shortBatchSourceRecords=null,
 }){
+  if(enableIndependentGroups){
+    const {runIndependentShortBulk}=await import('./short-bulk-groups.mjs');
+    return runIndependentShortBulk({source,shortElements,selectedIds,runEngine,
+      hubEnabled,isCurrent,onCheckpoint,onProgress,hash,
+      planning:shortBatchPlanning,sourceRecords:shortBatchSourceRecords,
+      runLegacy:options=>runShortBulk({...options,
+        shortMemoEnabled,enableIndependentGroups:false})});
+  }
   if(!source?.sourceSha256||typeof source.sourceText!=='string'||
      !Array.isArray(shortElements)||!Array.isArray(selectedIds)||
      new Set(selectedIds).size!==selectedIds.length)
