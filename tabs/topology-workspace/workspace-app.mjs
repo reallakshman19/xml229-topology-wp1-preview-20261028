@@ -12,6 +12,49 @@ import {secondPassHTML} from './second-pass.mjs';
 import {enqueueManualFix,runManualFixQueue} from './manual-fix-queue.mjs';
 import {trialRemaining,trialGroup,trialGroupTitles,trialGroupFilters,trialValidationSummary,trialDisabledReason} from './trial-clarity.mjs';
 
+/** Audited lane-A workspace seams; exercised in Node as well as Chromium.
+ * The caller cannot swap grouped dispatch, per-owner receipt or release timing
+ * without exercising these exact production helpers.
+ */
+export function shortBulkWorkspaceEngineArgs(options) {
+  return {
+    source:options.source,shortElements:options.shortElements,
+    selectedIds:options.selectedIds,runEngine:options.runEngine,
+    hubEnabled:options.hubEnabled,
+    enableIndependentGroups:options.independentShortGroups===true,
+    shortBatchPlanning:options.shortBatchPlanning,
+    shortBatchSourceRecords:options.shortBatchSourceRecords,
+    isCurrent:options.isCurrent,
+    onCheckpoint:options.onCheckpoint,
+    onProgress:options.onProgress,
+  };
+}
+export function shortBulkWorkspaceHistoryEntry(pass,index,total,reviews,resolutions) {
+  return {
+    sourceSha256:pass.sourceSha256,fixedSha256:pass.fixedSha256,
+    actionIds:[pass.id],operations:pass.ownerOperations||pass.transaction.operations,
+    ownerEvidence:pass.ownerEvidence||null,ownerRevision:pass.ownerRevision||null,
+    canonicalEditOps:pass.canonicalEditOps,validation:pass.validation.checks,
+    reviews:index===0?reviews:{},
+    resolvedConnections:index===total-1?resolutions:[],
+  };
+}
+export function shortBulkWorkspaceNeedsAnalysis(grouped,planning) {
+  return grouped===true&&!planning;
+}
+export async function settleShortBulkPublication({
+  state,outcome,done,hubMismatch,generation,refreshEvidence,
+  renderTerminal,analysisProofCurrent,
+}) {
+  // Release is LAST: no prior cached hubRevision can survive a failed
+  // working-copy parse, fresh evidence check, or terminal presentation.
+  if(outcome.latest&&done&&!hubMismatch)await refreshEvidence();
+  renderTerminal();
+  if(state.hubEnabled&&!hubMismatch&&generation===state.epoch&&
+     state.hubParity?.status==='EQUAL'&&analysisProofCurrent())
+    state.hubRevision=state.revision;
+}
+
 async function sha256(bytes) {
   const digest=await crypto.subtle.digest('SHA-256',bytes);
   return Array.from(new Uint8Array(digest),n=>n.toString(16).padStart(2,'0')).join('');
@@ -830,11 +873,8 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       state.gapReviews.clear();state.openCases.clear();
       query(root,'[data-short-preview]').textContent='';
       for(const [i,pass] of applied.entries()){
-        state.history.push({sourceSha256:pass.sourceSha256,fixedSha256:pass.fixedSha256,
-          actionIds:[pass.id],operations:pass.ownerOperations||pass.transaction.operations,
-          ownerEvidence:pass.ownerEvidence||null,ownerRevision:pass.ownerRevision||null,
-          canonicalEditOps:pass.canonicalEditOps,validation:pass.validation.checks,
-          reviews:i===0?reviews:{},resolvedConnections:i===applied.length-1?state.resolutions:[]});
+        state.history.push(shortBulkWorkspaceHistoryEntry(
+          pass,i,applied.length,reviews,state.resolutions));
       }
       state.revision+=applied.length;
       state.applied+=applied.length;
@@ -871,7 +911,9 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       (outcome.stopMessage?' · '+outcome.stopMessage:'')+
       (hubMismatch?' · last validated checkpoint retained; corrected downloads HELD.':
        done?' · validated XML, source-linked operations and lineage digests downloadable.':
-         ' · no XML changed.');
+         ' · no XML changed.')+
+      (done&&state.independentShortGroups?
+        ' · Another grouped Apply requires Analyze on the current XML; or switch grouping OFF.':'');
     query(root,'[data-progress]').textContent=message;
     setFixStatus(message,hubMismatch?'rejected':
       reason==='COMPLETE'&&done?'ready':done?'stopped':'rejected','drop');
@@ -880,19 +922,19 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       ' validated; '+skipped+' skipped/refused. Engineering review remains required.');
     // On a hub mismatch, do not reset the negative parity by reanalysing
     // the partially validated checkpoint until an explicit fresh Analyze.
-    if(outcome.latest&&done&&!hubMismatch)
-      await refreshPublishedEvidence(generation,state.revision,state.source);
-    // No preview heartbeat may overwrite a terminal Apply result. A later
-    // evidence mismatch is a HOLD, never an implied corrected download.
-    if(generation===state.epoch)
-      query(root,'[data-progress]').textContent=
-        state.hubEnabled&&state.hubParity?.status!=='EQUAL'?
-          message+' · HUB EVIDENCE HOLD: re-analyse before download.':message;
-    // FINAL statement. Never add any throwable UI work after hub release:
-    // even CANCELLED outcomes must finish all writes/recheck first.
-    if(state.hubEnabled&&!hubMismatch&&generation===state.epoch&&
-       state.hubParity?.status==='EQUAL'&&analysisProofCurrent())
-      state.hubRevision=state.revision;
+    await settleShortBulkPublication({
+      state,outcome,done,hubMismatch,generation,
+      refreshEvidence:()=>refreshPublishedEvidence(
+        generation,state.revision,state.source),
+      renderTerminal:()=>{
+        // Rendering and working-copy evidence remain BEFORE release.
+        if(generation===state.epoch)
+          query(root,'[data-progress]').textContent=
+            state.hubEnabled&&state.hubParity?.status!=='EQUAL'?
+              message+' · HUB EVIDENCE HOLD: re-analyse before download.':message;
+      },
+      analysisProofCurrent,
+    });
   }
 
   /** All short-bulk publication paths (finish, engine ERROR, Cancel) go here.
@@ -953,6 +995,11 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     // each ineligible/refused item with its exact current-revision reason.
     const ids=[...p.selected];
     if(!ids.length){setFixStatus('Select at least one source-qualified element.','rejected');return;}
+    if(shortBulkWorkspaceNeedsAnalysis(
+      state.independentShortGroups,state.shortBatchPlanning)){
+      setFixStatus('GROUPED_SHORT_APPLY_REANALYZE_REQUIRED: Analyze current XML to rebuild source-bound group footprints, or turn grouping OFF for the existing one-owner route.','rejected','drop');
+      return;
+    }
     const generation=state.epoch,source={...state.source};
     state.batchRunning=true;state.activeJob='short-bulk';
     state.shortBulk=null;refresh();
@@ -975,9 +1022,9 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     const heartbeat=setInterval(paintBulkProgress,1000);
     paintBulkProgress();
     try{
-      const outcome=await runShortBulk({
+      const outcome=await runShortBulk(shortBulkWorkspaceEngineArgs({
         source,shortElements:state.shortElements,selectedIds:ids,runEngine,
-        hubEnabled:state.hubEnabled,enableIndependentGroups:state.independentShortGroups,
+        hubEnabled:state.hubEnabled,independentShortGroups:state.independentShortGroups,
         shortBatchPlanning:state.shortBatchPlanning,
         shortBatchSourceRecords:state.scene?.records||null,
         isCurrent:()=>generation===state.epoch,
@@ -988,7 +1035,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
           inFlightOwners=step.status==='APPLYING'?Math.max(1,step.inFlightOwners||1):0;
           paintBulkProgress();
         },
-      });
+      }));
       if(generation!==state.epoch)return;
       bulkFinished=true;clearInterval(heartbeat);
       state.shortBulkFinalizing=true;state.shortBulk=null;refresh();
