@@ -220,6 +220,39 @@ test('atomic group refusal bisects to untouched singleton path, preserving refus
 });
 
 
+test('N2 native singleton post-apply refusal safely bisects without release',async()=>{
+  for(const namedCode of [
+    'SHORT_BATCH_OWNER_NATIVE_SINGLETON_REFUSED:SHORT:0:NO_NEW_BLOCKING_FINDINGS',
+    'SHORT_BATCH_OWNER_SINGLETON_BYTES_DIFFERENT:SHORT:0',
+    'SHORT_BATCH_OWNER_SINGLETON_SELECTION_DRIFT:SHORT:0',
+  ]){
+    let runGroups=0,legacy=0;
+    const refusal={ok:true,outputKind:'topology-sidecars',
+      acceptedFinalTransferred:false,nativeCiiReleaseAuthorized:false,
+      topoFixCommitted:false,topoFixXmlText:'',
+      topologyUxmlParity:{status:'OFF',differences:[]},
+      topologySummary:{rejectReasons:[namedCode]}};
+    const x=await runIndependentShortBulk({
+      source,shortElements:rows,selectedIds:ids,
+      planning,sourceRecords:sourceRecordsFor(rows),
+      hubEnabled:false,hash:fakeHash,
+      runEngine:async()=>{runGroups++;return refusal;},
+      runLegacy:async({selectedIds})=>{
+        legacy++;
+        return {stopReason:'COMPLETE',latest:null,applied:[],
+          skipped:[{id:selectedIds[0],reason:'SINGLETON_SOURCE_REFUSED'}]};
+      }});
+    assert.equal(runGroups,1);
+    assert.equal(legacy,2);
+    assert.equal(x.stopReason,'COMPLETE');
+    assert.equal(x.applied.length,0);
+    assert.equal(x.skipped.length,2);
+    assert.equal(x.latest,null);
+    console.info('A6B_R3_JS_GREEN:native-owner-refusal-atomic-bisect:'+
+      namedCode.split(':')[0]+'=PASS');
+  }
+});
+
 test('source-bound graph grouping layers independent later owners, conflicts remain ordered',()=>{
   const groupRows=Array.from({length:8},(_,i)=>({
     id:'SHORT:'+i,eligible:true,sourceSha256:initial,
