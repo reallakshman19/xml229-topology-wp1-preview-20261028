@@ -169,9 +169,8 @@ class DenseGraphPlanning(unittest.TestCase):
         with patch.object(batch,"_expand_owner_closure_keys",
                           side_effect=lambda before,seed,config:set(seed)):
             broken=batch.plan_short_groups(before,ids,self.cfg)
-            with self.assertRaises(AssertionError) as red:
-                self.assertEqual(broken,planned,
-                    "CROSS_BRANCH_CLOSURE_RECURSION_MUTANT_UNSAFE_GROUPING")
+            self.assertEqual(broken,(tuple(ids),),
+                "source recursion mutation must expose the unsafe grouping")
             # With the planner deliberately damaged, the runtime edited-key
             # guard must refuse the unsafe group before it can publish bytes.
             with self.assertRaisesRegex(batch.ShortBatchRefused,
@@ -179,8 +178,8 @@ class DenseGraphPlanning(unittest.TestCase):
                 batch.apply_independent_short_batch(
                     before,policy=owner_policy(before,ids,self.cfg),
                     config=self.cfg)
-        print("A6B_R1_RED:closure-recursion-removed:AssertionError:"+
-              str(red.exception).splitlines()[-1])
+        print("A6B_R2_RED:closure-recursion-removed:"+
+              "SHORT_BATCH_OWNER_WRITE_OUTSIDE_FOOTPRINT")
         print("A6B_R1_GREEN:runtime-cross-branch-edit-guard=PASS")
         with patch.object(batch,"_expand_owner_closure_keys",
                           side_effect=lambda before,seed,config:set(seed)),\
@@ -189,11 +188,10 @@ class DenseGraphPlanning(unittest.TestCase):
             unsafe=batch.apply_independent_short_batch(
                 before,policy=owner_policy(before,ids,self.cfg),
                 config=self.cfg)
-        with self.assertRaises(AssertionError) as killed:
-            self.assertFalse(unsafe.committed,
-                "BATCH_RUNTIME_OWNER_EDIT_GUARD_MUTANT_COMMITTED")
-        print("A6B_R1_RED:runtime-owner-edited-keys-guard-removed:AssertionError:"+
-              str(killed.exception).splitlines()[-1])
+        self.assertTrue(unsafe.committed,
+            "source mutation bypasses original named refusal")
+        print("A6B_R2_RED:runtime-owner-edit-guard-removed:"+
+              "SHORT_BATCH_OWNER_WRITE_OUTSIDE_FOOTPRINT missing")
 
 
     def test_25mm_cross_branch_contacts_are_not_omitted(self):
@@ -209,11 +207,14 @@ class DenseGraphPlanning(unittest.TestCase):
             return frozenset(n.key for n in branch.nodes)
         with patch.object(batch,"owner_footprint",side_effect=missing_contacts):
             unsafe=batch.plan_short_groups(before,ids,self.cfg)
-        with self.assertRaises(AssertionError) as red:
-            self.assertEqual(unsafe,safe,
-                "CROSS_BRANCH_25MM_CONTACT_MUTANT_UNSAFE_GROUPING")
-        print("A6B_R1_RED:25mm-contacts-removed:AssertionError:"+
-              str(red.exception).splitlines()[-1])
+        self.assertEqual(unsafe,(tuple(ids),))
+        with self.assertRaisesRegex(batch.ShortBatchRefused,
+                                    "SHORT_BATCH_INDEPENDENCE_CONFLICT"):
+            batch.apply_independent_short_batch(
+                before,policy=owner_policy(before,ids,self.cfg),
+                config=self.cfg)
+        print("A6B_R2_RED:25mm-contacts-removed:"+
+              "SHORT_BATCH_INDEPENDENCE_CONFLICT")
 
 
     def test_n1_earlier_closure_creates_later_25mm_competitor_both_directions(self):
@@ -281,13 +282,10 @@ class DenseGraphPlanning(unittest.TestCase):
         with patch("psi116_topology_resolver.short_batch.owner_footprint",
                    return_value=frozenset()):
             broken=batch.plan_short_groups(before,ids,self.cfg)
-        with self.assertRaises(AssertionError) as red:
-            self.assertEqual(broken,correct,
-                "A6B_DENSE_MUTANT_OVERLAP_SAME_LAYER")
         self.assertIn(ids[0],broken[0])
         self.assertIn(ids[1],broken[0])
-        print("A6B_DENSE_RED:planner-footprint-removed:AssertionError:"+
-              str(red.exception).splitlines()[-1])
+        print("A6B_DENSE_RED:planner-footprint-removed:"+
+              "SHORT_BATCH_INDEPENDENCE_CONFLICT")
         with self.assertRaisesRegex(batch.ShortBatchRefused,
                                     "SHORT_BATCH_INDEPENDENCE_CONFLICT"):
             batch.apply_independent_short_batch(
