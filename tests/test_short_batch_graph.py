@@ -238,6 +238,9 @@ class DenseGraphPlanning(unittest.TestCase):
                               actual.skipped[0]["reason"])
                 self.assertEqual(batch.plan_short_groups(before,ids,self.cfg),
                                  ((ids[0],),(ids[1],)))
+                self.assertFalse(batch._strict_runtime_order_isolation(
+                    before,owners,self.cfg),
+                    "N1 cross-owner contact forbids runtime fast certificate")
                 print("A6B_R2_N1_GREEN:move-direction="+
                       ("REVERSED" if reverse else "FORWARD")+
                       ":later-refused-serial-bytes-EQUAL=PASS")
@@ -265,6 +268,22 @@ class DenseGraphPlanning(unittest.TestCase):
                         config=self.cfg)
                 self.assertTrue(unsafe.committed)
                 self.assertNotEqual(unsafe.fixed_xml,first.fixed_xml)
+                # Also kill a mutation of ONLY the independent runtime
+                # certificate: planner is still the old 25-mm grouping
+                # mutation and the fresh sequential gate remains present,
+                # but a forged true certificate must expose unsafe bytes.
+                with patch.object(batch,"_contact_reservation_radius",
+                                  return_value=25.),\
+                     patch.object(batch,"_strict_runtime_order_isolation",
+                                  return_value=True):
+                    certificate_mutant=batch.apply_independent_short_batch(
+                        before,policy=owner_policy(before,ids,self.cfg),
+                        config=self.cfg)
+                self.assertTrue(certificate_mutant.committed)
+                self.assertNotEqual(certificate_mutant.fixed_xml,
+                                    first.fixed_xml)
+                print("A6B_R2_N1_MUTANT_RED:strict-runtime-certificate-forced-true:"+
+                      "SHORT_BATCH_SEQUENTIAL_OWNER_QUALIFICATION_REFUSED missing")
                 print("A6B_R2_N1_MUTANT_RED:sequential-admission-removed:"+
                       "SHORT_BATCH_SEQUENTIAL_OWNER_QUALIFICATION_REFUSED absent")
 
