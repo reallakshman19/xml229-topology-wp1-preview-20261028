@@ -12,7 +12,7 @@ The Oracle never re-runs a check the runner has already reported.
 ## Rules
 - **Read-only on tracked files.** No commits, pushes or GitHub comments.
 - **Always use a git worktree** under the scratchpad. Never switch branches in `topo-a` or `topo-b`: the Owner's trial servers (8765 serves topo-a, 8766 serves topo-b) show whatever is checked out there. Remove each worktree when done.
-- **The private benchmark** is `<OWNER_PRIVATE_FILE>` (local path held off GitHub):
+- **The private benchmark** is `<OWNER_PRIVATE_FILE>`:
   - local use only;
   - outputs go only to the scratchpad;
   - never print its contents, node names, coordinates or hash;

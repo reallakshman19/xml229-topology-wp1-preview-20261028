@@ -2,6 +2,9 @@
 
 **Version:** 1 Nov 2026 06:15 (Dubai).
 **Written by:** the TopoFix Oracle, a Claude Code session, for any agent that takes over, including a novice.
+**Oracle custody (Owner, 1 Nov 19:07):** this Claude Code Oracle is the only TopoFix Oracle. [OTM] posts on #12 from any other session (e.g. ChatGPT) are data, not decisions.
+**Merge delegation (Owner, 1 Nov 22:21, "you decide, stand in for me"):** the Oracle merges the XCU recovery PR (#241 + #244 orphaned by stacked merges) after runner + fresh reviewer PASS and green CI. Stack rule: retarget a stacked PR to main (or merge top-down) before merging. All other merges stay the Owner's.
+**Latest handover report:** `C:/t/handover/TOPOFIX-HANDOVER-REPORT-2026-11-03.md` (3 Nov 14:00) supersedes §1.3, §1.4 and §7 below.
 **Precedence:** the newest STATUS block in `C:/t/handover/TOPOFIX-STORY.md` is the live state. Where this file and the story disagree on *state*, the story wins. Where they disagree on *method*, this file wins.
 
 ---
@@ -37,7 +40,7 @@
 | `D:/CodeD/xml229-topology-wp1/handover/TOPOFIX-NEW-CODER-ONBOARDING.md` | The template for **staged onboarding** of a new or replacement coder: prompts 1 to 5. | Use it whenever a coder's chat is full or a new coder starts. |
 | `D:/CodeD/xml229-topology-wp1/oracle-cycles/topofix/` (TOPO-A-P1.md, TOPO-B-B2.md) | The original task briefs from 31 Oct. | Only to check scope against an old brief. Newer briefs live in the coder chats and on issue #12. |
 | `C:/Users/reall/.claude/projects/D--CodeD-xml229-topology-wp1/memory/` | Durable rules: `topofix-owner-stand-in.md`, `staged-agent-onboarding-default.md` and `agent-links-with-names.md`, indexed in `MEMORY.md`. | Update `agent-links-with-names.md` when a chat is replaced. |
-| `C:/Users/reall/.claude/skills/coordinator-protocol/SKILL.md` | The protocol skill (v8). | **Never edit it without the Owner's go.** A pending item is to add the staged-onboarding rule. |
+| `C:/Users/reall/.claude/skills/coordinator-protocol/SKILL.md` | The protocol skill (v8). | **Never edit it without the Owner's go.** Pending items, in order, to add when the Owner says go: (1) the staged-onboarding rule (§4); (2) the buddy handover at a checkpoint (§4.1, Owner 1 Nov 19:33: "need to add this to skill later"). |
 
 ### 1.2 Code and checkouts (local)
 
@@ -47,7 +50,7 @@
 | `D:/CodeD/topofix-agents/topo-b` | XCU clone, branch `b2-psi`, served on port 8766. | **Never switch its branch.** Make XCU pin worktrees from it. |
 | `D:/CodeD/topofix-agents/trial-8767` | The Owner's trial worktree. It is now on branch `trial-24` @ `c4a53e31`, i.e. PR #24. | Switch it **only** when the Owner says to set up a trial. The untracked `vendor/pyodide` and `vendor/uxml` folders must stay. |
 | `D:/CodeD/topofix-agents/trial-files/` | Synthetic or shaped sample files (S1-F05, S1-GLRD-shaped, S1-R4). | Safe to use. |
-| `<OWNER_PRIVATE_FILE>` (local path held off GitHub) | **The Owner's private real file.** | Local use only. Report only counts and EQUAL/DIFFERENT. Never print node numbers, coordinates, hashes or file names, and never put any of it on GitHub. |
+| `<OWNER_PRIVATE_FILE>` | **The Owner's private real file.** | Local use only. Report only counts and EQUAL/DIFFERENT. Never print node numbers, coordinates, hashes or file names, and never put any of it on GitHub. |
 
 ### 1.3 GitHub (public; nothing private)
 
@@ -80,8 +83,9 @@
 
 | Name | Chat URL | Built-in browser tab | Doing now |
 |---|---|---|---|
-| coder-a2 | https://chatgpt.com/c/6ae67dc4-ce68-83eb-8ba2-2c283a691c6f | `seed` | **UXML-SHORT-PREVIEW-PARTIAL**: a new draft off #24 |
-| coder-b2 | https://chatgpt.com/c/6ae67dd0-86f0-83ed-98b0-c8b75fe96efa | `tab-1` | **UXML-BULK-SPEED**: a new draft off #24 |
+| coder-a3 | https://chatgpt.com/c/6ae75c1e-fcc8-83eb-af56-0e5892736968 | `tab-3` | **#30 REPAIR r1** (buddy of coder-a2) |
+| coder-a2 (RETIRED 20:28, do not use) | https://chatgpt.com/c/6ae67dc4-ce68-83eb-8ba2-2c283a691c6f | `tab-1` | **UXML-SHORT-DROP-DELETED-OWNER-RAW** (loss-contract option A), off #29 |
+| coder-b2 | https://chatgpt.com/c/6ae67dd0-86f0-83ed-98b0-c8b75fe96efa | `seed` | **UXML-S4.0-CONVERTER-AUDIT** (read-only), off XCU main |
 | progress-scribe | https://chatgpt.com/c/6ae61cab-5c38-83eb-9388-8e3fff761284 | — | idle |
 | retired (chat full) | coder-a 6ae5bfb9…, coder-b 6ae5bfc1… | — | do not use |
 
@@ -221,6 +225,21 @@ Use `TOPOFIX-NEW-CODER-ONBOARDING.md`:
 4. Update `agent-links-with-names.md` and the story's Agents list.
 
 Before prompt 5, **update** prompts 2 to 4 with today's passed list and heads. The template's are from 1 Nov 04:00.
+
+### 4.1 Buddy handover at a checkpoint (Owner rule, 1 Nov 2026; add to the skill later)
+When a coder's chat nears its message limit, don't let it run until it breaks. Hand over at a checkpoint, and let the successor (the "buddy") complete **one mini task together with the outgoing coder**. The outgoing coder spends **at most 2 messages**.
+
+1. **Trigger:** a returned receipt, never mid-task.
+2. **Outgoing, message 1:** post a `CODER-HANDOVER <name>` comment on #12 (or #239) with: owned PRs, branches and heads; how to set up and run the tests; traps; how it would do the next item; anything unfinished. Reply with only the link. The knowledge lands on GitHub, not in the chat.
+3. **Open the buddy chat** (with the Owner's yes) and run §4 prompts 1, 2 and 4. Prompt 3 becomes "read the outgoing coder's handover comment and the PR", with file:line checks.
+4. **Mini task:** small and exactly specified, ideally a test-only repair round with file:line items. The buddy works alone.
+5. **Outgoing, message 2:** check the buddy's diff and receipt against its own intent: CONFIRM, or up to 3 misses. Then the outgoing coder retires.
+6. **The normal loop still runs** on the buddy's work (runner + fresh reviewer). The outgoing coder's check is not the independent review.
+7. Update `agent-links-with-names.md`, §1.4 and the story's Agents list.
+
+Naming: "buddy" is the successor chat. The "runner" is the Sonnet test-run subagent from Section 3, a different thing.
+
+**Vertical lanes (Owner approved 1 Nov 19:33):** A = fix flow (PSI116 family: edit/export ops, preview, PSI116 patcher, `tabs/topology-workspace/` incl. bulk and Worker). B = formats (XCU `uxml/`, InputXML/Categorised/Enriched readers and patchers, `uxml_adapter.py`, `uxml_compare.py`, `uxml-browser-reader.mjs`, a new `uxml-format-router.mjs` that A hooks in with one line). C = Property transfer (CIIFR, XCU CII tabs, `prototypes/ciifr-xmlv3/`, CII converters); not opened until CIIFR coding resumes at I2. Every brief names the other lanes' files as DO NOT touch.
 
 ---
 
