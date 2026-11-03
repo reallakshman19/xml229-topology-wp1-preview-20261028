@@ -18,6 +18,7 @@ from test_short_batch_engine import owner_ids,owner_policy,serial_reference
 from test_uxml_short_direct_apply_profile import interconnected_tee_fixture
 from test_uxml_psi116_s1 import verified_synthetic
 from test_port_policy import doc,node
+from psi116_topology_resolver.models import FixAction,Finding
 
 
 def interacting_fixture():
@@ -66,6 +67,78 @@ class ShortBatchSafetyMutants(unittest.TestCase):
                                     "SHORT_BATCH_INDEPENDENCE_CONFLICT"):
             batch.apply_independent_short_batch(
                 before,policy=owner_policy(before,ids,self.cfg),config=self.cfg)
+
+
+    def test_intermediate_preflight_rejects_blockers_and_mutant_goes_red(self):
+        original=interconnected_tee_fixture(2)
+        before=resolve_psi116(original,self.cfg)
+        ids=owner_ids(before,self.cfg,2)
+        policy=owner_policy(before,ids,self.cfg)
+        native=batch.resolve_psi116
+        blocked=FixAction(
+            action_id="SYNTHETIC_BLOCKED",finding_ids=(),
+            disposition="SYNTHETIC_REVIEW_ONLY",status="BLOCKED",
+            confidence=0.,authority="SYNTHETIC_TEST_ONLY",
+            message="synthetic blocked action",blockers=("REVIEW_ONLY",))
+        def run(inject):
+            calls=[0]
+            def resolve(*args,**kwargs):
+                result=native(*args,**kwargs)
+                calls[0]+=1
+                if calls[0]==1:
+                    return replace(result,fix_actions=result.fix_actions+(blocked,))
+                return result
+            with patch.object(batch,"resolve_psi116",side_effect=resolve):
+                return inject()
+        with self.assertRaisesRegex(batch.ShortBatchRefused,
+                         "SHORT_BATCH_INTERMEDIATE_PREFLIGHT_REJECTED"):
+            run(lambda:batch.apply_independent_short_batch(
+                before,policy=policy,config=self.cfg))
+        print("A6B_R1_MUTANT_GREEN:intermediate-preflight=PASS")
+        with patch.object(batch,"_preflight",return_value=[]):
+            committed=run(lambda:batch.apply_independent_short_batch(
+                before,policy=policy,config=self.cfg))
+        with self.assertRaises(AssertionError) as red:
+            self.assertFalse(committed.committed,
+                             "BATCH_INTERMEDIATE_PREFLIGHT_MUTANT_ACCEPTED")
+        print("A6B_R1_MUTANT_RED:intermediate-preflight-removed:AssertionError:"+
+              str(red.exception).splitlines()[-1])
+
+    def test_no_new_blocking_findings_mutant_is_rejected_on_real_group(self):
+        original=interconnected_tee_fixture(2)
+        before=resolve_psi116(original,self.cfg)
+        ids=owner_ids(before,self.cfg,2)
+        policy=owner_policy(before,ids,self.cfg)
+        native=batch.resolve_psi116
+        new_finding=Finding(
+            finding_id="SYNTHETIC_NEW_BLOCKER",code="SYNTHETIC_NEW_BLOCKER",
+            severity="ERROR",blocking=True,message="synthetic regression only")
+        def run():
+            calls=[0]
+            def resolve(*args,**kwargs):
+                result=native(*args,**kwargs)
+                calls[0]+=1
+                if calls[0]==2:
+                    return replace(result,findings=result.findings+(new_finding,))
+                return result
+            # Isolate the batch's own NO_NEW gate from the native closure
+            # validator's redundant post-finding check to kill this rule
+            # independently rather than through a different safeguard.
+            with patch.object(batch,"resolve_psi116",side_effect=resolve),\
+                 patch.object(batch,"_validate_transaction",return_value=()):
+                return batch.apply_independent_short_batch(
+                    before,policy=policy,config=self.cfg)
+        with self.assertRaisesRegex(batch.ShortBatchRefused,
+                         "SHORT_BATCH_VALIDATION_REJECTED:NO_NEW_BLOCKING_FINDINGS"):
+            run()
+        print("A6B_R1_MUTANT_GREEN:no-new-blocking-findings=PASS")
+        with patch.object(batch,"_no_new_blocking_findings",return_value=True):
+            committed=run()
+        with self.assertRaises(AssertionError) as red:
+            self.assertFalse(committed.committed,
+                "BATCH_NEW_BLOCKING_FINDINGS_MUTANT_ACCEPTED")
+        print("A6B_R1_MUTANT_RED:no-new-blocking-findings-forced-true:AssertionError:"+
+              str(red.exception).splitlines()[-1])
 
     def test_one_bad_inside_batch_isolated_by_bisect_unaffected_owners_equal_serial(self):
         original=interconnected_tee_fixture(4)
