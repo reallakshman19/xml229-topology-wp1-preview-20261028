@@ -15,6 +15,7 @@ const BISECT_CODES=new Set([
   'SHORT_BATCH_VALIDATION_REJECTED',
   'SHORT_BATCH_OWNER_WRITE_OUTSIDE_FOOTPRINT',
   'SHORT_BATCH_INTERMEDIATE_PREFLIGHT_REJECTED',
+  'SHORT_BATCH_SEQUENTIAL_OWNER_QUALIFICATION_REFUSED',
   'SHORT_BATCH_NOT_COMMITTED',
   'UXML_SHORT_BATCH_NATIVE_REFUSED',
   'UXML_SHORT_BATCH_NOT_ELIGIBLE_OR_WITNESS_DRIFT',
@@ -27,7 +28,11 @@ function requireBatch(ok,reason){
 function unique(xs){return new Set(xs).size===xs.length;}
 function same(xs,ys){return JSON.stringify(xs)===JSON.stringify(ys);}
 /** The only group-order authority: source-bound native footprints from
- * read-only Analyze, NOT guessed branch/position equivalence in JS. */
+ * read-only Analyze, NOT guessed branch/position equivalence in JS.
+ * JS validates the Python-emitted footprint (planning.owners, then
+ * batch.sourceFootprints) against its independent source-record lower bound;
+ * it does NOT treat a JS-calculated zone as authority to widen native Apply.
+ */
 export function planSourceBoundGroups(ids,rows,planning,sourceSha,maximum=MAX_GROUP,sourceRecords){
   requireBatch(planning?.schema==='psi116-short-group-footprints/v1'&&
     planning.sourceSha256===sourceSha&&Array.isArray(planning.owners)&&
@@ -107,12 +112,14 @@ export function planSourceBoundGroups(ids,rows,planning,sourceSha,maximum=MAX_GR
     const positions=[...reached].map(k=>originalByKey.get(k).position)
       .filter(p=>p&&Number.isFinite(p.x)&&Number.isFinite(p.y)&&
         Number.isFinite(p.z));
-    // Config in this explicit Worker path is the fixed native default, 25mm.
-    // Compare squared distance; include every record at <=25.000000001mm.
+    // JS lower bound mirrors Python's grouping-only reservation:
+    // 25mm actual policy + 2*(6mm short motion + 0.5mm contact tolerance).
+    // This is NOT permission to repair a gap greater than 25mm.
+    // Compare Euclidean distance and include boundary epsilon.
     for(const record of sourceRecords){
       const p=record.position;
       if(contact.has(record.key)||!p)continue;
-      if(positions.some(q=>Math.hypot(p.x-q.x,p.y-q.y,p.z-q.z)<=25+1e-9))
+      if(positions.some(q=>Math.hypot(p.x-q.x,p.y-q.y,p.z-q.z)<=25+2*(6+0.5)+1e-9))
         contact.add(record.key);
     }
     return contact;
@@ -169,7 +176,10 @@ function safeRefusal(result,hub){
   const reasons=result.topologySummary?.rejectReasons;
   if(!Array.isArray(reasons)||reasons.length!==1)return false;
   const code=reasons[0];
-  if(typeof code!=='string'||!BISECT_CODES.has(code))return false;
+  // Preserve the entire native refusal in custody, including colon details,
+  // but recognize only a named allowlisted leading code for safe bisection.
+  if(typeof code!=='string'||!BISECT_CODES.has(code.split(':',1)[0]))
+    return false;
   if(hub){
     if(result.topologyUxmlParity?.status!=='DIFFERENT'||
        !same(result.topologyUxmlParity.differences,['/batch:'+code]))return false;
