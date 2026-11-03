@@ -13,7 +13,9 @@ function compiled(name,src=source){
   const marker=new RegExp('export (?:async )?function '+name+'\\(');
   const match=marker.exec(src);
   assert.ok(match,'production export '+name+' exists');
-  const start=match.index,open=src.indexOf('{',start);
+  const start=match.index,bodyAt=src.indexOf(') {',start);
+  assert.ok(bodyAt>start,'production function body starts after parameters');
+  const open=bodyAt+2;
   let depth=0,close=-1;
   for(let i=open;i<src.length;i++){
     if(src[i]==='{')depth++;
@@ -27,7 +29,7 @@ function red(name,control){
   try{control();}catch(e){error=e;}
   assert.ok(error instanceof assert.AssertionError,
     name+' mutated execution must make real contract assert RED');
-  console.info('A6B_R1_WORKSPACE_MUTANT_RED:'+name+':'+error.name+':'+error.message.split('\\n')[0]);
+  console.info('A6B_R1_WORKSPACE_MUTANT_RED:'+name+':'+error.name+':'+error.message.split('\n')[0]);
 }
 
 test('workspace dispatch respects OFF default, ON choice, and app invokes seam',()=>{
@@ -40,7 +42,7 @@ test('workspace dispatch respects OFF default, ON choice, and app invokes seam',
   assert.equal(off.enableIndependentGroups,false);
   assert.equal(on.enableIndependentGroups,true);
   assert.equal(off.shortBatchPlanning,common.shortBatchPlanning);
-  assert.match(source,/await runShortBulk\\(shortBulkWorkspaceEngineArgs\\(/,
+  assert.match(source,/await runShortBulk\(shortBulkWorkspaceEngineArgs\(/,
     'real dropShortElements must invoke audited dispatcher');
   console.info('A6B_R1_WORKSPACE_MUTANT_GREEN:toggle-dispatch-on-off=PASS');
   const mutated=compiled('shortBulkWorkspaceEngineArgs',source.replace(
@@ -67,7 +69,7 @@ test('real per-owner history retains distinct evidence and app invokes seam',()=
   assert.deepEqual(got.operations,item.ownerOperations);
   assert.deepEqual(got.ownerEvidence,item.ownerEvidence);
   assert.deepEqual(got.ownerRevision,item.ownerRevision);
-  assert.match(source,/state.history.push\\(shortBulkWorkspaceHistoryEntry\\(/);
+  assert.match(source,/state\.history\.push\(shortBulkWorkspaceHistoryEntry\(/);
   console.info('A6B_R1_WORKSPACE_MUTANT_GREEN:owner-evidence-history=PASS');
   const mutated=compiled('shortBulkWorkspaceHistoryEntry',source.replace(
     'ownerEvidence:pass.ownerEvidence||null','ownerEvidence:null'));
@@ -95,15 +97,15 @@ test('release-last waits for evidence and terminal paint; mutation is RED in Nod
     refreshEvidence:async()=>{throw Error('EVIDENCE_FAILED');},
     renderTerminal:()=>{},analysisProofCurrent:()=>true}),/EVIDENCE_FAILED/);
   assert.equal(failed.hubRevision,null,'failed evidence must hold download');
-  assert.match(source,/await settleShortBulkPublication\\(/);
+  assert.match(source,/await settleShortBulkPublication\(/);
   const area=source.slice(source.indexOf('async function publishShortBulk('),
     source.indexOf('async function publishShortBulkGuarded('));
-  assert.doesNotMatch(area,/state\\.hubRevision=state\\.revision/,
+  assert.doesNotMatch(area,/state\.hubRevision=state\.revision/,
     'UI publication cannot bypass release-last helper');
   console.info('A6B_R1_WORKSPACE_MUTANT_GREEN:release-last-after-recheck=PASS');
   const changed=source.replace(
     'if(outcome.latest&&done&&!hubMismatch)await refreshEvidence();',
-    'state.hubRevision=state.revision;\\n  if(outcome.latest&&done&&!hubMismatch)await refreshEvidence();');
+    'state.hubRevision=state.revision;\n  if(outcome.latest&&done&&!hubMismatch)await refreshEvidence();');
   const mutant=compiled('settleShortBulkPublication',changed);
   const bad={...state,hubRevision:null};
   let finish;
@@ -122,7 +124,7 @@ test('second grouped Apply requires fresh Analyze, OFF remains legacy fallback',
   assert.equal(shortBulkWorkspaceNeedsAnalysis(true,{owners:[]}),false);
   assert.equal(shortBulkWorkspaceNeedsAnalysis(false,null),false);
   assert.match(source,/GROUPED_SHORT_APPLY_REANALYZE_REQUIRED/);
-  assert.match(source,/shortBulkWorkspaceNeedsAnalysis\\(/
+  assert.match(source,/shortBulkWorkspaceNeedsAnalysis\(/
     );
   console.info('A6B_R1_WORKSPACE_MUTANT_GREEN:second-grouped-run-message=PASS');
 });
