@@ -34,7 +34,7 @@ function assertReleaseLast(body,finalizer=settle){
     assert.ok(at>=0&&at<call,
       'workspace finalizer must follow every prior potentially throwing step: '+required);
   }
-  const release=/state\\.hubRevision=state\\.revision;/g;
+  const release=/state\.hubRevision=state\.revision;/g;
   const callback=body.indexOf("refreshEvidence:()=>refreshPublishedEvidence(",call);
   assert.ok(callback>call,
     'workspace must pass fresh evidence recheck into audited finalizer');
@@ -49,11 +49,11 @@ function assertReleaseLast(body,finalizer=settle){
     assert.ok(index>=0&&index<at,
       'finalizer release must FOLLOW evidence and final rendering: '+required);
   }
-  assert.match(finalizer.slice(at),/^state\\.hubRevision=state\\.revision;\\s*}\\s*$/,
+  assert.match(finalizer.slice(at),/^state\.hubRevision=state\.revision;\s*}\s*$/,
     'finalizer promotion is the last statement with no further throwable work');
   assert.ok(body.indexOf('state.hubRevision=null;')<body.indexOf('state.source=next.source;'),
     'previous authority must be revoked before source mutation');
-  assert.match(body,/outcome\\?\\.hubMismatch===true/,
+  assert.match(body,/outcome\?\.hubMismatch===true/,
     'UI must retain Worker explicit mismatch HOLD');
 }
 
