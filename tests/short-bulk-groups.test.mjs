@@ -358,8 +358,10 @@ test('isCurrent after async qualification must discard candidate, Node kill',asy
   assert.equal(good.applied.length,0);assert.equal(checkpoints,0);
   console.info('A6B_R1_JS_GREEN:post-qualify-epoch-guard=PASS');
   const {readFile}=await import('node:fs/promises');
-  const original=await readFile(new URL('../tabs/topology-workspace/short-bulk-groups.mjs',
-    import.meta.url),'utf8');
+  // core.autocrlf=true can yield CRLF on Windows. Normalize only the
+  // source-text MUTANT fixture, never production output or XML bytes.
+  const original=(await readFile(new URL('../tabs/topology-workspace/short-bulk-groups.mjs',
+    import.meta.url),'utf8')).replace(/\r\n/g,'\n');
   const target="if(!isCurrent()){stopReason='CANCELLED';return;}\n      current=validated.source;";
   assert.ok(original.includes(target),'post-qualification guard must exist');
   const changed=original.replace(target,'current=validated.source;');
@@ -390,8 +392,10 @@ test('source record interaction gate has independent Node mutation kill',async()
     /BATCH_INTERACTING_SOURCE_RECORDS/);
   console.info('A6B_R1_JS_GREEN:interacting-source-records-veto=PASS');
   const {readFile}=await import('node:fs/promises');
-  const original=await readFile(new URL('../tabs/topology-workspace/short-bulk-groups.mjs',
-    import.meta.url),'utf8');
+  // core.autocrlf=true can yield CRLF on Windows. Normalize only the
+  // source-text MUTANT fixture, never production output or XML bytes.
+  const original=(await readFile(new URL('../tabs/topology-workspace/short-bulk-groups.mjs',
+    import.meta.url),'utf8')).replace(/\r\n/g,'\n');
   const target="requireBatch(!allAffected.has(op.source_node_key),\n        'BATCH_INTERACTING_SOURCE_RECORDS');";
   assert.ok(original.includes(target),'runtime record interaction gate required');
   const mutant=await import('data:text/javascript;base64,'+
@@ -402,6 +406,19 @@ test('source record interaction gate has independent Node mutation kill',async()
     'BATCH_INTERACTING_SOURCE_RECORDS_MUTANT_ACCEPTED:'+mutated.applied.length));
   console.info('A6B_R1_JS_RED:interacting-source-records-guard-removed:AssertionError:'+
     'BATCH_INTERACTING_SOURCE_RECORDS_MUTANT_ACCEPTED');
+});
+
+test('Windows CRLF source-text mutation probes normalize safely',async()=>{
+  const {readFile}=await import('node:fs/promises');
+  const raw=await readFile(new URL('../tabs/topology-workspace/short-bulk-groups.mjs',
+    import.meta.url),'utf8');
+  for(const text of [raw.replace(/\r\n/g,'\n'),
+    raw.replace(/\r\n/g,'\n').replace(/\n/g,'\r\n')]){
+    const canonical=text.replace(/\r\n/g,'\n');
+    assert.ok(canonical.includes("if(!isCurrent()){stopReason='CANCELLED';return;}\n      current=validated.source;"));
+    assert.ok(canonical.includes("requireBatch(!allAffected.has(op.source_node_key),\n        'BATCH_INTERACTING_SOURCE_RECORDS');"));
+  }
+  console.info('A6B_R2_CRLF_GREEN:LF-and-Windows-CRLF-source-mutants=PASS');
 });
 
 test('qualifier refuses edited keys outside native owner source footprint; mutant RED',async()=>{
