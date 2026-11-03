@@ -13,14 +13,14 @@ from hashlib import sha256
 from typing import Sequence
 import xml.etree.ElementTree as ET
 
-from .connection_ports import PortModel
+from .connection_ports import PortModel, FINITE
 from .models import FixAction, ResolutionResult, ResolverConfig
 from .resolver import resolve_psi116
 from .short_elements import short_elements
 from .transaction import (
     AppliedOperation, TransactionPolicy, TopoFixTransactionResult,
     ValidationCheck, _parse_clone, _serialize, _build_locator_index,
-    _child, _apply_port_connection, _validate_transaction, _record_sha,
+    _child, _apply_port_connection, _validate_transaction, _record_sha, _preflight,
 )
 
 
@@ -74,6 +74,58 @@ def _rows(before, policy, config):
     return selected
 
 
+def _expand_owner_closure_keys(before, seed, config):
+    """Conservative upper bound of PortModel.moving_group's recursive writes.
+
+    Use the SAME finite-component grouping, same-branch exact contacts and
+    transitive positive-node links as the native closure walker. Seed with
+    the whole owner branch: this may reserve more records than a particular
+    move, but cannot omit a reachable finite/alias record. In particular a
+    VALV's *other* port can link to a third branch through its NodeNumber.
+    The 25-mm candidate/contact zone is added separately, not traversed.
+    """
+    model=PortModel(before.document,config)
+    reached=set(seed)
+    pending=list(reached)
+    while pending:
+        key=pending.pop()
+        node=model.by_key.get(key)
+        if node is None:continue
+        neighbours=[]
+        group=model.node_group.get(key)
+        if group is not None and model.kind(group) in FINITE:
+            neighbours.extend(member.key for member in model.groups[group])
+        possible=list(model._nodes_by_branch.get(node.branch_index,()))
+        if node.positive:
+            possible.extend(model._positive_by_number.get(node.node_number,()))
+        for other in possible:
+            shared=(node.positive and other.positive and
+                    node.node_number==other.node_number)
+            coincident=(node.branch_index==other.branch_index and
+                        node.position.distance_to(other.position)<=1e-6)
+            if shared or coincident:
+                neighbours.append(other.key)
+        for other in neighbours:
+            if other not in reached:
+                reached.add(other);pending.append(other)
+    return reached
+
+
+def _guard_owner_write_footprint(owner, actual_keys, footprints):
+    """Runtime second gate; named refusal atomically bisects unsafe groups."""
+    unexpected=set(actual_keys)-footprints[owner]
+    _require(not unexpected,
+             "SHORT_BATCH_OWNER_WRITE_OUTSIDE_FOOTPRINT:"+str(owner)+":"+
+             ",".join(sorted(unexpected)))
+
+
+def _no_new_blocking_findings(before, after):
+    old={f.code for f in before.findings if f.blocking}
+    new={f.code for f in after.findings if f.blocking}
+    return not (new-old) and sum(f.blocking for f in after.findings)<=sum(
+        f.blocking for f in before.findings)
+
+
 def owner_footprint(before, row, config):
     """Conservative influence zone, not just the removed records.
 
@@ -99,6 +151,9 @@ def owner_footprint(before, row, config):
             if n.key in owned:continue
             if n.positive and n.node_number in positives:
                 owned.add(n.key);changed=True
+    # Recursive finite-owner move writes can cross more than one branch.
+    # Never treat a one-hop shared positive peer as the end of the closure.
+    owned.update(_expand_owner_closure_keys(before,owned,config))
     # Different physical clusters which might participate in a global
     # PortModel candidate/closure are not treated as independent.
     contact=set(owned)
@@ -274,7 +329,8 @@ def apply_independent_short_batch(
     config.validate()
     before=source if isinstance(source,ResolutionResult) else resolve_psi116(source,config)
     rows=_rows(before,policy,config)
-    assert_independent(before,rows,config)
+    footprints=assert_independent(before,rows,config)
+    footprints_by_owner={row["id"]:zone for row,zone in zip(rows,footprints)}
     original=_records(before)
     original_keys={n.key:n for n in original}
     removed=set(key for row in rows for key in row["nodeKeys"])
@@ -288,6 +344,9 @@ def apply_independent_short_batch(
     intermediate=_serialize(original_root,before.document.namespace)
     middle=resolve_psi116(intermediate,config,
                          source_name=before.document.source_path)
+    _require(not _preflight(middle,(),policy),
+             "SHORT_BATCH_INTERMEDIATE_PREFLIGHT_REJECTED:"+
+             ",".join(_preflight(middle,(),policy)))
     middle_to_original={}
     original_to_middle={}
     for src_branch,mid_branch in zip(before.document.branches,middle.document.branches):
@@ -325,9 +384,15 @@ def apply_independent_short_batch(
             {a.proposed_changes[0]["movePortKey"],
              a.proposed_changes[0]["targetPortKey"]}==ports),None)
         _require(closure is not None,"SHORT_ELEMENT_RECONNECTION_NOT_QUALIFIED")
+        intermediate_reasons=_preflight(middle,(*stage_actions,closure),policy)
+        _require(not intermediate_reasons,
+                 "SHORT_BATCH_INTERMEDIATE_PREFLIGHT_REJECTED:"+
+                 ",".join(intermediate_reasons))
         change=closure.proposed_changes[0]
         keys={middle_to_original[k].key for k in change["moveKeys"]}
         target=middle_to_original[change["targetPortKey"]].key
+        _guard_owner_write_footprint(row["id"],keys|{target},
+                                     footprints_by_owner)
         _require(not touched.intersection(keys|{target}) and
                  not any(key in removed for key in keys),
                  "SHORT_BATCH_REPAIR_WRITE_CONFLICT")
@@ -406,11 +471,12 @@ def apply_independent_short_batch(
                 authority="OWNER_EXPLICIT_SHORT_ELEMENT_SELECTION",
                 source_xml_sha256=_record_sha(prior)))
     _require(not middle_owner_changes,"SHORT_BATCH_CLOSURE_OPERATION_NOT_APPLIED")
+    for operation in operations:
+        _guard_owner_write_footprint(
+            operation.action_id,(operation.source_node_key,),footprints_by_owner)
     expected=[n for n in original if n.key not in removed]
     actual=_records(after)
     identity=lambda n:(n.branch_index,n.component_ref_no,n.component_type,n.endpoint)
-    before_blocking={f.code for f in before.findings if f.blocking}
-    after_blocking={f.code for f in after.findings if f.blocking}
     checks=[]
     for row in rows:
         checks.extend((
@@ -441,9 +507,7 @@ def apply_independent_short_batch(
             sum(n.weight or 0 for n in original),sum(n.weight or 0 for n in actual),
             {"selectedWeightRemoved":sum(row["weightRemoved"] for row in rows)}),
         ValidationCheck("NO_NEW_BLOCKING_FINDINGS",
-            not (after_blocking-before_blocking) and
-            sum(f.blocking for f in after.findings)<=
-            sum(f.blocking for f in before.findings),True,
+            _no_new_blocking_findings(before,after),True,
             "No new blocking finding introduced by the selected group."),
     ))
     for row in rows:
@@ -610,7 +674,7 @@ def apply_short_batch_bisect(source: str,owner_ids:Sequence[str],
                 if not txn.committed:raise ShortBatchRefused(
                     "SHORT_ELEMENT_RECONNECTION_REJECTED:"+",".join(txn.reject_reasons))
             except (ValueError,KeyError) as error:
-                code=str(error).split(":",1)[0]
+                code=str(error)
                 skipped.append({"id":ids[0],"reason":code})
                 outcomes.append({"id":ids[0],"status":"REFUSED","code":code})
                 return
