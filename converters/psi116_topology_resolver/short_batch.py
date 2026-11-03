@@ -126,12 +126,27 @@ def _no_new_blocking_findings(before, after):
         f.blocking for f in before.findings)
 
 
+def _contact_reservation_radius(config):
+    """Grouping-only guard, NOT the repair/eligibility policy.
+
+    A short owner is <=6 mm; each endpoint may already be within the 0.5-mm
+    connection tolerance. Two independently moving owners can approach one
+    another, so reserve BOTH possible motions before claiming they commute.
+    The native 25 mm repair rule is unchanged.
+    """
+    return (max(config.joint_repair_threshold_mm,25.,
+                config.connection_tolerance_mm)+
+            2*(config.short_span_threshold_mm+
+               config.connection_tolerance_mm))
+
+
 def owner_footprint(before, row, config):
     """Conservative influence zone, not just the removed records.
 
     Reserve entire selected branch plus positive-number peers, and physical
-    contacts within the existing (unmodified) 25-mm repair radius. A branch
-    containing an owner's closure may NOT share a batch with another owner
+    contacts within the grouping-only 25-mm-plus-two-short-moves safety
+    reservation. This never widens native physical repair eligibility.
+    A branch containing an owner's closure may NOT share a batch with another owner
     whose branch, aliases or close contacts overlap its influence zone.
     """
     branch=before.document.branches[row["branchIndex"]]
@@ -157,8 +172,7 @@ def owner_footprint(before, row, config):
     # Different physical clusters which might participate in a global
     # PortModel candidate/closure are not treated as independent.
     contact=set(owned)
-    radius=max(config.connection_tolerance_mm,
-               config.joint_repair_threshold_mm,25.)
+    radius=_contact_reservation_radius(config)
     for n in nodes:
         if n.key in contact or n.position is None:continue
         if any(by_key[k].position is not None and
