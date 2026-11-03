@@ -114,13 +114,13 @@ export function planSourceBoundGroups(ids,rows,planning,sourceSha,maximum=MAX_GR
       .filter(p=>p&&Number.isFinite(p.x)&&Number.isFinite(p.y)&&
         Number.isFinite(p.z));
     // JS lower bound mirrors Python's grouping-only reservation:
-    // 25mm actual policy + 2*(6mm short motion + 0.5mm contact tolerance).
+    // 25mm actual policy + 2*(6mm short + 0.5mm tolerance per endpoint).
     // This is NOT permission to repair a gap greater than 25mm.
     // Compare Euclidean distance and include boundary epsilon.
     for(const record of sourceRecords){
       const p=record.position;
       if(contact.has(record.key)||!p)continue;
-      if(positions.some(q=>Math.hypot(p.x-q.x,p.y-q.y,p.z-q.z)<=25+2*(6+0.5)+1e-9))
+      if(positions.some(q=>Math.hypot(p.x-q.x,p.y-q.y,p.z-q.z)<=25+2*(6+2*0.5)+1e-9))
         contact.add(record.key);
     }
     return contact;
