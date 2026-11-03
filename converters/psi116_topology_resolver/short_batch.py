@@ -156,22 +156,22 @@ def _owner_intermediate_preflight(middle,actions,policy):
 def _contact_reservation_radius(config):
     """Grouping-only guard, NOT the repair/eligibility policy.
 
-    A short owner is <=6 mm; each endpoint may already be within the 0.5-mm
-    connection tolerance. Two independently moving owners can approach one
+    A short owner is <=6 mm; both endpoints may each be within the 0.5-mm
+    connection tolerance (6+0.5+0.5=7 mm). Two independently moving owners can approach one
     another, so reserve BOTH possible motions before claiming they commute.
     The native 25 mm repair rule is unchanged.
     """
     return (max(config.joint_repair_threshold_mm,25.,
                 config.connection_tolerance_mm)+
             2*(config.short_span_threshold_mm+
-               config.connection_tolerance_mm))
+               2*config.connection_tolerance_mm))
 
 
 def owner_footprint(before, row, config):
     """Conservative influence zone, not just the removed records.
 
     Reserve entire selected branch plus positive-number peers, and physical
-    contacts within the grouping-only 25-mm-plus-two-short-moves safety
+    contacts within the grouping-only 25-mm-plus-two-bounded-7-mm-short-moves safety
     reservation. This never widens native physical repair eligibility.
     A branch containing an owner's closure may NOT share a batch with another owner
     whose branch, aliases or close contacts overlap its influence zone.
@@ -225,7 +225,7 @@ def _strict_runtime_order_isolation(before, rows, config):
     radius=(max(25.,config.joint_repair_threshold_mm,
                 config.connection_tolerance_mm)+
             2*(config.short_span_threshold_mm+
-               config.connection_tolerance_mm))
+               2*config.connection_tolerance_mm))
     zones=[]
     for row in rows:
         branch=before.document.branches[row["branchIndex"]]
