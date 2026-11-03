@@ -13,6 +13,8 @@ const BISECT_CODES=new Set([
   'SHORT_BATCH_NOT_ELIGIBLE_OR_WITNESS_DRIFT',
   'SHORT_BATCH_NATIVE_PORT_REPAIR_REJECTED',
   'SHORT_BATCH_VALIDATION_REJECTED',
+  'SHORT_BATCH_OWNER_WRITE_OUTSIDE_FOOTPRINT',
+  'SHORT_BATCH_INTERMEDIATE_PREFLIGHT_REJECTED',
   'SHORT_BATCH_NOT_COMMITTED',
   'UXML_SHORT_BATCH_NATIVE_REFUSED',
   'UXML_SHORT_BATCH_NOT_ELIGIBLE_OR_WITNESS_DRIFT',
@@ -51,20 +53,58 @@ export function planSourceBoundGroups(ids,rows,planning,sourceSha,maximum=MAX_GR
       ...row.nodeKeys,row.leftKey,row.rightKey]);
     requireBatch([...owned].every(key=>originalByKey.has(key)),
       'PLANNER_ORIGINAL_SOURCE_RECORD_MISSING');
-    // Exact conservative positive-node alias closure, unchanged from the
-    // native footprint. Never use NodeNumber alone as a write authority.
-    let changed=true;
-    while(changed){
-      changed=false;
-      for(const key of [...owned]){
-        const label=originalByKey.get(key).nodeNumber;
-        if(!Number.isInteger(label)||label<=0)continue;
-        for(const peer of byPositive.get(label)||[])
-          if(!owned.has(peer)){owned.add(peer);changed=true;}
+    // Mirror PortModel.moving_group transitive finite-owner/positive-link
+    // reachability, not merely one-hop node-number aliases. A finite VALV
+    // may carry the move from branch B0 into its second port in B1, then
+    // via a shared positive node into a PIPE in B2.
+    const finite=new Set(['FLAN','GASK','VALV','INST','RIGID','REDU',
+      'ELBO','TEE','OLET','COUP','FBLI','CAP']);
+    const aliases={BEND:'ELBO',ELBOW:'ELBO',REDUCER:'REDU',
+      WELDOLET:'OLET',SOCKOLET:'OLET'};
+    const kind=record=>aliases[record.type]||record.type;
+    const groupByKey=new Map();
+    for(const branchKeys of byBranch.values()){
+      const groups=[];
+      for(const key of branchKeys){
+        const record=originalByKey.get(key);
+        if(!record.position||['ATTA','SUPPORT','ANCI'].includes(kind(record)))
+          continue;
+        const last=groups.at(-1);
+        if(last&&record.refNo&&kind(record)!=='BRAN'&&
+          kind(last.at(-1))!=='BRAN'&&last.at(-1).refNo===record.refNo)
+          last.push(record);
+        else groups.push([record]);
+      }
+      for(const group of groups){
+        const type=kind(group.find(r=>kind(r)!=='RIGID')||group[0]);
+        if(finite.has(type))
+          for(const record of group)groupByKey.set(record.key,group.map(r=>r.key));
       }
     }
-    const contact=new Set(owned);
-    const positions=[...owned].map(k=>originalByKey.get(k).position)
+    const reached=new Set(owned),pending=[...owned];
+    while(pending.length){
+      const record=originalByKey.get(pending.pop());
+      if(!record?.position)continue;
+      const adjacent=[...(groupByKey.get(record.key)||[])];
+      const peers=[...(byBranch.get(record.branchIndex)||[]),
+        ...(Number.isInteger(record.nodeNumber)&&record.nodeNumber>0?
+          byPositive.get(record.nodeNumber)||[]:[])];
+      for(const key of peers){
+        const other=originalByKey.get(key);
+        if(!other?.position)continue;
+        const positive=Number.isInteger(record.nodeNumber)&&
+          record.nodeNumber>0&&record.nodeNumber===other.nodeNumber;
+        const coincident=record.branchIndex===other.branchIndex&&
+          Math.hypot(record.position.x-other.position.x,
+            record.position.y-other.position.y,
+            record.position.z-other.position.z)<=1e-6;
+        if(positive||coincident)adjacent.push(key);
+      }
+      for(const key of adjacent)
+        if(!reached.has(key)){reached.add(key);pending.push(key);}
+    }
+    const contact=new Set(reached);
+    const positions=[...reached].map(k=>originalByKey.get(k).position)
       .filter(p=>p&&Number.isFinite(p.x)&&Number.isFinite(p.y)&&
         Number.isFinite(p.z));
     // Config in this explicit Worker path is the fixed native default, 25mm.
