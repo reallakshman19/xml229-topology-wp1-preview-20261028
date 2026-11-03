@@ -100,13 +100,17 @@ class ShortBatchEngine(unittest.TestCase):
                 original,poisoned,reviewed_action_ids=ids)
         print("A6B_BATCH_PREFINAL_REPLAY_GREEN=PASS")
 
-    def test_group_rejected_if_owner_influence_overlaps(self):
-        before=resolve_psi116(interconnected_tee_fixture(2),self.cfg)
+    def test_group_rejected_if_distinct_owner_influences_overlap(self):
+        # Two DIFFERENT short owners in the same source branch, not a
+        # tautological duplicate of one owner in the argument list.
+        from test_short_batch_graph import dense_fixture
+        before=resolve_psi116(dense_fixture(1,2),self.cfg)
         rows=[r for r in short_elements(before.document,self.cfg)
               if r["eligible"] and r["componentRefNo"].startswith("SHORT-")]
         self.assertEqual(len(rows),2)
+        self.assertNotEqual(rows[0]["id"],rows[1]["id"])
         with self.assertRaisesRegex(ShortBatchRefused,"SHORT_BATCH_INDEPENDENCE_CONFLICT"):
-            assert_independent(before,[rows[0],rows[0]],self.cfg)
+            assert_independent(before,rows,self.cfg)
 
     def test_batch_selection_cannot_bypass_singleton_refusal(self):
         before=resolve_psi116(interconnected_tee_fixture(2),self.cfg)
@@ -143,14 +147,27 @@ class ShortBatchEngine(unittest.TestCase):
                                     "SHORT_BATCH_OWNER_REMOVAL_ACCOUNTING_MISMATCH"):
             normalized_owner_evidence(forged)
 
-    def test_missing_one_owner_evidence_is_detected(self):
-        before=resolve_psi116(interconnected_tee_fixture(2),self.cfg)
+    def test_missing_owner_evidence_is_rejected_by_actual_prefinal_gate(self):
+        source=interconnected_tee_fixture(2)
+        before=resolve_psi116(source,self.cfg)
         ids=owner_ids(before,self.cfg,2)
         batch=apply_independent_short_batch(
             before,policy=owner_policy(before,ids,self.cfg),config=self.cfg)
-        self.assertEqual(len(batch.owner_evidence),2)
         broken=replace(batch,owner_evidence=batch.owner_evidence[:1])
-        with self.assertRaises(AssertionError):
-            self.assertEqual(len(broken.owner_evidence),len(ids),
-                             "BATCH_OWNER_EVIDENCE_MISSING")
+        with self.assertRaisesRegex(ShortBatchRefused,
+                                    "SHORT_BATCH_PREFINAL_REVIEW_REQUIRED"):
+            verify_independent_short_batch_pre_final(
+                source,broken,reviewed_action_ids=ids)
+
+    def test_singleton_fallback_retains_complete_named_refusal_detail(self):
+        source=interconnected_tee_fixture(2)
+        before=resolve_psi116(source,self.cfg)
+        id=owner_ids(before,self.cfg,1)[0]
+        with patch("psi116_topology_resolver.short_batch._single_attempt",
+                   side_effect=ValueError("SYNTHETIC_DETAIL:full:detail")):
+            result=apply_short_batch_bisect(source,[id],config=self.cfg)
+        self.assertEqual(result.skipped[0]["reason"],
+                         "SYNTHETIC_DETAIL:full:detail")
+        self.assertEqual(result.owner_results[0]["code"],
+                         "SYNTHETIC_DETAIL:full:detail")
 
