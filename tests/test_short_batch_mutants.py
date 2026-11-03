@@ -58,11 +58,10 @@ class ShortBatchSafetyMutants(unittest.TestCase):
         print("A6B_MUTANT_GREEN:independence-planner=PASS")
         with patch.object(batch,"owner_footprint",return_value=frozenset()):
             broken=batch.plan_short_groups(before,ids,self.cfg)
-            with self.assertRaises(AssertionError) as red:
-                self.assertEqual(broken,planned,
-                                 "BATCH_INDEPENDENCE_MUTANT_INTERACTING_TOGETHER")
-        print("A6B_MUTANT_RED:independence-check-removed:AssertionError:"+
-              str(red.exception).splitlines()[-1])
+            self.assertEqual(broken,(tuple(ids),),
+                "missing planner footprint places interacting owners together")
+        print("A6B_MUTANT_RED:independence-check-removed:"+
+              "SHORT_BATCH_INDEPENDENCE_CONFLICT")
         # The atomic engine independently enforces overlap as a second gate.
         with self.assertRaisesRegex(batch.ShortBatchRefused,
                                     "SHORT_BATCH_INDEPENDENCE_CONFLICT"):
@@ -99,11 +98,10 @@ class ShortBatchSafetyMutants(unittest.TestCase):
         with patch.object(batch,"_preflight",return_value=[]):
             committed=run(lambda:batch.apply_independent_short_batch(
                 before,policy=policy,config=self.cfg))
-        with self.assertRaises(AssertionError) as red:
-            self.assertFalse(committed.committed,
-                             "BATCH_INTERMEDIATE_PREFLIGHT_MUTANT_ACCEPTED")
-        print("A6B_R1_MUTANT_RED:intermediate-preflight-removed:AssertionError:"+
-              str(red.exception).splitlines()[-1])
+        self.assertTrue(committed.committed,
+            "bypassing named global/owner guards admits synthetic blocked plan")
+        print("A6B_R2_MUTANT_RED:both-preflight-guards-removed:"+
+              "SHORT_BATCH_INTERMEDIATE_GLOBAL_PREFLIGHT_REJECTED missing")
 
 
     def test_global_preflight_call_alone_kills_its_source_mutant(self):
@@ -243,11 +241,10 @@ class ShortBatchSafetyMutants(unittest.TestCase):
         print("A6B_R1_MUTANT_GREEN:no-new-blocking-findings=PASS")
         with patch.object(batch,"_no_new_blocking_findings",return_value=True):
             committed=run()
-        with self.assertRaises(AssertionError) as red:
-            self.assertFalse(committed.committed,
-                "BATCH_NEW_BLOCKING_FINDINGS_MUTANT_ACCEPTED")
-        print("A6B_R1_MUTANT_RED:no-new-blocking-findings-forced-true:AssertionError:"+
-              str(red.exception).splitlines()[-1])
+        self.assertTrue(committed.committed,
+            "forced-true new-blocking gate must permit unsafe source")
+        print("A6B_R2_MUTANT_RED:no-new-blocking-findings-forced-true:"+
+              "SHORT_BATCH_VALIDATION_REJECTED:NO_NEW_BLOCKING_FINDINGS missing")
 
     def test_one_bad_inside_batch_isolated_by_bisect_unaffected_owners_equal_serial(self):
         original=interconnected_tee_fixture(4)
@@ -323,11 +320,10 @@ class ShortBatchSafetyMutants(unittest.TestCase):
         with patch.object(batch,"_require",side_effect=missing_guards),\
              patch.object(batch,"apply_independent_short_batch",side_effect=partial):
             broken=batch.apply_short_batch_bisect(original,ids,config=self.cfg)
-        with self.assertRaises(AssertionError) as killed:
-            self.assertEqual([o["id"] for o in broken.owner_results],ids,
-                             "BATCH_COMMIT_PARTIAL_MUTANT_HAS_MISSING_OWNERS")
-        print("A6B_MUTANT_RED:commit-partial-instead-of-bisect:AssertionError:"+
-              str(killed.exception).splitlines()[-1])
+        self.assertLess(len(broken.owner_results),len(ids),
+            "mutating both owner-census named guards admits an incomplete group")
+        print("A6B_MUTANT_RED:commit-partial-instead-of-bisect:"+
+              "SHORT_BATCH_RUN_OWNER_CENSUS_MISMATCH missing")
 
     def test_missing_owner_evidence_and_accounting_drift_cause_bisect(self):
         original=interconnected_tee_fixture(3)
@@ -371,16 +367,18 @@ class ShortBatchSafetyMutants(unittest.TestCase):
                               side_effect=forged):
                 broken=batch.apply_short_batch_bisect(original,ids,
                                                        config=self.cfg)
-            with self.assertRaises(AssertionError) as killed:
-                for receipt in broken.successful_batches:
-                    owners=receipt["transaction"]["batch"]["owners"]
-                    self.assertEqual(len(owners),len(receipt["ids"]),
-                                     "BATCH_"+name+"_ACCEPTED")
-                    for owner in owners:
-                        matched=next(r["evidence"] for r in broken.owner_results
-                                     if r["id"]==owner["id"])
-                        self.assertEqual(owner["removedWeight"],
-                                         matched["removedWeight"],
-                                         "BATCH_"+name+"_ACCEPTED")
-            print("A6B_MUTANT_RED:"+name+":AssertionError:"+
-                  str(killed.exception).splitlines()[-1])
+            mismatches=[]
+            for receipt in broken.successful_batches:
+                owners=receipt["transaction"]["batch"]["owners"]
+                if len(owners)!=len(receipt["ids"]):
+                    mismatches.append(receipt["ids"])
+                    continue
+                for owner in owners:
+                    matched=next(r["evidence"] for r in broken.owner_results
+                                 if r["id"]==owner["id"])
+                    if owner["removedWeight"]!=matched["removedWeight"]:
+                        mismatches.append(owner["id"])
+            self.assertTrue(mismatches,
+                "mutating named batch owner census admits forged source evidence")
+            print("A6B_MUTANT_RED:"+name+":"+
+                  "SHORT_BATCH_OWNER_EVIDENCE_CENSUS_MISMATCH missing")
