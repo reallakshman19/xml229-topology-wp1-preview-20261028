@@ -224,8 +224,6 @@ class DenseGraphPlanning(unittest.TestCase):
                 owners=eligible_owners(before,self.cfg,2)
                 ids=[r["id"] for r in owners]
                 self.assertEqual(ids,["SHORT:0:SHORT-A","SHORT:1:SHORT-B"])
-                # Fresh singleton authority: A commits; B is refused because
-                # A's 3-mm move creates a competitor to B's selected closure.
                 first=batch._single_attempt(source,ids[0],self.cfg)
                 self.assertTrue(first.committed,first.reject_reasons)
                 with self.assertRaisesRegex(ValueError,
@@ -237,42 +235,37 @@ class DenseGraphPlanning(unittest.TestCase):
                                  ["COMMITTED","REFUSED"])
                 self.assertIn("SHORT_ELEMENT_RECONNECTION_NOT_QUALIFIED",
                               actual.skipped[0]["reason"])
-                planned=batch.plan_short_groups(before,ids,self.cfg)
-                self.assertEqual(planned,((ids[0],),(ids[1],)))
+                self.assertEqual(batch.plan_short_groups(before,ids,self.cfg),
+                                 ((ids[0],),(ids[1],)))
                 print("A6B_R2_N1_GREEN:move-direction="+
                       ("REVERSED" if reverse else "FORWARD")+
                       ":later-refused-serial-bytes-EQUAL=PASS")
-                # Damage ONLY the grouping influence radius. The independent
-                # runtime sequential-admission gate must still REFUSE before
-                # exposing the unsafe group.
+                # Disable ONLY the new grouping buffer: actual transaction
+                # must independently refuse the unsafe group by named code.
                 with patch.object(batch,"_contact_reservation_radius",
                                   return_value=25.):
-                    weakened=batch.plan_short_groups(before,ids,self.cfg)
-                    self.assertEqual(weakened,(tuple(ids),),
-                        "N1 fixture must really exercise the old unsafe group")
-                    unsafe=batch.apply_independent_short_batch(
-                        before,policy=owner_policy(before,ids,self.cfg),
-                        config=self.cfg)
-                self.assertTrue(unsafe.committed,
-                    "N1 sequential runtime mutation must expose unsafe commit")
-                self.assertNotEqual(unsafe.fixed_xml,first.fixed_xml,
-                    "N1 mutation must expose a real difference from singleton")
-                print("A6B_R2_N1_MUTANT_RED:runtime-sequential-gate-removed:"+
-                      "SHORT_BATCH_SEQUENTIAL_OWNER_QUALIFICATION_REFUSED missing")
-                print("A6B_R2_N1_MUTANT_RED:old-contact-radius:"+
-                      "SHORT_BATCH_SEQUENTIAL_OWNER_QUALIFICATION_REFUSED")
-                # Now mutate ONLY the runtime sequential gate as well. The
-                # formerly unsafe group must reach commit (test named code
-                # expected below); no assertion-vs-hand-edited-object games.
-                with patch.object(batch,"_contact_reservation_radius",
-                                  return_value=25.),\\
-                     patch.object(batch,"_verify_order_preserving_owner_step",
-                                  return_value=None):
+                    self.assertEqual(batch.plan_short_groups(
+                        before,ids,self.cfg),(tuple(ids),))
                     with self.assertRaisesRegex(batch.ShortBatchRefused,
                         "SHORT_BATCH_SEQUENTIAL_OWNER_QUALIFICATION_REFUSED"):
                         batch.apply_independent_short_batch(
                             before,policy=owner_policy(before,ids,self.cfg),
                             config=self.cfg)
+                print("A6B_R2_N1_GUARD_GREEN:old-radius-group-refused=PASS")
+                # Remove ONLY the runtime sequential gate as a real negative
+                # mutation; old grouping must now admit bytes that serial
+                # never accepts. No hand-edited expected tuples.
+                with patch.object(batch,"_contact_reservation_radius",
+                                  return_value=25.),\
+                     patch.object(batch,"_verify_order_preserving_owner_step",
+                                  return_value=None):
+                    unsafe=batch.apply_independent_short_batch(
+                        before,policy=owner_policy(before,ids,self.cfg),
+                        config=self.cfg)
+                self.assertTrue(unsafe.committed)
+                self.assertNotEqual(unsafe.fixed_xml,first.fixed_xml)
+                print("A6B_R2_N1_MUTANT_RED:sequential-admission-removed:"+
+                      "SHORT_BATCH_SEQUENTIAL_OWNER_QUALIFICATION_REFUSED absent")
 
     def test_overlapping_owner_admission_mutant_red(self):
         before=resolve_psi116(dense_fixture(2),self.cfg)
