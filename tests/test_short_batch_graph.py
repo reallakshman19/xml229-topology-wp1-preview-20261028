@@ -63,6 +63,31 @@ def close_cross_branch_fixture():
     return verified_synthetic(doc(branch(0,"A",0),branch(20,"B",100)))
 
 
+
+def moving_contact_n1_fixture(reverse=False):
+    """Public R2 N1: owner A closes 3mm and creates a 25mm competing port.
+
+    B0 FLAN 0..86, SHORT-A GASK 86..89, VALV 89..389.
+    B1 PIPE -85..15 at y=21.5, SHORT-B 15..18, FLAN 18..104.
+    Reflection about the yz plane reverses the move while keeping geometry.
+    """
+    sign=-1 if reverse else 1
+    p=lambda x,y=0: f"{sign*x:g} {y:g} 0"
+    a=(node(10,"FLAN","A-FLAN",1,p(0))+
+       node(20,"RIGID","A-FLAN",2,p(86))+
+       node(-1,"GASK","SHORT-A",1,p(86))+
+       node(30,"RIGID","SHORT-A",2,p(89))+
+       node(40,"VALV","A-VALV",1,p(89))+
+       node(50,"VALV","A-VALV",2,p(389)))
+    b=(node(60,"PIPE","B-PIPE",1,p(-85,21.5))+
+       node(70,"PIPE","B-PIPE",2,p(15,21.5))+
+       node(-1,"GASK","SHORT-B",1,p(15,21.5))+
+       node(80,"RIGID","SHORT-B",2,p(18,21.5))+
+       node(90,"FLAN","B-FLAN",1,p(18,21.5))+
+       node(100,"RIGID","B-FLAN",2,p(104,21.5)))
+    return verified_synthetic(doc(a,b))
+
+
 def eligible_owners(before,cfg,n):
     rows=[row for row in short_elements(before.document,cfg)
           if row["componentRefNo"].startswith("SHORT-") and row["eligible"]]
@@ -189,6 +214,65 @@ class DenseGraphPlanning(unittest.TestCase):
                 "CROSS_BRANCH_25MM_CONTACT_MUTANT_UNSAFE_GROUPING")
         print("A6B_R1_RED:25mm-contacts-removed:AssertionError:"+
               str(red.exception).splitlines()[-1])
+
+
+    def test_n1_earlier_closure_creates_later_25mm_competitor_both_directions(self):
+        for reverse in (False,True):
+            with self.subTest(reverse=reverse):
+                source=moving_contact_n1_fixture(reverse)
+                before=resolve_psi116(source,self.cfg)
+                owners=eligible_owners(before,self.cfg,2)
+                ids=[r["id"] for r in owners]
+                self.assertEqual(ids,["SHORT:0:SHORT-A","SHORT:1:SHORT-B"])
+                # Fresh singleton authority: A commits; B is refused because
+                # A's 3-mm move creates a competitor to B's selected closure.
+                first=batch._single_attempt(source,ids[0],self.cfg)
+                self.assertTrue(first.committed,first.reject_reasons)
+                with self.assertRaisesRegex(ValueError,
+                    "SHORT_ELEMENT_RECONNECTION_NOT_QUALIFIED"):
+                    batch._single_attempt(first.fixed_xml,ids[1],self.cfg)
+                actual=batch.apply_short_batch_bisect(source,ids,config=self.cfg)
+                self.assertEqual(actual.fixed_xml,first.fixed_xml)
+                self.assertEqual([r["status"] for r in actual.owner_results],
+                                 ["COMMITTED","REFUSED"])
+                self.assertIn("SHORT_ELEMENT_RECONNECTION_NOT_QUALIFIED",
+                              actual.skipped[0]["reason"])
+                planned=batch.plan_short_groups(before,ids,self.cfg)
+                self.assertEqual(planned,((ids[0],),(ids[1],)))
+                print("A6B_R2_N1_GREEN:move-direction="+
+                      ("REVERSED" if reverse else "FORWARD")+
+                      ":later-refused-serial-bytes-EQUAL=PASS")
+                # Damage ONLY the grouping influence radius. The independent
+                # runtime sequential-admission gate must still REFUSE before
+                # exposing the unsafe group.
+                with patch.object(batch,"_contact_reservation_radius",
+                                  return_value=25.):
+                    weakened=batch.plan_short_groups(before,ids,self.cfg)
+                    self.assertEqual(weakened,(tuple(ids),),
+                        "N1 fixture must really exercise the old unsafe group")
+                    unsafe=batch.apply_independent_short_batch(
+                        before,policy=owner_policy(before,ids,self.cfg),
+                        config=self.cfg)
+                self.assertTrue(unsafe.committed,
+                    "N1 sequential runtime mutation must expose unsafe commit")
+                self.assertNotEqual(unsafe.fixed_xml,first.fixed_xml,
+                    "N1 mutation must expose a real difference from singleton")
+                print("A6B_R2_N1_MUTANT_RED:runtime-sequential-gate-removed:"+
+                      "SHORT_BATCH_SEQUENTIAL_OWNER_QUALIFICATION_REFUSED missing")
+                print("A6B_R2_N1_MUTANT_RED:old-contact-radius:"+
+                      "SHORT_BATCH_SEQUENTIAL_OWNER_QUALIFICATION_REFUSED")
+                # Now mutate ONLY the runtime sequential gate as well. The
+                # formerly unsafe group must reach commit (test named code
+                # expected below); no assertion-vs-hand-edited-object games.
+                with patch.object(batch,"_contact_reservation_radius",
+                                  return_value=25.),\\
+                     patch.object(batch,"_verify_order_preserving_owner_step",
+                                  return_value=None):
+                    with self.assertRaisesRegex(batch.ShortBatchRefused,
+                        "SHORT_BATCH_SEQUENTIAL_OWNER_QUALIFICATION_REFUSED"):
+                        batch.apply_independent_short_batch(
+                            before,policy=owner_policy(before,ids,self.cfg),
+                            config=self.cfg)
 
     def test_overlapping_owner_admission_mutant_red(self):
         before=resolve_psi116(dense_fixture(2),self.cfg)
