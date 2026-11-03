@@ -126,6 +126,22 @@ def _no_new_blocking_findings(before, after):
         f.blocking for f in before.findings)
 
 
+def _global_intermediate_preflight(middle,policy):
+    """Independent global plan-action veto on the ALL-removed intermediate."""
+    reasons=_preflight(middle,(),policy)
+    _require(not reasons,
+             "SHORT_BATCH_INTERMEDIATE_GLOBAL_PREFLIGHT_REJECTED:"+
+             ",".join(reasons))
+
+
+def _owner_intermediate_preflight(middle,actions,policy):
+    """Independent owner-action veto, including status, confidence and keys."""
+    reasons=_preflight(middle,actions,policy)
+    _require(not reasons,
+             "SHORT_BATCH_INTERMEDIATE_OWNER_PREFLIGHT_REJECTED:"+
+             ",".join(reasons))
+
+
 def _contact_reservation_radius(config):
     """Grouping-only guard, NOT the repair/eligibility policy.
 
@@ -422,9 +438,7 @@ def apply_independent_short_batch(
     intermediate=_serialize(original_root,before.document.namespace)
     middle=resolve_psi116(intermediate,config,
                          source_name=before.document.source_path)
-    _require(not _preflight(middle,(),policy),
-             "SHORT_BATCH_INTERMEDIATE_PREFLIGHT_REJECTED:"+
-             ",".join(_preflight(middle,(),policy)))
+    _global_intermediate_preflight(middle,policy)
     middle_to_original={}
     original_to_middle={}
     for src_branch,mid_branch in zip(before.document.branches,middle.document.branches):
@@ -462,10 +476,7 @@ def apply_independent_short_batch(
             {a.proposed_changes[0]["movePortKey"],
              a.proposed_changes[0]["targetPortKey"]}==ports),None)
         _require(closure is not None,"SHORT_ELEMENT_RECONNECTION_NOT_QUALIFIED")
-        intermediate_reasons=_preflight(middle,(*stage_actions,closure),policy)
-        _require(not intermediate_reasons,
-                 "SHORT_BATCH_INTERMEDIATE_PREFLIGHT_REJECTED:"+
-                 ",".join(intermediate_reasons))
+        _owner_intermediate_preflight(middle,(*stage_actions,closure),policy)
         change=closure.proposed_changes[0]
         keys={middle_to_original[k].key for k in change["moveKeys"]}
         target=middle_to_original[change["targetPortKey"]].key
