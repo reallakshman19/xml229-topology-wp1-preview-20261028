@@ -149,6 +149,19 @@ class DenseGraphPlanning(unittest.TestCase):
         print("A6B_R1_RED:closure-recursion-removed:AssertionError:"+
               str(red.exception).splitlines()[-1])
         print("A6B_R1_GREEN:runtime-cross-branch-edit-guard=PASS")
+        with patch.object(batch,"_expand_owner_closure_keys",
+                          side_effect=lambda before,seed,config:set(seed)),\
+             patch.object(batch,"_guard_owner_write_footprint",
+                          return_value=None):
+            unsafe=batch.apply_independent_short_batch(
+                before,policy=owner_policy(before,ids,self.cfg),
+                config=self.cfg)
+        with self.assertRaises(AssertionError) as killed:
+            self.assertFalse(unsafe.committed,
+                "BATCH_RUNTIME_OWNER_EDIT_GUARD_MUTANT_COMMITTED")
+        print("A6B_R1_RED:runtime-owner-edited-keys-guard-removed:AssertionError:"+
+              str(killed.exception).splitlines()[-1])
+
 
     def test_25mm_cross_branch_contacts_are_not_omitted(self):
         source=close_cross_branch_fixture()
