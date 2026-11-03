@@ -38,7 +38,8 @@ function sidecar({hub=true,mutate=()=>{}}={}){
   const txn={schema:'psi116-topofix-transaction/v1',
     source:{sha256:initial},committed:true,atomic:true,sourceXmlMutated:false,
     fixedXmlSha256:fixed,selectedActions:[...ids],operations,
-    batch:{atomic:true,ownerCount:2,owners:evid,ownerRevisions:revisions}};
+    batch:{atomic:true,ownerCount:2,owners:evid,ownerRevisions:revisions,
+      sourceFootprints:ids.map((id,i)=>({id,keys:['D'+i,'L'+i,'R'+i]}))}};
   const validation={schema:'psi116-topofix-validation/v1',
     sourceSha256:initial,fixedXmlSha256:fixed,committed:true,
     summary:{blockingFailureCount:0},
@@ -398,4 +399,33 @@ test('source record interaction gate has independent Node mutation kill',async()
     'BATCH_INTERACTING_SOURCE_RECORDS_MUTANT_ACCEPTED:'+mutated.applied.length));
   console.info('A6B_R1_JS_RED:interacting-source-records-guard-removed:AssertionError:'+
     'BATCH_INTERACTING_SOURCE_RECORDS_MUTANT_ACCEPTED');
+});
+
+test('qualifier refuses edited keys outside native owner source footprint; mutant RED',async()=>{
+  const malformed=sidecar({hub:false,mutate:({txn})=>{
+    txn.batch.sourceFootprints[0].keys=['D0','L0','R0'];
+    txn.operations.push({action_id:ids[0],source_node_key:'CROSS-BRANCH-PORT',
+      operation:'CLOSE_COMPONENT_PORT'});
+    txn.batch.owners[0].portEdits.push({key:'CROSS-BRANCH-PORT',
+      before:{},after:{}});
+    txn.batch.owners[0].operationCount=2;
+  }});
+  await assert.rejects(qualify(malformed,false),
+    /BATCH_OWNER_EDITS_OUTSIDE_FOOTPRINT/);
+  console.info('A6B_R1_JS_GREEN:owner-edited-keys-within-native-footprint=PASS');
+  const {readFile}=await import('node:fs/promises');
+  const text=await readFile(new URL('../tabs/topology-workspace/short-bulk-groups.mjs',
+    import.meta.url),'utf8');
+  const start=text.indexOf('    requireBatch([...req.nodeKeys,req.leftKey,req.rightKey]');
+  const end=text.indexOf("'BATCH_OWNER_EDITS_OUTSIDE_FOOTPRINT');",start);
+  assert.ok(start>0&&end>start,'real source-key gate must exist');
+  const mutant=await import('data:text/javascript;base64,'+
+    Buffer.from(text.slice(0,start)+'    // mutating actual owner edit guard away\n'+
+      text.slice(end+"'BATCH_OWNER_EDITS_OUTSIDE_FOOTPRINT');".length)).toString('base64'));
+  const broken=await mutant.qualifyGroupedWorkerResult({
+    result:malformed,ids,rows,current:source,hubEnabled:false,hash:fakeHash});
+  await assert.rejects(async()=>assert.fail(
+    'BATCH_OWNER_FOOTPRINT_MUTANT_COMMITTED:'+broken.applied.length));
+  console.info('A6B_R1_JS_RED:owner-edited-footprint-check-removed:AssertionError:'+
+    'BATCH_OWNER_FOOTPRINT_MUTANT_COMMITTED');
 });
