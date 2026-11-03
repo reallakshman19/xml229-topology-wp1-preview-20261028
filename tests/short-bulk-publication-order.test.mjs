@@ -29,13 +29,15 @@ function assertReleaseLast(body,finalizer=settle){
     "setFixStatus(message,",
     'showShortBulkAudit(outcome);',
     'updateStatus(',
-    "refreshEvidence:()=>refreshPublishedEvidence(",
   ]){
     const at=body.indexOf(required);
     assert.ok(at>=0&&at<call,
       'workspace finalizer must follow every prior potentially throwing step: '+required);
   }
   const release=/state\\.hubRevision=state\\.revision;/g;
+  const callback=body.indexOf("refreshEvidence:()=>refreshPublishedEvidence(",call);
+  assert.ok(callback>call,
+    'workspace must pass fresh evidence recheck into audited finalizer');
   const found=[...finalizer.matchAll(release)];
   assert.equal(found.length,1,'one and only one source-release promotion');
   const at=found[0].index;
