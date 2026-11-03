@@ -132,7 +132,15 @@ class DenseGraphPlanning(unittest.TestCase):
         self.assertTrue(zones[0]&zones[1])
         planned=batch.plan_short_groups(before,ids,self.cfg)
         self.assertEqual(planned,((ids[0],),(ids[1],)))
-        print("A6B_R1_GREEN:valve-chain-transitive-closure-separated=PASS")
+        from test_short_batch_engine import serial_reference
+        sequential,expected=serial_reference(source,ids,self.cfg)
+        safe=batch.apply_short_batch_bisect(source,ids,config=self.cfg)
+        self.assertFalse(safe.skipped,("CROSS_BRANCH_GROUP_REFUSED",safe.skipped))
+        self.assertEqual(safe.fixed_xml,sequential,"CROSS_BRANCH_BYTES_NOT_SEQUENTIAL")
+        observed=[{k:v for k,v in item["evidence"].items()
+                   if k!="sourceSha256"} for item in safe.owner_results]
+        self.assertEqual(observed,expected,"CROSS_BRANCH_OWNER_EVIDENCE_DRIFT")
+        print("A6B_R1_GREEN:valve-chain-transitive-closure-separated-and-serial-EQUAL=PASS")
         with patch.object(batch,"_expand_owner_closure_keys",
                           side_effect=lambda before,seed,config:set(seed)):
             broken=batch.plan_short_groups(before,ids,self.cfg)
