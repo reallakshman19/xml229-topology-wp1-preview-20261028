@@ -288,3 +288,114 @@ test('failed first split child never becomes CANCELLED and second child never ru
  assert.deepEqual(result.applied.map(x=>x.id),requested.slice(0,2));
  console.info('A6B_UI_MUTANT_GREEN:bisect-first-failure-never-cancel-downgrade=PASS');
 });
+
+
+test('cross-branch VALV finite closure is required by JS native minimum',()=>{
+  const chainRecords=[
+    {key:'A10',branchIndex:0,nodeNumber:10,type:'PIPE',refNo:'PA',position:{x:0,y:0,z:0}},
+    {key:'A20',branchIndex:0,nodeNumber:20,type:'PIPE',refNo:'PA',position:{x:100,y:0,z:0}},
+    {key:'A-SHORT',branchIndex:0,nodeNumber:-1,type:'GASK',refNo:'SA',position:{x:103,y:0,z:0}},
+    {key:'V20',branchIndex:1,nodeNumber:20,type:'VALV',refNo:'BRIDGE',position:{x:100,y:0,z:0}},
+    {key:'V50',branchIndex:1,nodeNumber:50,type:'VALV',refNo:'BRIDGE',position:{x:100,y:500,z:0}},
+    {key:'B50',branchIndex:2,nodeNumber:50,type:'PIPE',refNo:'PB',position:{x:100,y:500,z:0}},
+    {key:'B60',branchIndex:2,nodeNumber:60,type:'PIPE',refNo:'PB',position:{x:200,y:500,z:0}},
+    {key:'B-SHORT',branchIndex:2,nodeNumber:-1,type:'GASK',refNo:'SB',position:{x:203,y:500,z:0}},
+  ];
+  const chainRows=[
+    {id:'SHORT:A',eligible:true,sourceSha256:initial,
+      branchIndex:0,nodeKeys:['A-SHORT'],leftKey:'A20',rightKey:'A10'},
+    {id:'SHORT:B',eligible:true,sourceSha256:initial,
+      branchIndex:2,nodeKeys:['B-SHORT'],leftKey:'B60',rightKey:'B50'},
+  ];
+  const allKeys=chainRecords.map(r=>r.key);
+  const safe={schema:'psi116-short-group-footprints/v1',sourceSha256:initial,
+    owners:chainRows.map(r=>({id:r.id,keys:allKeys}))};
+  const result=planSourceBoundGroups(chainRows.map(r=>r.id),chainRows,
+    safe,initial,32,chainRecords);
+  assert.deepEqual(result,[['SHORT:A'],['SHORT:B']]);
+  const incomplete={...safe,owners:safe.owners.map((o,i)=>
+    i===0?{...o,keys:o.keys.filter(k=>!['V50','B50'].includes(k))}:o)};
+  assert.throws(()=>planSourceBoundGroups(chainRows.map(r=>r.id),chainRows,
+    incomplete,initial,32,chainRecords),
+    /PLANNER_NATIVE_FOOTPRINT_UNDERCOVERS_SOURCE/);
+  console.info('A6B_R1_JS_GREEN:cross-branch-finite-closure-native-minimum=PASS');
+});
+
+test('JS 25mm contact minimum rejects disjoint undercovered native zones',()=>{
+  const a={id:'SHORT:A',eligible:true,sourceSha256:initial,branchIndex:0,
+    nodeKeys:['A1'],leftKey:'A2',rightKey:'A3'};
+  const b={id:'SHORT:B',eligible:true,sourceSha256:initial,branchIndex:1,
+    nodeKeys:['B1'],leftKey:'B2',rightKey:'B3'};
+  const records=[...sourceRecordsFor([a,b])].map(r=>({
+    ...r,type:'PIPE',refNo:r.branchIndex?'PB':'PA',
+    position:{x:r.key.endsWith('1')?100:200,y:r.branchIndex?20:0,z:0},
+  }));
+  const safe={schema:'psi116-short-group-footprints/v1',sourceSha256:initial,
+    owners:[a,b].map(r=>({id:r.id,keys:records.map(v=>v.key)}))};
+  assert.deepEqual(planSourceBoundGroups([a.id,b.id],[a,b],safe,
+    initial,32,records),[[a.id],[b.id]]);
+  const broken={...safe,owners:[a,b].map(r=>({id:r.id,keys:records
+    .filter(v=>v.branchIndex===r.branchIndex).map(v=>v.key)}))};
+  assert.throws(()=>planSourceBoundGroups([a.id,b.id],[a,b],broken,
+    initial,32,records),/PLANNER_NATIVE_FOOTPRINT_UNDERCOVERS_SOURCE/);
+  console.info('A6B_R1_JS_GREEN:twenty-mm-contact-native-minimum=PASS');
+});
+
+test('isCurrent after async qualification must discard candidate, Node kill',async()=>{
+  const state=()=>({source,shortElements:rows,planning,
+    sourceRecords:sourceRecordsFor(rows),selectedIds:ids,hubEnabled:false,
+    runEngine:async()=>sidecar({hub:false}),
+    runLegacy:()=>{throw Error('LEGACY_NOT_EXPECTED');}});
+  let live=true,hashes=0,checkpoints=0;
+  const hash=async input=>{
+    if(++hashes===2)live=false; // final lineage hash inside qualification
+    return fakeHash(input);
+  };
+  const good=await runIndependentShortBulk({...state(),hash,
+    isCurrent:()=>live,onCheckpoint:()=>{checkpoints++;}});
+  assert.equal(good.stopReason,'CANCELLED');
+  assert.equal(good.applied.length,0);assert.equal(checkpoints,0);
+  console.info('A6B_R1_JS_GREEN:post-qualify-epoch-guard=PASS');
+  const {readFile}=await import('node:fs/promises');
+  const original=await readFile(new URL('../tabs/topology-workspace/short-bulk-groups.mjs',
+    import.meta.url),'utf8');
+  const target="if(!isCurrent()){stopReason='CANCELLED';return;}\n      current=validated.source;";
+  assert.ok(original.includes(target),'post-qualification guard must exist');
+  const changed=original.replace(target,'current=validated.source;');
+  const mutant=await import('data:text/javascript;base64,'+
+    Buffer.from(changed).toString('base64'));
+  live=true;hashes=0;
+  const bad=await mutant.runIndependentShortBulk({...state(),hash,
+    isCurrent:()=>live});
+  await assert.rejects(async()=>assert.equal(bad.stopReason,'CANCELLED',
+    'POST_QUALIFY_ISCURRENT_MUTANT_COMMITTED'));
+  console.info('A6B_R1_JS_RED:isCurrent-after-qualify-removed:AssertionError:'+
+    'POST_QUALIFY_ISCURRENT_MUTANT_COMMITTED');
+});
+
+test('source record interaction gate has independent Node mutation kill',async()=>{
+  const collision=sidecar({hub:false,mutate:({txn})=>{
+    for(let i=0;i<2;i++){
+      txn.operations.push({action_id:ids[i],source_node_key:'SHARED',
+        operation:'CLOSE_COMPONENT_PORT'});
+      txn.batch.owners[i].portEdits.push({key:'SHARED',before:{},after:{}});
+      txn.batch.owners[i].operationCount=2;
+    }
+  }});
+  await assert.rejects(qualify(collision,false),
+    /BATCH_INTERACTING_SOURCE_RECORDS/);
+  console.info('A6B_R1_JS_GREEN:interacting-source-records-veto=PASS');
+  const {readFile}=await import('node:fs/promises');
+  const original=await readFile(new URL('../tabs/topology-workspace/short-bulk-groups.mjs',
+    import.meta.url),'utf8');
+  const target="requireBatch(!allAffected.has(op.source_node_key),\n        'BATCH_INTERACTING_SOURCE_RECORDS');";
+  assert.ok(original.includes(target),'runtime record interaction gate required');
+  const mutant=await import('data:text/javascript;base64,'+
+    Buffer.from(original.replace(target,'// mutated duplicate guard')).toString('base64'));
+  const mutated=await mutant.qualifyGroupedWorkerResult({
+    result:collision,ids,rows,current:source,hubEnabled:false,hash:fakeHash});
+  await assert.rejects(async()=>assert.fail(
+    'BATCH_INTERACTING_SOURCE_RECORDS_MUTANT_ACCEPTED:'+mutated.applied.length));
+  console.info('A6B_R1_JS_RED:interacting-source-records-guard-removed:AssertionError:'+
+    'BATCH_INTERACTING_SOURCE_RECORDS_MUTANT_ACCEPTED');
+});
