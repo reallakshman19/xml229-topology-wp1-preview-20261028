@@ -377,6 +377,9 @@ test('isCurrent after async qualification must discard candidate, Node kill',asy
 test('source record interaction gate has independent Node mutation kill',async()=>{
   const collision=sidecar({hub:false,mutate:({txn})=>{
     for(let i=0;i<2;i++){
+      // Both owners' footprints DO contain this key, so the independent
+      // duplicate-write gate (not the earlier undercoverage guard) is tested.
+      txn.batch.sourceFootprints[i].keys.push('SHARED');
       txn.operations.push({action_id:ids[i],source_node_key:'SHARED',
         operation:'CLOSE_COMPONENT_PORT'});
       txn.batch.owners[i].portEdits.push({key:'SHARED',before:{},after:{}});
