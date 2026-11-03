@@ -66,7 +66,7 @@ test.after(async()=>{
 });
 
 const mutationPatches={
- toggleIgnored:["enableIndependentGroups:state.independentShortGroups","enableIndependentGroups:false"],
+ toggleIgnored:["enableIndependentGroups:options.independentShortGroups===true","enableIndependentGroups:false"],
  ownerEvidenceDropped:["ownerEvidence:pass.ownerEvidence||null","ownerEvidence:null"],
  releaseLastBypassed:["      state.revision+=applied.length;","      state.revision+=applied.length;state.hubRevision=state.revision;"],
  cancelStaleAllowed:["query(root,'[data-short-preview]').textContent='';state.epoch++;state.busy=false;state.batchRunning=false;",
@@ -85,6 +85,14 @@ async function scenario({count=5,hub=false,group=true,dense=false,mode='normal',
   });
   if(mutation){
    const [before,after]=mutationPatches[mutation];
+   // A stale injection point used to reject asynchronously inside the route
+   // and leave the whole mutation test waiting for a never-fulfilled page.
+   // Fail immediately with the exact source contract instead.
+   const sourceToMutate=await readFile(
+     path.resolve(root,'tabs/topology-workspace/workspace-app.mjs'),'utf8');
+   if(mutation!=='releaseLastBypassed')
+     assert.equal(sourceToMutate.split(before).length,2,
+       mutation+' exact production injection point');
    await page.route('**/tabs/topology-workspace/workspace-app.mjs',async route=>{
     const response=await route.fetch(),source=await response.text();
     let altered;
