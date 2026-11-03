@@ -5,6 +5,7 @@ and fail a real invariant assertion rather than comparing invented key tuples.
 """
 from __future__ import annotations
 from dataclasses import replace
+from hashlib import sha256
 from pathlib import Path
 import sys
 import unittest
@@ -91,7 +92,7 @@ class ShortBatchSafetyMutants(unittest.TestCase):
             with patch.object(batch,"resolve_psi116",side_effect=resolve):
                 return inject()
         with self.assertRaisesRegex(batch.ShortBatchRefused,
-                         "SHORT_BATCH_INTERMEDIATE_PREFLIGHT_REJECTED"):
+                         "SHORT_BATCH_INTERMEDIATE_GLOBAL_PREFLIGHT_REJECTED"):
             run(lambda:batch.apply_independent_short_batch(
                 before,policy=policy,config=self.cfg))
         print("A6B_R1_MUTANT_GREEN:intermediate-preflight=PASS")
@@ -103,6 +104,114 @@ class ShortBatchSafetyMutants(unittest.TestCase):
                              "BATCH_INTERMEDIATE_PREFLIGHT_MUTANT_ACCEPTED")
         print("A6B_R1_MUTANT_RED:intermediate-preflight-removed:AssertionError:"+
               str(red.exception).splitlines()[-1])
+
+
+    def test_global_preflight_call_alone_kills_its_source_mutant(self):
+        original=interconnected_tee_fixture(2)
+        before=resolve_psi116(original,self.cfg)
+        ids=owner_ids(before,self.cfg,2)
+        policy=owner_policy(before,ids,self.cfg)
+        rows={r["id"]:r for r in short_elements(before.document,self.cfg)}
+        root=batch._parse_clone(original)
+        loc=batch._build_locator_index(root,before)
+        for owner in ids:
+            for key in rows[owner]["nodeKeys"]:
+                locator=loc[key]
+                locator.branch_element.remove(locator.node_element)
+        group_middle=batch._serialize(root,before.document.namespace)
+        target_sha=sha256(group_middle.encode("utf-8")).hexdigest()
+        native_preflight=batch._preflight
+        def group_only_global(result,actions,policy):
+            if not actions and result.document.source_sha256==target_sha:
+                return ["SYNTHETIC_GLOBAL_PLAN_BLOCK"]
+            return native_preflight(result,actions,policy)
+        with patch.object(batch,"_preflight",side_effect=group_only_global):
+            with self.assertRaisesRegex(batch.ShortBatchRefused,
+                "SHORT_BATCH_INTERMEDIATE_GLOBAL_PREFLIGHT_REJECTED:"
+                "SYNTHETIC_GLOBAL_PLAN_BLOCK"):
+                batch.apply_independent_short_batch(
+                    before,policy=policy,config=self.cfg)
+        print("A6B_R2_GLOBAL_PREFLIGHT_GREEN:named-source-refusal=PASS")
+        # Mutate ONLY this named production call to no-op. The same
+        # source has no per-owner synthetic blocker, so it reaches commit.
+        with patch.object(batch,"_preflight",side_effect=group_only_global),\
+             patch.object(batch,"_global_intermediate_preflight",
+                          return_value=None):
+            unsafe=batch.apply_independent_short_batch(
+                before,policy=policy,config=self.cfg)
+        self.assertTrue(unsafe.committed)
+        print("A6B_R2_GLOBAL_PREFLIGHT_MUTANT_RED:"+
+              "SHORT_BATCH_INTERMEDIATE_GLOBAL_PREFLIGHT_REJECTED missing")
+
+    def test_owner_preflight_call_alone_kills_its_source_mutant(self):
+        original=interconnected_tee_fixture(2)
+        before=resolve_psi116(original,self.cfg)
+        ids=owner_ids(before,self.cfg,2)
+        policy=owner_policy(before,ids,self.cfg)
+        native=batch.resolve_psi116
+        def run():
+            calls=[0]
+            def inject(*args,**kwargs):
+                result=native(*args,**kwargs)
+                calls[0]+=1
+                if calls[0]!=1:return result
+                affected=tuple(replace(a,confidence=0.) if
+                    a.disposition=="CLOSE_PORT_CONNECTION" else a
+                    for a in result.fix_actions)
+                return replace(result,fix_actions=affected)
+            with patch.object(batch,"resolve_psi116",side_effect=inject):
+                return batch.apply_independent_short_batch(
+                    before,policy=policy,config=self.cfg)
+        with self.assertRaisesRegex(batch.ShortBatchRefused,
+                "SHORT_BATCH_INTERMEDIATE_OWNER_PREFLIGHT_REJECTED:"
+                "ACTION_CONFIDENCE_BELOW_POLICY"):
+            run()
+        print("A6B_R2_OWNER_PREFLIGHT_GREEN:named-source-refusal=PASS")
+        # Removing only the owner call must expose the source violation,
+        # even though global preflight remains enabled.
+        with patch.object(batch,"_owner_intermediate_preflight",
+                          return_value=None):
+            unsafe=run()
+        self.assertTrue(unsafe.committed)
+        print("A6B_R2_OWNER_PREFLIGHT_MUTANT_RED:"+
+              "SHORT_BATCH_INTERMEDIATE_OWNER_PREFLIGHT_REJECTED missing")
+
+    def test_post_apply_edited_key_source_guard_kills_mutant_alone(self):
+        original=interconnected_tee_fixture(2)
+        before=resolve_psi116(original,self.cfg)
+        ids=owner_ids(before,self.cfg,2)
+        policy=owner_policy(before,ids,self.cfg)
+        safe=batch.apply_independent_short_batch(
+            before,policy=policy,config=self.cfg)
+        self.assertTrue(safe.committed)
+        # Actual recorded edit goes beyond a deliberately narrowed source
+        # witness: the POST-apply gate independently checks committed ops.
+        operation=next(op for op in safe.operations
+                      if op.operation=="CLOSE_COMPONENT_PORT")
+        zones={entry["id"]:set(entry["keys"])
+               for entry in safe.owner_footprints}
+        zones[operation.action_id].remove(operation.source_node_key)
+        with self.assertRaisesRegex(batch.ShortBatchRefused,
+                                   "SHORT_BATCH_OWNER_WRITE_OUTSIDE_FOOTPRINT"):
+            batch._post_apply_owner_write_footprint_guard(
+                safe.operations,zones)
+        print("A6B_R2_POST_APPLY_GREEN:named-outside-footprint-refusal=PASS")
+        # Source-call mutant: the full writer must invoke ONLY this final
+        # post-apply guard. A named injected refusal is the observable veto.
+        with patch.object(batch,"_post_apply_owner_write_footprint_guard",
+            side_effect=batch.ShortBatchRefused(
+                "SHORT_BATCH_OWNER_WRITE_OUTSIDE_FOOTPRINT")):
+            with self.assertRaisesRegex(batch.ShortBatchRefused,
+                "SHORT_BATCH_OWNER_WRITE_OUTSIDE_FOOTPRINT"):
+                batch.apply_independent_short_batch(
+                    before,policy=policy,config=self.cfg)
+        with patch.object(batch,"_post_apply_owner_write_footprint_guard",
+                          return_value=None):
+            unsafe=batch.apply_independent_short_batch(
+                before,policy=policy,config=self.cfg)
+        self.assertTrue(unsafe.committed)
+        print("A6B_R2_POST_APPLY_MUTANT_RED:"+
+              "SHORT_BATCH_OWNER_WRITE_OUTSIDE_FOOTPRINT missing")
 
     def test_no_new_blocking_findings_mutant_is_rejected_on_real_group(self):
         original=interconnected_tee_fixture(2)
