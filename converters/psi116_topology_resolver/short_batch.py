@@ -119,6 +119,17 @@ def _guard_owner_write_footprint(owner, actual_keys, footprints):
              ",".join(sorted(unexpected)))
 
 
+def _post_apply_owner_write_footprint_guard(operations,footprints_by_owner):
+    """Independent last gate over ACTUAL committed edit operations.
+
+    This runs AFTER the XML comparison, not the earlier proposed move keys:
+    a late/extra operation must never be smuggled through stage admission.
+    """
+    for operation in operations:
+        _guard_owner_write_footprint(
+            operation.action_id,(operation.source_node_key,),footprints_by_owner)
+
+
 def _no_new_blocking_findings(before, after):
     old={f.code for f in before.findings if f.blocking}
     new={f.code for f in after.findings if f.blocking}
@@ -560,9 +571,7 @@ def apply_independent_short_batch(
                 authority="OWNER_EXPLICIT_SHORT_ELEMENT_SELECTION",
                 source_xml_sha256=_record_sha(prior)))
     _require(not middle_owner_changes,"SHORT_BATCH_CLOSURE_OPERATION_NOT_APPLIED")
-    for operation in operations:
-        _guard_owner_write_footprint(
-            operation.action_id,(operation.source_node_key,),footprints_by_owner)
+    _post_apply_owner_write_footprint_guard(operations,footprints_by_owner)
     expected=[n for n in original if n.key not in removed]
     actual=_records(after)
     identity=lambda n:(n.branch_index,n.component_ref_no,n.component_type,n.endpoint)
