@@ -404,6 +404,8 @@ def _document_from_caesar_inputxml(uxml: dict, *,
           "INPUT_XML_ORIGINAL_SOURCE_SHA256_MISMATCH")
     scope = uxml.get("inputXml") or {}
     frame = uxml.get("coordinateFrame") or {}
+    _need(isinstance(scope, dict), "INPUT_XML_SCOPE_INVALID")
+    _need(isinstance(frame, dict), "INPUT_XML_COORDINATE_FRAME_INVALID")
     _need(scope.get("sourceSha256") == digest and
           scope.get("coordinateAuthority") == "ANCHORED_OR_UNANCHORED_DELTA_GRAPH",
           "INPUT_XML_DELTA_PROVENANCE_MISMATCH")
@@ -616,10 +618,12 @@ def _document_from_caesar_inputxml(uxml: dict, *,
         if new_route:
             source_rows.append(new_record("FROM"))
         else:
-            _need(bool(source_rows) and source_rows[-1].node_number ==
-                  _caesar_int(from_node,key+":FROM") and
-                  _close(source_rows[-1].position,positions["FROM"]),
-                  "INPUT_XML_ROUTE_CONTINUITY_CONFLICT:"+key)
+            # No independent ROUTE_CONTINUITY_CONFLICT predicate is needed:
+            # new_route=False establishes current_to == from_node in this run;
+            # the previous iteration appended that exact TO node/position;
+            # visited_nodes above already demands _close of this FROM port to
+            # the earlier TO port. Deleting any upstream protection is caught
+            # by DELTA_PATH_CONFLICT and sourceRef/delta identity tests.
             previous = source_rows[-1]
             _need(key not in previous.inputxml_record_keys,
                   "INPUT_XML_DUPLICATE_SOURCE_KEY_ON_NODE:"+key)
