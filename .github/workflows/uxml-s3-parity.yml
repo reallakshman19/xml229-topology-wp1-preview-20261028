@@ -20,7 +20,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Fetch exactly XCU ddd3ebc770359a25e9f0e74b2ea71fa2c063e272 with sixteen Git blob checks (not vendored)
+      - name: Fetch exactly XCU ddd3ebc770359a25e9f0e74b2ea71fa2c063e272 with seventeen Git blob checks (not vendored)
         shell: bash
         run: |
           set -euo pipefail
@@ -48,6 +48,9 @@ jobs:
           curl --fail --location --retry 3 "$upstream/uxml/UxmlInputXmlSchemaMapper.js" -o "$root/uxml/UxmlInputXmlSchemaMapper.js"
           test "$(git hash-object "$root/uxml/UxmlInputXmlSchemaMapper.js")" = "0be0d67fe13ea92da9a4f2980f67c6f5d59dc67d"
           mkdir -p "$root/$(dirname 'uxml/UxmlInputXmlDeltaGraph.js')"
+          mkdir -p "$root/uxml"
+          curl --fail --location --retry 3 "$upstream/uxml/UxmlInputXmlSourceStructure.js" -o "$root/uxml/UxmlInputXmlSourceStructure.js"
+          test "$(git hash-object "$root/uxml/UxmlInputXmlSourceStructure.js")" = "76d27ee904e5a3ed10cb59c58d97ecb7fd3562dc"
           curl --fail --location --retry 3 "$upstream/uxml/UxmlInputXmlDeltaGraph.js" -o "$root/uxml/UxmlInputXmlDeltaGraph.js"
           test "$(git hash-object "$root/uxml/UxmlInputXmlDeltaGraph.js")" = "8b45016bccf2a759108dfa6efc9827cc1c2eba7d"
           mkdir -p "$root/$(dirname 'utils/line-no-metadata.js')"
