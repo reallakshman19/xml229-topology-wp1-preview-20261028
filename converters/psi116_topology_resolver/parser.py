@@ -85,6 +85,8 @@ def read_psi116_xml(source: str | Path, *, source_name: str | None = None) -> Ps
         source_text = str(source)
         resolved_source_name = source_name or "<memory>"
     root = ET.fromstring(source_text)
+    if isinstance(root.tag, str) and _local_name(root.tag) == "CAESARII":
+        raise ValueError("INPUT_XML_NATIVE_PSI116_RESOLVER_NOT_ENABLED")
     # Serialize Node source receipts in the same stable namespace form at
     # initial analysis and pre-Final replay. _serialize() registers the default
     # PSI116 namespace when building corrected XML; without the same initial
