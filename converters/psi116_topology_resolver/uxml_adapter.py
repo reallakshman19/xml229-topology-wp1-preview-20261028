@@ -123,12 +123,15 @@ def _refs(component: dict, record: dict, sha: str,
 
 
 def document_from_uxml(uxml: dict, *, source_name: str | None = None) -> Psi116Document:
+    _need(isinstance(uxml, dict), "UXML_DOCUMENT_REQUIRED")
+    sources = uxml.get("sources")
+    _need(not (isinstance(sources, list) and len(sources) == 1) or
+          isinstance(sources[0], dict), "UXML_SOURCE_ENTRY_INVALID")
     # Separate additive InputXML branch; PSI116 semantics below are unchanged.
-    if isinstance(uxml, dict) and len(uxml.get("sources") or []) == 1 and (
-        uxml["sources"][0].get("format") == "INPUT_XML"
+    if isinstance(sources, list) and len(sources) == 1 and (
+        sources[0].get("format") == "INPUT_XML"
     ):
         return _document_from_caesar_inputxml(uxml, source_name=source_name)
-    _need(isinstance(uxml, dict), "UXML_DOCUMENT_REQUIRED")
     _need(uxml.get("schemaVersion") == UXML_SCHEMA_VERSION and
           uxml.get("profile") == UXML_PROFILE, "UXML_PROFILE_NOT_TOPOLOGY_FULL")
     sources = uxml.get("sources")
@@ -238,7 +241,9 @@ def document_from_uxml(uxml: dict, *, source_name: str | None = None) -> Psi116D
 def resolve_from_uxml(uxml: dict, config: ResolverConfig | None = None,
                       *, source_name: str | None = None):
     """Same TopoFix analyzer; no modifications to parser.py or resolver.py."""
-    if isinstance(uxml, dict) and (uxml.get('sources') or [{}])[0].get('format') == 'INPUT_XML':
+    if (isinstance(uxml, dict) and isinstance(uxml.get("sources"), list) and
+            len(uxml["sources"]) == 1 and isinstance(uxml["sources"][0], dict) and
+            uxml["sources"][0].get("format") == "INPUT_XML"):
         runs=(uxml.get('inputXml') or {}).get('runs') or []
         if len(runs)>1 and any(not r.get('anchored') for r in runs):
             raise UxmlPsi116Error('INPUT_XML_CROSS_UNANCHORED_RUN_GAP_PROXIMITY_JOIN_REFUSED')
@@ -383,6 +388,8 @@ def _document_from_caesar_inputxml(uxml: dict, *,
     All positions, physical inheritance, bend/SIF source identity are independently
     checked against original InputXML bytes. No PSI116 path or engine changes.
     Source-only SIF=5 means OLET, NOT source-verified TEE; never fabricate TEE.
+    XCU validation.ready=false remains visible to the caller: read-only
+    findings are diagnostic evidence and do NOT authorize release or Apply.
     """
     _need(uxml.get("schemaVersion") == UXML_SCHEMA_VERSION and
           uxml.get("profile") == UXML_PROFILE, "INPUT_XML_NOT_TOPOLOGY_FULL")
