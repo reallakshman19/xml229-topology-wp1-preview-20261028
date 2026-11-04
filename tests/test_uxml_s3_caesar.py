@@ -33,7 +33,7 @@ class S3CaesarCrossFormat(unittest.TestCase):
 
     def pair(self):
         if not self.ready:
-            self.skipTest("Pin XCU_UXML_ROOT and all 12 Git blobs to run S3 cross-format")
+            self.skipTest("Pin XCU_UXML_ROOT and all 17 Git blobs to run S3 cross-format")
         psi_path, psi = self.reader("uxml-s3-synthetic.psi116.xml","psi116-to-uxml.mjs")
         input_path, caesar = self.reader(
             "uxml-s3-synthetic.workspace.input.xml","inputxml-to-uxml.mjs")
@@ -80,20 +80,26 @@ class S3CaesarCrossFormat(unittest.TestCase):
 
     def test_source_ref_sha_point_and_ordinal_tamper_are_rejected(self):
         _, _, _, inp = self.pair()
-        for name, change in [
+        key = inp["components"][0]["sourceRefs"][0]["recordKey"]
+        for name, change, exact_code in [
             ("sourceRefSha", lambda d: d["components"][0]["sourceRefs"][0].update(
-                fileSha256="0"*64)),
+                fileSha256="0"*64), "INPUT_XML_COMPONENT_SOURCE_REF_MISMATCH:" + key),
             ("wrongRecordKey", lambda d: d["components"][0]["sourceRefs"][0].update(
-                recordKey="E5:F10:T20")),
-            ("wrongPortPoint", lambda d: d["ports"][0]["point"].update(x=50)),
-            ("wrongFileSource", lambda d: d["sources"][0].update(hash="f"*64)),
-            ("wrongElementCount", lambda d: d["inputXml"].update(elementCount=300)),
+                recordKey="E5:F10:T20"), "INPUT_XML_COMPONENT_SOURCE_REF_MISMATCH:" + key),
+            ("wrongPortPoint", lambda d: d["ports"][0]["point"].update(x=50),
+             "INPUT_XML_TYPED_COORDINATE_MISMATCH:" + key),
+            ("wrongFileSource", lambda d: d["sources"][0].update(hash="f"*64),
+             "INPUT_XML_ORIGINAL_SOURCE_SHA256_MISMATCH"),
+            ("wrongElementCount", lambda d: d["inputXml"].update(elementCount=300),
+             "INPUT_XML_PIPINGELEMENT_COUNT_MISMATCH"),
         ]:
             with self.subTest(name=name):
                 mutant = deepcopy(inp)
                 change(mutant)
-                with self.assertRaises((UxmlPsi116Error,KeyError,ValueError)):
+                with self.assertRaises(UxmlPsi116Error) as rejected:
                     document_from_uxml(mutant)
+                self.assertEqual(str(rejected.exception), exact_code,
+                                 "a different check must never hide removal of " + name)
 
     def test_cross_format_cli_exit_and_exact_cause(self):
         psi_path,psi, _,inp = self.pair()
