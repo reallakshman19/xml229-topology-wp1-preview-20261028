@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import asdict, dataclass, field, replace
 from hashlib import sha256
+import io
 import json
 import math
 from pathlib import Path
@@ -539,6 +540,29 @@ def _validate_transaction(
     return tuple(checks)
 
 
+def _refuse_inputxml_native_apply(source: str | Path | ResolutionResult) -> None:
+    """Read only the XML root before selecting any native mutation pathway.
+
+    The same check handles a UXML-projected result and a raw InputXML
+    Path/string. It never edits the source and leaves PSI116 policy untouched.
+    """
+    if isinstance(source, ResolutionResult):
+        probe = io.StringIO(source.document.source_text)
+    elif isinstance(source, Path):
+        probe = source
+    elif isinstance(source, str):
+        probe = io.StringIO(source) if "<" in source else Path(source)
+    else:
+        return
+    try:
+        _, root = next(ET.iterparse(probe, events=("start",)))
+    except (ET.ParseError, StopIteration):
+        # Keep the original native parser's malformed-XML diagnostics.
+        return
+    if isinstance(root.tag, str) and root.tag.rsplit("}", 1)[-1] == "CAESARII":
+        raise ValueError("INPUT_XML_APPLY_NOT_ENABLED")
+
+
 def apply_topofix_transaction(
     source: str | Path | ResolutionResult,
     *,
@@ -546,6 +570,7 @@ def apply_topofix_transaction(
     config: ResolverConfig | None = None,
     memo_route: str = "native",
 ) -> TopoFixTransactionResult:
+    _refuse_inputxml_native_apply(source)
     config = config or ResolverConfig()
     config.validate()
     before = source if isinstance(source, ResolutionResult) else resolve_psi116(source, config)
