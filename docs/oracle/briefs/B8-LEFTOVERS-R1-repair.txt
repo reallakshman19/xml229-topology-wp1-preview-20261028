@@ -1,0 +1,29 @@
+STEP R1 of UXML-B8-LEFTOVERS — REPAIR ROUND 1 (the only one)          (step 1 of 1)
+
+BASE: XCU (reallakshman19/XML_Compare_Utilities) DRAFT PR #256, SAME branch fix/uxml-b8-leftovers-20261103, from head 3f5fd3958d9130f721431444b04154b353dd7c6a. Forward commits only.
+WHY: independent review 64/100 REPAIR (Oracle verdict on #239). The refactor is not pure: one moved guard is dead, so an edit the base refuses is now accepted.
+
+DO:
+1. uxml/UxmlCategorizedPatchBackSourceIntegrity.js:5 — harvestLookalike and commentOrCdata are RegExp values, not functions. Replace their two wrappers with `const {harvestLookalike,commentOrCdata}=deps;`. Keep the docs/uxml/ mirror byte-identical.
+2. Add a FAST Node test (LF and CRLF): edit RESTRAINT TYPE on one row while another row holds a `<RESTRAINT NODE="99">` inside a comment, inside CDATA, and a commented `<SIF>`. All three must refuse with S42_SHARED_EXTERNAL_EDIT_REFUSED (as at base ddd3ebc7) and write no bytes.
+3. Add mutants, each RED in a fast suite with a GREEN control: (a) MUTATION_GUARD_S40_HIDDEN_MARKUP disabled; (b) MUTATION_GUARD_S40_NESTED_HARVEST disabled.
+4. Numeric repair text (UxmlCategorizedPatchBackCarry.js:16-20): the suggested "type X" must itself pass the canonical-number check; otherwise use the generic refusal text. Test 1.5E+02→150, 100.→100, +5→5, 1e-7, 1E21, 0x10.
+5. tests/uxml-b8-leftovers-fast.test.mjs:107-112: make the interleaved A/B/A test assert a non-empty inheritedRows with exact viewRow/fileRow, and a cross-Line carry refusal whose viewRow != fileRow. Kill the "carry-refusal fileRow dropped" mutant in this fast test.
+
+EXPECTED OUTCOME:
+- The three hidden-markup cases refuse exactly as at base; every other accept/refuse result is unchanged.
+- New tests and mutants are RED when the guard is removed and GREEN with it.
+- No numeric suggestion is a value the engine would refuse.
+
+TESTS (name each with pass/total):
+- the new fast tests (LF + CRLF) and new mutants
+- all suites from your previous receipt: b8 coverage/extended, leftovers-fast/split, r3 editable counts 37/42/5, r2-carry, ui-classification, b8 mutants LF/CRLF, b7 controller + mutants, s4-2 projection/patch-back + mutants, s3/s4-1 + mutants, s4-0 audit, S1, workspace admission
+- node scripts/uxml-b8-refactor-witness.mjs (171 / 0)
+- CI green at the exact new head, no continue-on-error
+
+EVIDENCE LEVEL NEEDED: L2 (real checkout). If you have no checkout, say so, push the commits, and mark local runs NOT_RUN; the Oracle's runner will run them.
+
+DO NOT: change what is accepted or refused (except restoring the base refusal above); touch S4.0, strict S3, S4.1, S1, tolerances, CLOS; make AllowableStress editable; touch TopoFix or lane-A files; use Owner data; merge.
+
+RETURN: a work_returned ORACLE-CYCLE-RECEIPT on XCU #239 in the RETURN format (base used, new head, files changed, outcome per item, tests with counts and evidence level, NOT_RUN, deviations, question), plus a CODER-CHECKPOINT. Then STOP.
+If blocked: STOP and ask with 2–4 options, your suggestion first.

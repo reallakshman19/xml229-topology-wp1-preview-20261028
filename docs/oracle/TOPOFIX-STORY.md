@@ -2,7 +2,32 @@
 
 **RESUME HERE after compaction: read this file first, then act. I am TopoFix Oracle (Owner: "You are oracle, own these projects").**
 
-## STATUS 3 Nov 13:55 (newest; overrides older status lines below)
+## STATUS 4 Nov ~17:30 (newest; NEW PC; overrides everything below)
+- **Setup:** new PC; this session's folder is C:/Code D. Owner: "you are oracle" (skills: C:/Users/reall/.claude/skills = Common agent-work @12b1ba5b). Tools: portable Git 2.56, Node 22.23.4 and gh 2.103.3 (signed in) in C:/Users/reall/tools (add to PATH in every shell). No python yet. Cron a107d3d4 runs the 20-min check (:07/:27/:47, session-only). Hooks are in ~/.claude/settings.json: PreCompact plus SessionStart[compact] → ~/.claude/hooks/oracle-compact.ps1.
+- **Rules:**
+  - Owner rule: NO MERGE TO MAIN WITHOUT A PROTOTYPE that the Owner runs on real inputs.
+  - Step-by-step method: C:/Code D/STEP-BY-STEP-WBS-TEMPLATE.md. One card at a time; a gate on each RETURN; L2 is required before the next card for coders without a repo.
+  - Ask the Owner before any download, install, push, post or new card. Exception: cards the Owner already approved.
+- **XCU PR #256** (B8 leftovers, @3f5fd395):
+  - Oracle verdict **REPAIR 64**. Blocker: SourceIntegrity.js:5 wraps the RegExp deps, which kills MUTATION_GUARD_S40_HIDDEN_MARKUP; the Oracle reproduced it and checked the 1-line fix.
+  - Drafts in C:/Code D/oracle-docs (verdict-256-r0.md, briefs/B8-LEFTOVERS-R1-repair.txt). **NOT posted.** There is no coder (coder-b6's URL is unknown).
+- **3D_Converters_v0.5a work.** Chats (identify them by URL; the tab ids change):
+  - perf-planner 6aeaa603
+  - perf-coder 6aeae4fd
+  - rigid-planner 6aeaaf92
+  - rigid-coder 6aeafc82
+- **PERF:** plan C:/Code D/plans/PERF-TASK1-WBS.md.
+  - Branch `fix/glrd-preview-direct-handoff-20261104` @**cabd271c** = Steps 2–7 rebuilt on the real code (on top of 2b293905).
+  - The runner is testing cabd271c (scratch runperf2). Gate pending.
+  - Next: 1.R4 (bridge readers dryrun.js:13, diagnostics-audit.js:101), 1.R5 Owner decision on writing the envelope, 1.R6 browser, then 1.P prototype on GLRD BM2 + STF stage JSON.
+- **RIGID:** plan C:/Code D/plans/RIGID-TASK2-WBS.md.
+  - Owner policy: C/D for FLAN/VALV/INST/GASK; D for RIGID/other; A/B only when justified; missing/zero = UNKNOWN → block final, UNVERIFIED preview.
+  - Mass source = weight master (type from DTXR/name + bore + length + rating); empirical 60–100% = validation, and fallback only when there's no master entry.
+  - 2.1 census: GLRD BM2 has 0 non-zero weights; 54 RIGID; all 54 block. So the prototype input = the Weight-Match-enriched XML.
+  - 2.2 kit L1 24/24 (`0e4ca49f`). **2.2b BLOCKED**: the coder couldn't push unchanged. Needs the Owner: download the ZIP + install Python?
+  - Next: 2.3 provenance fix plus the mass-source precedence.
+
+## STATUS 3 Nov 13:55 (superseded by 4 Nov above)
 - Handover spec: C:/t/handover/TOPOFIX-ORACLE-HANDOVER.md. Mode: Owner stand-in, only TopoFix Oracle. Merges only on Owner "merge" (gh pr ready; gh pr merge --merge --match-head-commit <checked head>; verify main tree == head tree).
 - Repos: TopoFix = reallakshman19/xml229-topology-wp1-preview-20261028 (#12). XCU = reallakshman19/XML_Compare_Utilities (#239).
 - Lanes: A = coder-a5 https://chatgpt.com/c/6ae93bf8-d038-83eb-972f-485e4b509db2 (tab-3), IDLE (stood down). B = coder-b5 https://chatgpt.com/c/6ae93c2a-b924-83eb-af0d-5d17a8022e60 (tab-7), WORKING B8 R3. ChatGPT often "Message delivery timed out" -> nudge "continue"; tab-3 once "Could not load conversation" -> navigate same URL. Subagents must NOT use Browser pane tabs; tell runners not to leave background node runs (uxml-b8-editability-public takes ~50 min).
@@ -417,3 +442,9 @@ Next after current: coder-a §3.3 preview on ops OR next Owner pick; coder-b S3b
 - 3 Nov 19:2x: B8-LEFTOVERS PR #256 last checkpoint push 13 @3f5fd395 (14:27Z), no receipt. tab-7 coder-b5 chat WILL NOT LOAD (Could not load conversation; after 2 reloads shows empty chat + stale composer draft). Did not send. Retry next cycle; if still broken, ask Owner yes to open coder-b6 (buddy handover from #256 checkpoints).
 - 3 Nov 19:4x: tab-7 coder-b5 chat still will not load (3rd reload, empty chat). #256 still @3f5fd395 push 13, no receipt. Asked Owner: yes to open coder-b6 (buddy) / wait / Owner checks chat on own device.
 - 3 Nov 20:3x: OWNER "copy all to draft PR, prepare handover". Rewrote TOPOFIX-HANDOVER-REPORT-2026-11-03.md (20:30, detailed: open/stalled/merged/parked, checkpoint kinds, B8-leftovers continuation via coder-b6, loop, history, coder driving, start-up). Synced all records + 48 briefs + memory to TopoFix DRAFT PR #27 @16ee3618 via local-only C:/t/handover/sync-oracle-docs.sh (redacts Owner model path/name; privacy gate clean). Open: Owner yes/wait for coder-b6 (coder-b5 chat dead; #256 @3f5fd395 push 13).
+- 4 Nov 14:4x: NEW PC (Owner: "local pc not available"); Oracle resumed in session at C:/Code D from copies of the 4 records (masters in C:/t/handover/ unreachable). Owner: "you are oracle" -> Common/skills/agent-work fetched to C:/Code D/skills/agent-work (795 files @12b1ba5b; oracle-standalone applies). Cycle now (read-only, unauthenticated API): coder-b6 takeover RETURNED #256 @3f5fd395 (#239 comment 6610390265, 3 Nov 17:04Z; zero commits, all CI-log counts, local NOT_RUN); CI 8/8 SUCCESS at exact head; mains unchanged (XCU ddd3ebc7, TopoFix f4509b5a). coder-b6 chat URL unknown to this Oracle.
+- 4 Nov 15:0x: Owner "Install Git + Node": portable MinGit 2.56.0.4 + Node v22.23.4 (CI uses 22) in C:/Users/reall/tools (SHA-256 verified, user PATH). XCU clone D:/CodeD/topofix-agents/xcu; worktree rb-256 @3f5fd395 (base == main ddd3ebc7, 35 files). Runbook/brief from PR #27 to C:/Code D/oracle-docs. Runner (Sonnet, scratch run256) + fresh reviewer (Opus, worktree rev-pr256, scratch rev256) launched. No python/gh here: verdict cannot be posted until gh is authenticated.
+- 4 Nov 15:2x: gh 2.103.3 installed (portable, SHA-256 verified); Owner signed in (reallakshman19; repo/workflow/read:org/gist).
+- 4 Nov 15:3x: #256 RUNNER SUPPORTS @3f5fd395 (local Node 22): every receipt count matched (B8 200/200, fast 10/10, r2-carry 35/35, b8 mutants LF/CRLF 30/30, B7 21/21 + mutants 9/9, S4.2 50/50 + 52/52 + mutants, S4.1 64/64, S3 22/22, S4.0 86/86, S1 12/12, admission 20/20); witness 171/0 mismatches (needed a scratch symlink->junction shim: EPERM on symlinkSync under this Windows account; no tracked file changed); mirrors 10/10, max 213 lines. NOT_RUN: editability-public (CI 4/4), Playwright (CI). Incident: runner accidentally launched bare `node --test` ~5 min, stopped, no node left. Waiting on fresh reviewer (rev-pr256).
+- 4 Nov 16:xx: #256 fresh reviewer REPAIR 64 (15/12/10/14/13). BLOCKER: SourceIntegrity.js:5 wraps RegExp deps harvestLookalike/commentOrCdata as functions -> MUTATION_GUARD_S40_HIDDEN_MARKUP dead; synthetic comment/CDATA-hidden RESTRAINT/SIF: base refuses S42_SHARED_EXTERNAL_EDIT_REFUSED 3/3, head ok:true + bytes 3/3 (Oracle re-ran: CONFIRMED; one-line destructure fix restores refusal 3/3). Also: numeric repair text can suggest refused values (1e-7, 1E21, 0x10); interleaved fast test vacuous. Runner SUPPORTS but no suite covers the guard. ORACLE VERDICT: REPAIR (round 1 of 1). Drafts: C:/Code D/oracle-docs/verdict-256-r0.md + briefs/B8-LEFTOVERS-R1-repair.txt. NOT posted yet; coder for repair = open question (coder-b6 chat URL unknown; coder-b5 dead). Worktrees rb-256/orc-256-* removed; only xcu clone remains.
+- 4 Nov 16:3x: 3D_Converters work. Owner gave 4 ChatGPT chats (perf-planner seed, perf-coder tab-1, rigid-planner tab-2, rigid-coder tab-3). Plans: C:/Code D/plans/PERF-TASK1-WBS.md, RIGID-TASK2-WBS.md (template C:/Code D/STEP-BY-STEP-WBS-TEMPLATE.md). Owner "Send both": 1.R1 -> perf-coder (patches + hashes), 2.0 -> rigid-planner (policy sheet); both verified delivered. Agent-work skills installed to C:/Users/reall/.claude/skills (795 files). Owner chose 20-min check + compact hook: cron a107d3d4 (:07/:27/:47, session-only, 7-day expiry); hooks in ~/.claude/settings.json (PreCompact warn + SessionStart[compact] resume context) via ~/.claude/hooks/oracle-compact.ps1. PR #256 REPAIR verdict still NOT posted (Owner to decide).
