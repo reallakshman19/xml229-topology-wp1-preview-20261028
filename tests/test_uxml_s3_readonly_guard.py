@@ -12,6 +12,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 from converters.psi116_topology_resolver.uxml_edit_ops import (
     UxmlPatchError, apply_edit_ops, compare_patch_to_direct, export_edit_ops,
 )
