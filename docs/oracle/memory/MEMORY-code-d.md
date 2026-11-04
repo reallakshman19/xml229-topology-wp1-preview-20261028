@@ -1,0 +1,1 @@
+- [No merge without prototype](no-merge-without-prototype.md) — Owner rule: prove in a prototype on real inputs before any merge to main
