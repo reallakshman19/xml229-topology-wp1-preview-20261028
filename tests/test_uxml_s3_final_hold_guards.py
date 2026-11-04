@@ -85,6 +85,17 @@ class FinalInputXmlHoldGuards(unittest.TestCase):
         self.exact("CROSS_FORMAT_UNANCHORED_ABSOLUTE_FRAME_COMPARISON_REFUSED",
                    lambda: compare_cross_format_uxml(self.psi, self.mixed()))
 
+    def test_invalid_inputxml_scope_is_named(self):
+        hub = self.hub()
+        hub["inputXml"] = ["malformed", "scope"]
+        self.exact("INPUT_XML_SCOPE_INVALID", lambda: document_from_uxml(hub))
+
+    def test_invalid_coordinate_frame_is_named(self):
+        hub = self.hub()
+        hub["coordinateFrame"] = ["malformed", "frame"]
+        self.exact("INPUT_XML_COORDINATE_FRAME_INVALID",
+                   lambda: document_from_uxml(hub))
+
     def test_B2_coordinate_frame_mismatch(self):
         hub = self.hub()
         hub["coordinateFrame"]["transform"] = "UNVERIFIED"
@@ -228,6 +239,38 @@ class FinalInputXmlHoldGuards(unittest.TestCase):
         hub["coordinateFrame"]["transform"] = "UNVERIFIED"
         self.exact("CROSS_FORMAT_HUB_FRAME_UNVERIFIED",
                    lambda: compare_cross_format_uxml(self.psi, hub))
+
+    def test_B3_raw_inputxml_export_cli_refuses_before_missing_xcu_reader(self):
+        self._assert_raw_inputxml_cli_holds_without_reader("uxml_export_ops")
+
+    def test_B3_raw_inputxml_patch_cli_refuses_before_missing_xcu_reader(self):
+        self._assert_raw_inputxml_cli_holds_without_reader("uxml_patch_psi116")
+
+    def _assert_raw_inputxml_cli_holds_without_reader(self, module):
+        original = self.input_path.read_bytes()
+        with tempfile.TemporaryDirectory(prefix="public-inputxml-cli-order-") as tmp:
+            root = Path(tmp)
+            ops = root / "not-created.ops.json"  # deliberately absent
+            output = root / "not-created-fixed.xml"
+            validation = root / "not-created-validation.json"
+            env = os.environ.copy()
+            env["XCU_UXML_ROOT"] = str(root / "nonexistent-xcu-reader")
+            extra = (["--output", str(output), "--validation", str(validation)]
+                     if module == "uxml_patch_psi116" else [])
+            process = subprocess.run(
+                [sys.executable, "-m", "converters.psi116_topology_resolver." + module,
+                 str(self.input_path), str(ops), *extra],
+                cwd=ROOT, env=env, capture_output=True, text=True, timeout=30,
+            )
+            self.assertEqual(process.returncode, 1,
+                             process.stdout + process.stderr)
+            self.assertEqual(process.stdout.strip().splitlines(),
+                             ["DIFFERENT", "ERROR: INPUT_XML_APPLY_NOT_ENABLED"])
+            self.assertNotIn("XCU_PINNED_READER_REQUIRED",
+                             process.stdout + process.stderr)
+            for target in (ops, output, validation):
+                self.assertFalse(target.exists(), "refusal created " + str(target))
+        self.assertEqual(self.input_path.read_bytes(), original)
 
 
 if __name__ == "__main__":
