@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from xml.etree import ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -58,6 +59,12 @@ class S3ExactCodeGuards(unittest.TestCase):
 
     def key(self, hub, index):
         return hub["components"][index]["sourceRefs"][0]["recordKey"]
+
+    def test_malformed_non_dict_source_entry_is_named_refusal(self):
+        hub = deepcopy(self.input)
+        hub["sources"][0] = ["malformed", "source"]
+        self.exact("UXML_SOURCE_ENTRY_INVALID", lambda: document_from_uxml(hub))
+        self.exact("UXML_SOURCE_ENTRY_INVALID", lambda: resolve_from_uxml(hub))
 
     def test_M04_inputxml_nonfirst_source_still_refuses_edit_export(self):
         hub = deepcopy(self.input)
@@ -126,11 +133,23 @@ class S3ExactCodeGuards(unittest.TestCase):
             info["to"]["x"] += 7
         # Delta lengths are unchanged and every shared node is shifted together;
         # only literal original absolute anchors remain at their old coordinates.
-        with self.assertRaises(UxmlPsi116Error) as raised:
-            document_from_uxml(hub)
-        self.assertTrue(str(raised.exception).startswith("INPUT_XML_ABSOLUTE_ANCHOR_MISMATCH:"),
-                        str(raised.exception))
-        self.assertIn(":FROM", str(raised.exception))
+        root = ET.fromstring(hub["sources"][0]["sourceText"])
+        rows = [element for element in root.iter()
+                if element.tag.rsplit("}", 1)[-1].upper() == "PIPINGELEMENT"]
+        expected = None
+        for index, comp in enumerate(hub["components"]):
+            if comp["sourceRefs"][0]["runId"] != anchored:
+                continue
+            for endpoint in ("FROM", "TO"):
+                if all(rows[index].get(endpoint + axis) is not None
+                       for axis in ("_X", "_Y", "_Z")):
+                    expected = ("INPUT_XML_ABSOLUTE_ANCHOR_MISMATCH:" +
+                                self.key(hub, index) + ":" + endpoint)
+                    break
+            if expected is not None:
+                break
+        self.assertIsNotNone(expected, "public anchored run must have a literal XYZ")
+        self.exact(expected, lambda: document_from_uxml(hub))
 
     def test_M11_false_anchored_run_requires_real_original_absolute_anchor(self):
         hub = deepcopy(self.delta)
