@@ -5,6 +5,16 @@ on:
       - 'converters/psi116_topology_resolver/uxml_adapter.py'
       - 'converters/psi116_topology_resolver/uxml_compare.py'
       - 'converters/psi116_topology_resolver/uxml_edit_ops.py'
+      - 'converters/psi116_topology_resolver/parser.py'
+      - 'converters/psi116_topology_resolver/resolver.py'
+      - 'converters/psi116_topology_resolver/analysis.py'
+      - 'converters/psi116_topology_resolver/models.py'
+      - 'converters/psi116_topology_resolver/planner.py'
+      - 'converters/psi116_topology_resolver/transaction.py'
+      - 'converters/psi116_topology_resolver/short_memo.py'
+      - 'converters/xml-cii-2019-standalone/topology-integration.js'
+      - 'tabs/topology-workspace/topology-worker.mjs'
+      - 'tests/test_uxml_s3_mutation_guards.py'
       - 'tests/test_uxml_s3_caesar.py'
       - 'tests/test_uxml_s3_reconcile.py'
       - 'tests/test_uxml_s3_readonly_guard.py'
@@ -48,7 +58,6 @@ jobs:
           curl --fail --location --retry 3 "$upstream/uxml/UxmlInputXmlSchemaMapper.js" -o "$root/uxml/UxmlInputXmlSchemaMapper.js"
           test "$(git hash-object "$root/uxml/UxmlInputXmlSchemaMapper.js")" = "0be0d67fe13ea92da9a4f2980f67c6f5d59dc67d"
           mkdir -p "$root/$(dirname 'uxml/UxmlInputXmlDeltaGraph.js')"
-          mkdir -p "$root/uxml"
           curl --fail --location --retry 3 "$upstream/uxml/UxmlInputXmlSourceStructure.js" -o "$root/uxml/UxmlInputXmlSourceStructure.js"
           test "$(git hash-object "$root/uxml/UxmlInputXmlSourceStructure.js")" = "76d27ee904e5a3ed10cb59c58d97ecb7fd3562dc"
           curl --fail --location --retry 3 "$upstream/uxml/UxmlInputXmlDeltaGraph.js" -o "$root/uxml/UxmlInputXmlDeltaGraph.js"
@@ -104,7 +113,7 @@ jobs:
               return count,skips
           before,old_skips=run(baseline,"MAIN_F4509B5A")
           now,new_skips=run(work,"STEP_2A_HEAD")
-          assert now>=before+15,(before,now,"EXPECTED_12_S3_PLUS_3_GUARD_TESTS")
+          assert now==before+35,(before,now,"EXPECTED_16_2A_PLUS_19_R1_TESTS")
           assert new_skips<=old_skips,(old_skips,new_skips,"NEW_TEST_SKIPS_REFUSED")
           print(f"PYTHON_BASELINE_DELTA={now-before}; NEW_SKIPS={max(0,new_skips-old_skips)}")
           PY
@@ -114,8 +123,9 @@ jobs:
           set -euo pipefail
           python3 -B -m unittest discover -s tests -p test_uxml_s3_caesar.py -v 2>&1 | tee "$RUNNER_TEMP/s3-caesar.log"
           python3 -B -m unittest discover -s tests -p test_uxml_s3_reconcile.py -v 2>&1 | tee "$RUNNER_TEMP/s3-reconcile.log"
+          python3 -B -m unittest discover -s tests -p test_uxml_s3_mutation_guards.py -v 2>&1 | tee "$RUNNER_TEMP/s3-mutants.log"
           python3 -B -m unittest discover -s tests -p test_uxml_s3_readonly_guard.py -v 2>&1 | tee "$RUNNER_TEMP/s3-readonly.log"
-          if grep -Eqi '\bskipped\b' "$RUNNER_TEMP/s3-caesar.log" "$RUNNER_TEMP/s3-reconcile.log" "$RUNNER_TEMP/s3-readonly.log"; then
+          if grep -Eqi '\bskipped\b' "$RUNNER_TEMP/s3-caesar.log" "$RUNNER_TEMP/s3-reconcile.log" "$RUNNER_TEMP/s3-readonly.log" "$RUNNER_TEMP/s3-mutants.log"; then
             echo "S3_TEST_SKIP_REFUSED" >&2; exit 1
           fi
       - name: Public synthetic PSI116 versus InputXML findings by code and strict thirteen differences
