@@ -557,6 +557,11 @@ def _document_from_caesar_inputxml(uxml: dict, *,
                   "INPUT_XML_DUPLICATE_OR_INVALID_RUN_ELEMENT_INDEX")
             run_by_index[ix] = (run_index, run)
     _need(set(run_by_index) == set(range(len(rows))), "INPUT_XML_RUN_COVERAGE_INCOMPLETE")
+    # Deliberately NOT consumed: hub run.authority/run.gapPolicy and
+    # coordinateFrame.runCount/unanchoredRunCount. These are non-authoritative
+    # display metadata; the original-source partition and verified XYZ frame
+    # exclusively determine topology and read-only comparison/refusal.
+    # The public mutation test confirms such metadata cannot change findings.
     run_fields = ("id", "elementIndices", "edgeCount", "nodeCount",
                   "firstNode", "anchored")
     _need(len(runs) == len(source_runs) and all(
