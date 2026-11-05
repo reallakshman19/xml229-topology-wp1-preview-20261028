@@ -82,7 +82,7 @@ class FinalInputXmlHoldGuards(unittest.TestCase):
 
     def _change_last_source_element(self, change, *, strict_reader=False):
         original = self.input_path.read_text(encoding="utf-8")
-        tags = list(re.finditer(r"<PIPINGELEMENT\\b[^>]*>", original))
+        tags = list(re.finditer(r"<PIPINGELEMENT\b[^>]*>", original))
         self.assertEqual(len(tags), 6)
         last = tags[5]
         changed = change(last.group())
@@ -198,7 +198,7 @@ class FinalInputXmlHoldGuards(unittest.TestCase):
 
     def test_IA2_incomplete_absolute_anchor_is_named(self):
         hub = self._change_last_source_element(
-            lambda tag: re.sub(r'\\s+FROM_Y="[^"]*"', "", tag))
+            lambda tag: re.sub(r'\s+FROM_Y="[^"]*"', "", tag))
         self.exact("INPUT_XML_INCOMPLETE_ABSOLUTE_ANCHOR",
                    lambda: document_from_uxml(hub))
 
@@ -217,7 +217,7 @@ class FinalInputXmlHoldGuards(unittest.TestCase):
             _caesar_original_rows, _recompute_inputxml_runs,
         )
         original = self.input_path.read_text(encoding="utf-8")
-        tags = list(re.finditer(r"<PIPINGELEMENT\\b[^>]*>", original))
+        tags = list(re.finditer(r"<PIPINGELEMENT\b[^>]*>", original))
         tag = tags[5]
         altered = tag.group()
         for endpoint in ("FROM", "TO"):
