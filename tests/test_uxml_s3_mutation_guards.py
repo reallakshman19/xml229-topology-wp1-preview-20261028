@@ -399,6 +399,71 @@ class S3Step2BDeleteOneGuardMutants(unittest.TestCase):
                 source, policy=transaction.TransactionPolicy(apply_all_safe=True))
         self.assertEqual(str(rejected.exception), "INPUT_XML_APPLY_NOT_ENABLED")
 
+    @staticmethod
+    def _source_guard_mutant(adapter, original, removed, case_name):
+        if original.count(removed) != 1:
+            raise AssertionError("SINGLE_EDIT_MUTANT_TARGET_NOT_UNIQUE:" + case_name)
+        scope = {}
+        exec(compile(original.replace(removed, ""), "<mutant-" + case_name + ">", "exec"),
+             adapter.__dict__, scope)
+        return scope["_document_from_caesar_inputxml"]
+
+    def test_R2_B1_three_nested_type_guards_green_then_red(self):
+        from converters.psi116_topology_resolver import uxml_adapter as adapter
+        source = inspect.getsource(adapter._document_from_caesar_inputxml)
+        matrix = (
+            ("PORT_REF_DICT",
+             '            _need(isinstance(refs[0], dict),\n'
+             '                  "INPUT_XML_PORT_SOURCE_REF_MISMATCH:" + key)\n',
+             "test_R2_B1a_non_dict_port_source_ref_exact"),
+            ("RAW_ATTRIBUTES_DICT",
+             '        _need(isinstance(raw_attributes, dict),\n'
+             '              "INPUT_XML_RAW_RECORD_ID_MISMATCH:" + key)\n',
+             "test_R2_B1b_non_dict_component_raw_attributes_exact"),
+            ("INPUTXML_EVIDENCE_DICT",
+             '        _need(isinstance(info, dict),\n'
+             '              "INPUT_XML_RAW_RECORD_ID_MISMATCH:" + key)\n',
+             "test_R2_B1c_non_dict_component_inputxml_evidence_exact"),
+        )
+        for name, single_guard, witness_name in matrix:
+            with self.subTest(guard=name):
+                witness = self.scenario(witness_name)
+                witness()  # GREEN, exact named exception
+                mutant = self._source_guard_mutant(adapter, source, single_guard, name)
+                with mock.patch.object(adapter, "_document_from_caesar_inputxml", mutant):
+                    self.must_go_red(witness)
+                    if name == "PORT_REF_DICT":
+                        self.must_go_red(self.scenario(
+                            "test_R2_B1_all_inputxml_read_paths_are_named_on_type_fuzz"))
+                print("MUTANT_RED:R2_B1:" + name, flush=True)
+
+    def test_R2_B2_partition_count_guard_deleted_green_then_red(self):
+        from converters.psi116_topology_resolver import uxml_adapter as adapter
+        witness = self.scenario("test_R2_B2_extra_empty_run_requires_same_partition_count")
+        witness()  # GREEN exact INPUT_XML_RUN_PARTITION_MISMATCH
+        source = inspect.getsource(adapter._document_from_caesar_inputxml)
+        deleted = "len(runs) == len(source_runs) and "
+        mutant = self._source_guard_mutant(adapter, source, deleted, "B2_RUN_COUNT")
+        with mock.patch.object(adapter, "_document_from_caesar_inputxml", mutant):
+            self.must_go_red(witness)
+        print("MUTANT_RED:R2_B2:PARTITION_RUN_COUNT", flush=True)
+
+    def test_R2_B3_edgeCount_type_guard_deleted_float_and_bool_go_red(self):
+        from converters.psi116_topology_resolver import uxml_adapter as adapter
+        witnesses = (
+            self.scenario("test_R2_B3_float_edgeCount_refuses_partition_type"),
+            self.scenario("test_R2_B3_bool_edgeCount_refuses_partition_type"),
+        )
+        for witness in witnesses:
+            witness()  # GREEN named partition refusal
+        source = inspect.getsource(adapter._document_from_caesar_inputxml)
+        deleted = 'type(run.get("edgeCount")) is int and\n              '
+        mutant = self._source_guard_mutant(adapter, source, deleted, "B3_EDGECOUNT_TYPE")
+        with mock.patch.object(adapter, "_document_from_caesar_inputxml", mutant):
+            for label, witness in zip(("FLOAT", "BOOL"), witnesses):
+                self.must_go_red(witness)
+                print("MUTANT_RED:R2_B3:" + label + "_EDGECOUNT_TYPE", flush=True)
+
     def test_T1_honest_source_variants_each_kill_the_matching_mutant(self):
         from converters.psi116_topology_resolver import uxml_adapter as adapter
 
