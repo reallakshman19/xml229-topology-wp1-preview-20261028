@@ -121,12 +121,14 @@ jobs:
           assert new_skips<=old_skips,(old_skips,new_skips,"NEW_TEST_SKIPS_REFUSED")
           print(f"PYTHON_BASELINE_DELTA={now-before}; NEW_SKIPS={max(0,new_skips-old_skips)}")
           PY
-      - name: Original d196e345 B1 repro at N=1200 and N=5000 from pinned public reader
+      - name: Three-way B1 historical repro, public reverse N=1200/5000
         shell: bash
         run: |
           set -euo pipefail
           git fetch --no-tags --depth=1 origin d196e345c17b7cbc74df9219c56e816efc5d2ee4
+          git fetch --no-tags --depth=1 origin c6b3e9d3ad4d2fb756b9e811e61e63d33bc86bc7
           git worktree add --detach "$RUNNER_TEMP/topofix-2b-fork" d196e345c17b7cbc74df9219c56e816efc5d2ee4
+          git worktree add --detach "$RUNNER_TEMP/topofix-2b-reviewed" c6b3e9d3ad4d2fb756b9e811e61e63d33bc86bc7
           python3 -u - <<'PY'
           import json, os, subprocess, sys, tempfile
           from pathlib import Path
@@ -136,7 +138,7 @@ jobs:
           PublicXcuLongRunRegression.setUpClass()
           witness=PublicXcuLongRunRegression(
               "test_B1_reverse_1200_original_source_document_and_real_resolve")
-          baseline=Path(os.environ["RUNNER_TEMP"])/"topofix-2b-fork"
+          runner=Path(os.environ["RUNNER_TEMP"])
           code="""
           import json,sys
           from converters.psi116_topology_resolver.uxml_adapter import (
@@ -150,25 +152,31 @@ jobs:
               except RecursionError:
                   print(name+"=RECURSION_ERROR")
               else:
-                  raise SystemExit("BASE_B1_RECURSION_EXPECTED:"+name)
+                  print(name+"=OK")
           """
+          versions=(
+              ("BASE_D196",runner/"topofix-2b-fork","OK"),
+              ("REVIEWED_C6",runner/"topofix-2b-reviewed","RECURSION_ERROR"),
+          )
           for count in (1200,5000):
               hub=witness.hub(count,reverse=True)
-              with tempfile.TemporaryDirectory(prefix="public-b1-old-repro-") as folder:
-                  path=Path(folder)/"source-backed-hub.json"
+              with tempfile.TemporaryDirectory(prefix="public-b1-three-way-") as folder:
+                  path=Path(folder)/"public-source-backed-hub.json"
                   path.write_text(json.dumps(hub),encoding="utf-8")
-                  env=os.environ.copy()
-                  env["PYTHONPATH"]=str(baseline)
-                  proc=subprocess.run(
-                      [sys.executable,"-B","-c",code,str(path)],
-                      cwd=baseline,env=env,capture_output=True,text=True,timeout=90)
-                  if proc.returncode:
-                      raise AssertionError(f"BASE_D196_B1_N{count}_REPRO_FAILED: "+
-                                           proc.stdout+proc.stderr)
-                  assert proc.stdout.splitlines()==[
-                      "DOCUMENT=RECURSION_ERROR","RESOLVE=RECURSION_ERROR"],proc.stdout
-                  print(f"BASE_D196_B1_N{count}=DOCUMENT_RECURSION_ERROR_"
-                        "RESOLVE_RECURSION_ERROR",flush=True)
+                  for label,checkout,expected in versions:
+                      env=os.environ.copy()
+                      env["PYTHONPATH"]=str(checkout)
+                      proc=subprocess.run(
+                          [sys.executable,"-B","-c",code,str(path)],
+                          cwd=checkout,env=env,capture_output=True,text=True,timeout=360)
+                      if proc.returncode:
+                          raise AssertionError(f"{label}_B1_N{count}_FAILED: "+
+                                               proc.stdout+proc.stderr)
+                      expected_lines=["DOCUMENT="+expected,"RESOLVE="+expected]
+                      assert proc.stdout.splitlines()==expected_lines,(
+                          label,count,proc.stdout,expected_lines)
+                      print(f"{label}_B1_N{count}=DOCUMENT_{expected}_"
+                            f"RESOLVE_{expected}",flush=True)
           PY
       - name: Rerun S3 synthetic/public tests on ddd3 pin and enforce no skips
         shell: bash
