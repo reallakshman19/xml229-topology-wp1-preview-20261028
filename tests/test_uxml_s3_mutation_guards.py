@@ -335,6 +335,7 @@ class S3Step2BDeleteOneGuardMutants(unittest.TestCase):
                     with mock.patch.object(self.cases, "resolve_from_uxml",
                                            scope["resolve_from_uxml"]):
                         self.must_go_red(witness)
+                    print("MUTANT_RED:ADAPTER:" + code)
                     continue
                 deleted = [0]
                 def delete_one(ok, reason):
