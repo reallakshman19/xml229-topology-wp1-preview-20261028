@@ -317,6 +317,9 @@ def _recompute_inputxml_runs(rows: list[ET.Element]) -> list[dict]:
 
     Partition membership, run IDs, firstNode, and anchored status are derived
     exclusively from original source; no hub fields can create a connection.
+    Known divergence: XCU accepts node spellings such as " 100.000000" and
+    "1E2"; TopoFix deliberately refuses them with INPUT_XML_INVALID_NODE_NUMBER
+    instead of silently collapsing different engineering identifiers.
     """
     edges = []
     literal_by_integer: dict[int, str] = {}
@@ -337,11 +340,19 @@ def _recompute_inputxml_runs(rows: list[ET.Element]) -> list[dict]:
 
     parent: dict[str, str] = {}
     def find(node: str) -> str:
+        # Iterative path compression: XCU's union order is preserved, but a
+        # downstream-first honest source can form chains > Python's recursion
+        # limit. Both traversals are bounded by the number of source nodes.
         if node not in parent:
             parent[node] = node
-        if parent[node] != node:
-            parent[node] = find(parent[node])
-        return parent[node]
+        root = node
+        while parent[root] != root:
+            root = parent[root]
+        while node != root:
+            next_node = parent[node]
+            parent[node] = root
+            node = next_node
+        return root
 
     for _, from_node, to_node, _, _ in edges:
         start, end = find(from_node), find(to_node)
@@ -375,7 +386,12 @@ def _recompute_inputxml_runs(rows: list[ET.Element]) -> list[dict]:
 
 
 def _verified_inputxml_document_runs(document: Psi116Document) -> tuple[tuple[str, bool], ...]:
-    """Read trusted run membership on immutable, verified source-projected nodes."""
+    """Read trusted run membership on immutable, verified source-projected nodes.
+
+    Defence-in-depth only: the source partition check and sourceRefs validate
+    the run status before any InputXmlNodeRecord is created, so normal input
+    cannot reach this inconsistent-record guard.
+    """
     frames: dict[str, bool] = {}
     for branch in document.branches:
         for record in branch.nodes:
@@ -520,6 +536,12 @@ def _document_from_caesar_inputxml(uxml: dict, *,
         indices = run.get("elementIndices")
         _need(isinstance(indices, list) and len(indices) == run.get("edgeCount"),
               "INPUT_XML_RUN_ELEMENT_INDEX_INVALID")
+        # Python bool == int and 2.0 == 2 are NOT valid typed source receipts.
+        # Fail before bool elementIndices can impersonate an integer index.
+        _need(type(run.get("edgeCount")) is int and
+              type(run.get("nodeCount")) is int and
+              all(type(ix) is int for ix in indices),
+              "INPUT_XML_RUN_PARTITION_MISMATCH")
         for ix in indices:
             _need(isinstance(ix, int) and ix not in run_by_index and 0 <= ix < len(rows),
                   "INPUT_XML_DUPLICATE_OR_INVALID_RUN_ELEMENT_INDEX")
@@ -728,6 +750,8 @@ def _document_from_caesar_inputxml(uxml: dict, *,
             source_rows[-1] = replace(previous,
                 inputxml_record_keys=(*previous.inputxml_record_keys,key))
         source_rows.append(new_record("TO"))
+    # Defence-in-depth: the source-derived partition already proves anchoring
+    # from literal source XYZ; this witnesses the same fact after port replay.
     for i, run in enumerate(source_runs):
         _need(run["anchored"] is any(key[0] == i for key in literal_anchors),
               "INPUT_XML_FALSE_ANCHORED_OR_UNANCHORED_RUN:" + run["id"])
