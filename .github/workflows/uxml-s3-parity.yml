@@ -184,7 +184,16 @@ jobs:
           set -euo pipefail
           python3 -B -m unittest discover -s tests -p test_uxml_s3_caesar.py -v 2>&1 | tee "$RUNNER_TEMP/s3-caesar.log"
           python3 -B -m unittest discover -s tests -p test_uxml_s3_reconcile.py -v 2>&1 | tee "$RUNNER_TEMP/s3-reconcile.log"
-          python3 -u -B -m unittest discover -s tests -p test_uxml_s3_mutation_guards.py -v 2>&1 | tee "$RUNNER_TEMP/s3-mutants.log"
+          # unittest -v writes progress to stderr while mutant receipts go to
+          # stdout. Keep streams separate so ^MUTANT_RED anchors cannot be
+          # prefixed by progress text even with unbuffered Python.
+          if python3 -u -B -m unittest discover -s tests -p test_uxml_s3_mutation_guards.py -v \
+              >"$RUNNER_TEMP/s3-mutants.stdout" 2>"$RUNNER_TEMP/s3-mutants.stderr"; then
+            cat "$RUNNER_TEMP/s3-mutants.stdout" "$RUNNER_TEMP/s3-mutants.stderr" | tee "$RUNNER_TEMP/s3-mutants.log"
+          else
+            cat "$RUNNER_TEMP/s3-mutants.stdout" "$RUNNER_TEMP/s3-mutants.stderr"
+            exit 1
+          fi
           test "$(grep -c '^MUTANT_RED:ADAPTER:' "$RUNNER_TEMP/s3-mutants.log")" = 16
           test "$(grep -c '^MUTANT_RED:COMPARE:' "$RUNNER_TEMP/s3-mutants.log")" = 4
           test "$(grep -c '^MUTANT_RED:T1:' "$RUNNER_TEMP/s3-mutants.log")" = 3
