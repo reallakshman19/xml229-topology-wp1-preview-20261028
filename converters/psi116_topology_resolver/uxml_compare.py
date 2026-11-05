@@ -197,7 +197,15 @@ def compare_cross_format_uxml(psi_uxml: dict, input_uxml: dict) -> list[str]:
                 evidence=f"PSI116 Node[{number}]@{field}; InputXML source records "+ \
                          ",".join(i.get("recordKey","?") for i in infos)
                 if field=="component_ref_no":
-                    has_ref=any((i.get("sourceAttributes") or {}).get("REF_NO") for i in infos)
+                    # Original sourceAttributes are optional, but when
+                    # supplied must be dictionaries. A forged list/string
+                    # cannot escape as Python AttributeError.
+                    has_ref=False
+                    for source_info in infos:
+                        attributes=source_info.get("sourceAttributes")
+                        _need(attributes is None or isinstance(attributes,dict),
+                              "CROSS_FORMAT_SOURCE_ATTRIBUTES_INVALID")
+                        has_ref=has_ref or bool((attributes or {}).get("REF_NO"))
                     if not has_ref:
                         cls="B_WORKSPACE_CONVERSION_LOSS"
                         cause="Workspace CleanXML→5C does not emit original PSI116 ComponentRefNo as REF_NO"
