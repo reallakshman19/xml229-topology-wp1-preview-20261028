@@ -261,6 +261,110 @@ class FinalInputXmlHoldGuards(unittest.TestCase):
         self.assertEqual([run["anchored"] for run in runs], [True, True],
                          "XCU point() admits -1.0101 as a literal absolute value")
 
+    def _xcu_honest_variant(self, variant):
+        """Change ONLY original public XML anchor spelling/presence/value."""
+        original = self.input_path.read_text(encoding="utf-8")
+        tags = list(re.finditer(r"<PIPINGELEMENT\b[^>]*>", original))
+        self.assertEqual(len(tags), 6)
+        output = []
+        cursor = 0
+        for i, match in enumerate(tags):
+            output.append(original[cursor:match.start()])
+            tag = match.group()
+            if variant == "partial" and i < 5:
+                # First source anchor occurs at element 2 FROM (not at
+                # first route element 0 FROM). Keep independent run 1 intact.
+                if i == 2:
+                    tag, removed = re.subn(
+                        r'\s+TO_[XYZ]="[^"]*"', "", tag)
+                    self.assertEqual(removed, 3)
+                else:
+                    tag, removed = re.subn(
+                        r'\s+(?:FROM|TO)_[XYZ]="[^"]*"', "", tag)
+                    self.assertEqual(removed, 6)
+            elif variant == "lower":
+                tag = re.sub(r'\b(?:FROM|TO)_[XYZ](?==)',
+                             lambda m: m.group().lower(), tag)
+            elif variant == "padded":
+                tag = re.sub(
+                    r'((?:FROM|TO)_[XYZ]=")([^"]+)(")',
+                    lambda m: m.group(1) + " \t" + m.group(2) + "\t " + m.group(3),
+                    tag)
+            output.append(tag)
+            cursor = match.end()
+        self.assertIn(variant, ("partial", "lower", "padded"))
+        output.append(original[cursor:])
+        with tempfile.TemporaryDirectory(prefix="public-xcu-honest-anchor-") as folder:
+            source = Path(folder) / SOURCE
+            source.write_text("".join(output), encoding="utf-8")
+            return self._strict(source, self.reader)
+
+    @staticmethod
+    def _projection_signature(document):
+        return tuple(
+            (tuple((row.node_number,
+                    tuple(row.position.as_list()) if row.position is not None else None,
+                    row.component_type, row.outside_diameter, row.wall_thickness)
+                   for row in branch.nodes))
+            for branch in document.branches
+        )
+
+    def _assert_honest_variant_equal(self, variant):
+        from converters.psi116_topology_resolver.models import ResolverConfig
+        hub = self._xcu_honest_variant(variant)
+        canonical_doc = document_from_uxml(self.input)
+        changed_doc = document_from_uxml(hub)
+        self.assertEqual(self._projection_signature(changed_doc),
+                         self._projection_signature(canonical_doc),
+                         variant + ": original-source geometry and node identities drifted")
+        cfg = ResolverConfig()
+        baseline = resolve_from_uxml(self.input).findings_payload(cfg)
+        changed = resolve_from_uxml(hub).findings_payload(cfg)
+        self.assertEqual(changed["summary"]["findingCountsByCode"],
+                         baseline["summary"]["findingCountsByCode"])
+        return hub
+
+    def test_T1a_partial_anchored_firstNode_not_first_FROM_accepted(self):
+        hub = self._assert_honest_variant_equal("partial")
+        self.assertEqual(hub["inputXml"]["runs"][0]["firstNode"], "30.000000")
+        self.assertNotEqual(hub["inputXml"]["runs"][0]["firstNode"],
+                            hub["components"][0]["sourceRefs"][0]["fromNode"])
+
+    def test_T1b_lowercase_absolute_xyz_accepted(self):
+        hub = self._assert_honest_variant_equal("lower")
+        self.assertIn("from_x=", hub["sources"][0]["sourceText"])
+        self.assertEqual([r["anchored"] for r in hub["inputXml"]["runs"]],
+                         [True, True])
+
+    def test_T1c_padded_absolute_xyz_values_accepted(self):
+        hub = self._assert_honest_variant_equal("padded")
+        self.assertIn('FROM_X=" \t', hub["sources"][0]["sourceText"])
+        self.assertEqual([r["anchored"] for r in hub["inputXml"]["runs"]],
+                         [True, True])
+
+    def test_T2_bool_element_index_refuses_partition_type(self):
+        hub = self.hub()
+        self.assertEqual(hub["inputXml"]["runs"][0]["elementIndices"][1], 1)
+        hub["inputXml"]["runs"][0]["elementIndices"][1] = True
+        self.exact("INPUT_XML_RUN_PARTITION_MISMATCH",
+                   lambda: document_from_uxml(hub))
+
+    def test_T2_float_nodeCount_refuses_partition_type(self):
+        hub = self.hub()
+        count = hub["inputXml"]["runs"][0]["nodeCount"]
+        hub["inputXml"]["runs"][0]["nodeCount"] = float(count)
+        self.exact("INPUT_XML_RUN_PARTITION_MISMATCH",
+                   lambda: document_from_uxml(hub))
+
+    def test_N4_xcu_reader_accepts_noncanonical_node_literals_topofix_refuses(self):
+        for literal in (" 100.000000", "1E2"):
+            with self.subTest(source_literal=literal):
+                hub = self._change_last_attr("FROM_NODE", literal, strict_reader=True)
+                self.assertEqual(hub["components"][5]["sourceRefs"][0]["fromNode"],
+                                 literal)
+                self.exact("INPUT_XML_INVALID_NODE_NUMBER:E5:FROM",
+                           lambda: document_from_uxml(hub))
+
     def test_B1_M05_mixed_anchored_unanchored_resolve_refusal(self):
         self.exact("INPUT_XML_CROSS_UNANCHORED_RUN_GAP_PROXIMITY_JOIN_REFUSED",
                    lambda: resolve_from_uxml(self.mixed()))
