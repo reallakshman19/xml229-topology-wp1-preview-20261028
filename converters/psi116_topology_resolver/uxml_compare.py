@@ -142,6 +142,11 @@ def compare_cross_format_uxml(psi_uxml: dict, input_uxml: dict) -> list[str]:
     source_evidence=defaultdict(list)
     for comp in input_uxml.get("components") or []:
         info=(comp.get("rawAttributes") or {}).get("inputXml") or {}
+        # Source attributes are optional but, when present, must be a
+        # dictionary. Validate EVERY component, not only comparison deltas.
+        _need(info.get("sourceAttributes") is None or
+              isinstance(info.get("sourceAttributes"), dict),
+              "CROSS_FORMAT_SOURCE_ATTRIBUTES_INVALID")
         literal=info.get("toNode")
         try:
             node_number=_caesar_int(literal, "CROSS_FORMAT_TO_NODE") if isinstance(literal,str) else None
@@ -197,15 +202,10 @@ def compare_cross_format_uxml(psi_uxml: dict, input_uxml: dict) -> list[str]:
                 evidence=f"PSI116 Node[{number}]@{field}; InputXML source records "+ \
                          ",".join(i.get("recordKey","?") for i in infos)
                 if field=="component_ref_no":
-                    # Original sourceAttributes are optional, but when
-                    # supplied must be dictionaries. A forged list/string
-                    # cannot escape as Python AttributeError.
-                    has_ref=False
-                    for source_info in infos:
-                        attributes=source_info.get("sourceAttributes")
-                        _need(attributes is None or isinstance(attributes,dict),
-                              "CROSS_FORMAT_SOURCE_ATTRIBUTES_INVALID")
-                        has_ref=has_ref or bool((attributes or {}).get("REF_NO"))
+                    # sourceAttributes shape was verified on every
+                    # component before comparison evidence was collected.
+                    has_ref=any((i.get("sourceAttributes") or {}).get("REF_NO")
+                                for i in infos)
                     if not has_ref:
                         cls="B_WORKSPACE_CONVERSION_LOSS"
                         cause="Workspace CleanXML→5C does not emit original PSI116 ComponentRefNo as REF_NO"
