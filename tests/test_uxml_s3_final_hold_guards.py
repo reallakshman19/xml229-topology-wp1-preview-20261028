@@ -360,8 +360,11 @@ class FinalInputXmlHoldGuards(unittest.TestCase):
         for literal in (" 100.000000", "1E2"):
             with self.subTest(source_literal=literal):
                 hub = self._change_last_attr("FROM_NODE", literal, strict_reader=True)
-                self.assertEqual(hub["components"][5]["sourceRefs"][0]["fromNode"],
-                                 literal)
+                # The XCU reader accepts the source, but its sourceRef may
+                # normalize surrounding node-id whitespace. TopoFix checks
+                # the ORIGINAL sourceText literal, not the normalized receipt.
+                self.assertIn('FROM_NODE="' + literal + '"',
+                              hub["sources"][0]["sourceText"])
                 self.exact("INPUT_XML_INVALID_NODE_NUMBER:E5:FROM",
                            lambda: document_from_uxml(hub))
 
