@@ -145,6 +145,35 @@ class FinalInputXmlHoldGuards(unittest.TestCase):
         self.exact("INPUT_XML_RUN_PARTITION_MISMATCH",
                    lambda: resolve_from_uxml(hub))
 
+    def test_IA1_all_anchored_mixed_runs_forged_as_one_merge_refused(self):
+        hub = self.mixed()
+        self.assertEqual([run["anchored"] for run in hub["inputXml"]["runs"]],
+                         [True, False])
+        first, second = hub["inputXml"]["runs"]
+        first["elementIndices"] = first["elementIndices"] + second["elementIndices"]
+        first["edgeCount"] = len(first["elementIndices"])
+        first["nodeCount"] += second["nodeCount"]
+        first["anchored"] = True
+        hub["inputXml"]["runs"] = [first]
+        # Fully forge dependent hub provenance, so only the independently
+        # recomputed original-source partition can refuse the false merge.
+        for component in hub["components"]:
+            ref = component["sourceRefs"][0]
+            info = component["rawAttributes"]["inputXml"]
+            ref["runId"] = first["id"]
+            info["runId"] = first["id"]
+            ref["anchored"] = True
+            info["anchored"] = True
+        for port in hub["ports"]:
+            port["runId"] = first["id"]
+            port["anchored"] = True
+            port["sourceRefs"][0]["runId"] = first["id"]
+            port["sourceRefs"][0]["anchored"] = True
+        self.exact("INPUT_XML_RUN_PARTITION_MISMATCH",
+                   lambda: resolve_from_uxml(hub))
+        self.exact("INPUT_XML_RUN_PARTITION_MISMATCH",
+                   lambda: compare_cross_format_uxml(self.psi, hub))
+
     def test_IA1_all_anchored_mixed_hub_forgery_partition_refused(self):
         hub = self.mixed()
         self.assertEqual([r["anchored"] for r in hub["inputXml"]["runs"]],
