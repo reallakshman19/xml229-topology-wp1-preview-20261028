@@ -285,7 +285,7 @@ class S3Step2BDeleteOneGuardMutants(unittest.TestCase):
         from converters.psi116_topology_resolver import uxml_adapter as adapter
         matrix = (
             ("INPUT_XML_RUN_PARTITION_MISMATCH",
-             "test_IA1_single_run_delta_only_forgery_partition_refused"),
+             "test_IA1_all_anchored_mixed_runs_forged_as_one_merge_refused"),
             ("INPUT_XML_NODE_LITERAL_ALIAS",
              "test_IA5_integer_alias_30_vs_30_000000_refuses"),
             ("INPUT_XML_INVALID_NODE_NUMBER",
