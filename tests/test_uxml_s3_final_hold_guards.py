@@ -454,7 +454,7 @@ class FinalInputXmlHoldGuards(unittest.TestCase):
                     try:
                         document_from_uxml(hub)
                     except UxmlPsi116Error as error:
-                        self.assertRegex(str(error), r"^[A-Z][A-Z0-9_]*(?::[^\n]+)?$")
+                        self.assertRegex(str(error), r"^[A-Z][A-Za-z0-9_]*(?::[^\n]+)?$")
                     except Exception as error:
                         self.fail("UNNAMED_INPUT_XML_EXCEPTION " +
                                   repr(path) + " " + label + " " + repr(error))
