@@ -464,6 +464,85 @@ class FinalInputXmlHoldGuards(unittest.TestCase):
                     tested += 1
         self.assertGreaterEqual(tested, 250, "fuzz matrix coverage unexpectedly shrank")
 
+    def test_R3_C1_nonstring_endpoints_each_named_beyond_first_port(self):
+        for port_index in (1, 7, 11):
+            for shape in (["FROM"], {"endpoint": "FROM"}):
+                with self.subTest(port=port_index, shape=type(shape).__name__):
+                    hub = self.hub()
+                    port = hub["ports"][port_index]
+                    comp_index = next(i for i, c in enumerate(hub["components"])
+                                      if c["id"] == port["componentId"])
+                    port["sourceRefs"][0]["endpoint"] = deepcopy(shape)
+                    self.exact("INPUT_XML_PORT_SOURCE_REF_MISMATCH:" +
+                               self.key(hub, comp_index),
+                               lambda: document_from_uxml(hub))
+
+    def test_R3_C2_sourceAttributes_shape_refused_for_every_component_in_compare(self):
+        from converters.psi116_topology_resolver.uxml_compare import compare_cross_format_uxml
+        for component_index in range(len(self.input["components"])):
+            for value in ("x", ["x"], 23):
+                with self.subTest(component=component_index, value=repr(value)):
+                    hub = self.hub()
+                    hub["components"][component_index]["rawAttributes"]["inputXml"][
+                        "sourceAttributes"] = deepcopy(value)
+                    # This property is unused by document projection, but
+                    # compare must reject it before building field evidence.
+                    document_from_uxml(hub)
+                    self.exact("CROSS_FORMAT_SOURCE_ATTRIBUTES_INVALID",
+                               lambda: compare_cross_format_uxml(self.psi, hub))
+
+    def test_R3_C3_oversized_honest_reader_node_literal_is_named(self):
+        huge = "9" * 4501  # XCU strict reader accepts the public-source mutation
+        hub = self._change_last_attr("FROM_NODE", huge, strict_reader=True)
+        self.assertIn('FROM_NODE="' + huge + '"',
+                      hub["sources"][0]["sourceText"])
+        self.exact("INPUT_XML_INVALID_NODE_NUMBER:E5:FROM",
+                   lambda: document_from_uxml(hub))
+
+    def test_R3_C4_swapped_run_element_indices_refused(self):
+        hub = self.hub()
+        a, b = hub["inputXml"]["runs"]
+        self.assertEqual((a["elementIndices"][-1], b["elementIndices"][0]),
+                         (4, 5))
+        a["elementIndices"][-1], b["elementIndices"][0] = (
+            b["elementIndices"][0], a["elementIndices"][-1])
+        self.assertEqual(sum(run["edgeCount"] for run in hub["inputXml"]["runs"]), 6)
+        self.exact("INPUT_XML_RUN_PARTITION_MISMATCH",
+                   lambda: document_from_uxml(hub))
+
+    def test_R3_C4_component_type_nonstring_later_components_refused(self):
+        for component_index in (1, 3, 4, 5):
+            for shape in (["PIPE"], {"type": "PIPE"}):
+                with self.subTest(component=component_index, value=type(shape).__name__):
+                    hub = self.hub()
+                    hub["components"][component_index]["rawAttributes"]["inputXml"][
+                        "componentType"] = deepcopy(shape)
+                    self.exact("INPUT_XML_RAW_RECORD_ID_MISMATCH:" +
+                               self.key(hub, component_index),
+                               lambda: document_from_uxml(hub))
+
+    def test_R3_C4_compare_frame_dict_guard_refuses(self):
+        hub = self.hub()
+        hub["coordinateFrame"] = ["PSI116_XYZ_MM"]
+        self.exact("CROSS_FORMAT_HUB_FRAME_UNVERIFIED",
+                   lambda: compare_cross_format_uxml(self.psi, hub))
+
+    def test_R3_C4_compare_sources_and_entries_refuse(self):
+        for which, expected in (
+            ("PSI116", "CROSS_FORMAT_PSI116_SOURCE_REQUIRED"),
+            ("INPUT_XML", "CROSS_FORMAT_INPUT_XML_SOURCE_REQUIRED"),
+        ):
+            for shape in ("x", {0: {"format": which}}, ["x"]):
+                with self.subTest(which=which, replacement=repr(shape)):
+                    psi, hub = deepcopy(self.psi), self.hub()
+                    target = psi if which == "PSI116" else hub
+                    target["sources"] = deepcopy(shape)
+                    self.exact(expected, lambda: compare_cross_format_uxml(psi, hub))
+            psi, hub = deepcopy(self.psi), self.hub()
+            target = psi if which == "PSI116" else hub
+            target["sources"][0] = ["not-a-dict"]
+            self.exact(expected, lambda: compare_cross_format_uxml(psi, hub))
+
     def test_R2_B2_extra_empty_run_requires_same_partition_count(self):
         hub = self.hub()
         self.assertEqual(len(hub["inputXml"]["runs"]), 2)
