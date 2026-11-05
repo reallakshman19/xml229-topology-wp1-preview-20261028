@@ -399,6 +399,87 @@ class S3Step2BDeleteOneGuardMutants(unittest.TestCase):
                 source, policy=transaction.TransactionPolicy(apply_all_safe=True))
         self.assertEqual(str(rejected.exception), "INPUT_XML_APPLY_NOT_ENABLED")
 
+    def test_T1_honest_source_variants_each_kill_the_matching_mutant(self):
+        from converters.psi116_topology_resolver import uxml_adapter as adapter
+
+        # A7: falsely anchor a run at its first FROM, instead of the first
+        # explicit XYZ anchor at element 2's FROM in the public source.
+        witness = self.scenario("test_T1a_partial_anchored_firstNode_not_first_FROM_accepted")
+        witness()  # GREEN exact document/finding parity
+        source_recompute = adapter._recompute_inputxml_runs
+        changed = [0]
+        def wrong_first_node(rows):
+            runs = source_recompute(rows)
+            for run in runs:
+                if run["anchored"]:
+                    first = rows[run["elementIndices"][0]].attrib["FROM_NODE"]
+                    if run["firstNode"] != first:
+                        run["firstNode"] = first
+                        changed[0] += 1
+            return runs
+        with mock.patch.object(adapter, "_recompute_inputxml_runs",
+                               side_effect=wrong_first_node):
+            self.must_go_red(witness)
+        self.assertGreater(changed[0], 0, "T1a mutant was not exercised")
+        print("MUTANT_RED:T1:A7_FIRST_ANCHOR_NOT_FIRST_FROM", flush=True)
+
+        # A13: a case-sensitive original-source anchor lookup silently drops
+        # the reader-accepted lowercase from_x/to_x attributes.
+        witness = self.scenario("test_T1b_lowercase_absolute_xyz_accepted")
+        witness()  # GREEN
+        source_absolute = adapter._caesar_hub_absolute
+        changed = [0]
+        def uppercase_only(attrs, prefix, index=None):
+            keys = {prefix + "_" + axis for axis in "XYZ"}
+            dropped = {k for k in attrs if k.upper() in keys and k not in keys}
+            if dropped:
+                changed[0] += 1
+            return source_absolute({k:v for k,v in attrs.items() if k not in dropped},
+                                   prefix,index)
+        with mock.patch.object(adapter, "_caesar_hub_absolute",
+                               side_effect=uppercase_only):
+            self.must_go_red(witness)
+        self.assertGreater(changed[0], 0, "T1b mutant was not exercised")
+        print("MUTANT_RED:T1:A13_LOWERCASE_SOURCE_ANCHORS", flush=True)
+
+        # A14: a reader-incompatible untrimmed numeric interpretation drops
+        # whitespace-padded XYZ values that XCU explicitly trims.
+        witness = self.scenario("test_T1c_padded_absolute_xyz_values_accepted")
+        witness()  # GREEN
+        changed = [0]
+        def no_trim(attrs, prefix, index=None):
+            keys = {prefix + "_" + axis for axis in "XYZ"}
+            if any(k.upper() in keys and v != v.strip() for k,v in attrs.items()):
+                changed[0] += 1
+                return None
+            return source_absolute(attrs,prefix,index)
+        with mock.patch.object(adapter, "_caesar_hub_absolute",
+                               side_effect=no_trim):
+            self.must_go_red(witness)
+        self.assertGreater(changed[0], 0, "T1c mutant was not exercised")
+        print("MUTANT_RED:T1:A14_PADDED_SOURCE_ANCHORS", flush=True)
+
+    def test_T2_typed_hub_fields_each_kill_one_guard_deletion(self):
+        from converters.psi116_topology_resolver import uxml_adapter as adapter
+        original_need = adapter._need
+        for name in ("test_T2_bool_element_index_refuses_partition_type",
+                     "test_T2_float_nodeCount_refuses_partition_type"):
+            with self.subTest(test=name):
+                witness = self.scenario(name)
+                witness()  # GREEN typed rejection
+                deleted = [0]
+                def drop_first_partition_guard(ok, reason):
+                    if (not ok and not deleted[0] and
+                            reason == "INPUT_XML_RUN_PARTITION_MISMATCH"):
+                        deleted[0] += 1
+                        return None  # one specific typed-receipt _need deletion
+                    return original_need(ok, reason)
+                with mock.patch.object(adapter, "_need",
+                                       side_effect=drop_first_partition_guard):
+                    self.must_go_red(witness)
+                self.assertEqual(deleted, [1], "T2 mutant not exercised")
+                print("MUTANT_RED:T2:" + name, flush=True)
+
     def test_two_cli_entrypoint_guards_deleted_witnesses_go_red(self):
         from converters.psi116_topology_resolver import (
             uxml_export_ops, uxml_patch_psi116,
