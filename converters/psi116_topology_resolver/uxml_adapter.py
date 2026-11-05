@@ -292,11 +292,18 @@ def _caesar_hub_delta(attrs: Mapping[str, str], label: str) -> Position:
     return Position(axes[0], -axes[2], axes[1])
 
 
+_JS_TRIM_WHITESPACE = (" \t\n\r\v\f\u00a0\u1680"
+                       "\u2000\u2001\u2002\u2003\u2004\u2005\u2006"
+                       "\u2007\u2008\u2009\u200a\u2028\u2029\u202f"
+                       "\u205f\u3000\ufeff")
+
+
 def _caesar_hub_absolute(attrs: Mapping[str, str], prefix: str,
                          index: int | None = None) -> Position | None:
-    """XCU DeltaGraph point(): case-insensitive trimmed XYZ; sentinel IS an anchor."""
+    """XCU DeltaGraph point(): case-insensitive JS-trimmed XYZ; sentinel IS anchor."""
     keys = [prefix + "_" + axis for axis in "XYZ"]
-    values = [next((str(value).strip() for name, value in attrs.items()
+    values = [next((str(value).strip(_JS_TRIM_WHITESPACE)
+                    for name, value in attrs.items()
                     if name.upper() == key), "") for key in keys]
     if all(value == "" for value in values):
         return None
@@ -304,7 +311,8 @@ def _caesar_hub_absolute(attrs: Mapping[str, str], prefix: str,
     nums = []
     for key, value in zip(keys, values):
         _need(bool(re.fullmatch(
-            r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?", value)),
+            r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?",
+            value, flags=re.ASCII)),
             "INPUT_XML_INVALID_NUMBER:E" + str(index) + ":" + key)
         num = float(value)
         _need(math.isfinite(num), "INPUT_XML_NONFINITE_ABSOLUTE_ANCHOR")
@@ -319,7 +327,9 @@ def _recompute_inputxml_runs(rows: list[ET.Element]) -> list[dict]:
     exclusively from original source; no hub fields can create a connection.
     Known divergence: XCU accepts node spellings such as " 100.000000" and
     "1E2"; TopoFix deliberately refuses them with INPUT_XML_INVALID_NODE_NUMBER
-    instead of silently collapsing different engineering identifiers.
+    instead of silently collapsing different engineering identifiers. Anchor
+    digits are ASCII-only and their trimming follows JS String.prototype.trim:
+    U+FEFF is trimmed, but U+0085 is not.
     """
     edges = []
     literal_by_integer: dict[int, str] = {}
@@ -607,7 +617,12 @@ def _document_from_caesar_inputxml(uxml: dict, *,
         _need(isinstance(comp, dict) and comp.get("id") == f"IX-S3-E{index}" and
               comp.get("sourceRefs") == [expected],
               "INPUT_XML_COMPONENT_SOURCE_REF_MISMATCH:" + key)
-        info = (comp.get("rawAttributes") or {}).get("inputXml") or {}
+        raw_attributes = comp.get("rawAttributes")
+        _need(isinstance(raw_attributes, dict),
+              "INPUT_XML_RAW_RECORD_ID_MISMATCH:" + key)
+        info = raw_attributes.get("inputXml")
+        _need(isinstance(info, dict),
+              "INPUT_XML_RAW_RECORD_ID_MISMATCH:" + key)
         _need(info.get("recordKey") == key and info.get("elementIndex") == index and
               info.get("fromNode") == from_node and info.get("toNode") == to_node and
               info.get("runId") == run_id and info.get("anchored") is anchored,
@@ -639,6 +654,8 @@ def _document_from_caesar_inputxml(uxml: dict, *,
             refs = port.get("sourceRefs")
             _need(isinstance(refs, list) and len(refs) == 1,
                   "INPUT_XML_PORT_REF_MISSING:" + key)
+            _need(isinstance(refs[0], dict),
+                  "INPUT_XML_PORT_SOURCE_REF_MISMATCH:" + key)
             ep = refs[0].get("endpoint")
             _need(ep in {"FROM", "TO"} and refs == [{**expected, "endpoint": ep}],
                   "INPUT_XML_PORT_SOURCE_REF_MISMATCH:" + key)
@@ -674,6 +691,10 @@ def _document_from_caesar_inputxml(uxml: dict, *,
 
         # Reconcile original source attribute authority for type, not a
         # guessed equivalent of PSI116 component refs or helper nodes.
+        # This value is subsequently tested in a set; reject unhashable hub
+        # data with the same named record error instead of Python TypeError.
+        _need(isinstance(info.get("componentType"), str),
+              "INPUT_XML_RAW_RECORD_ID_MISMATCH:" + key)
         sif_at_to = next((item for item in sifs
                           if item.get("node") == to_node and item["typeCode"] in (3, 5)), None)
         if sif_at_to is not None:
