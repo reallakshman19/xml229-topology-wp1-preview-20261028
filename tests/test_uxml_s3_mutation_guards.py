@@ -7,6 +7,10 @@ from __future__ import annotations
 
 from copy import deepcopy
 import json
+import importlib
+import inspect
+import io
+from unittest import mock
 import os
 from pathlib import Path
 import subprocess
@@ -251,6 +255,172 @@ class S3ExactCodeGuards(unittest.TestCase):
                           process.stderr + process.stdout)
             self.assertEqual(list(Path(folder).iterdir()), [])
         self.assertEqual(self.original.read_bytes(), original)
+
+
+
+class S3Step2BDeleteOneGuardMutants(unittest.TestCase):
+    """Real executable single-guard bypass mutants, not static source inspection.
+
+    Every matrix witness first executes GREEN unchanged, then runs with one
+    exact named _need/raise guard bypassed. A surviving mutant makes this suite
+    fail. No source files or installed modules are changed on disk.
+    """
+    @classmethod
+    def setUpClass(cls):
+        cls.cases = importlib.import_module("test_uxml_s3_final_hold_guards")
+        cls.cases.FinalInputXmlHoldGuards.setUpClass()
+
+    def scenario(self, test_name):
+        return getattr(self.cases.FinalInputXmlHoldGuards(), test_name)
+
+    def must_go_red(self, scenario):
+        try:
+            scenario()
+        except Exception as error:
+            self.assertNotIsInstance(error, unittest.SkipTest)
+            return
+        self.fail("DELETE_ONE_GUARD_MUTANT_SURVIVED: " + scenario.__name__)
+
+    def test_16_adapter_named_guard_deletions_have_green_control_red_mutant(self):
+        from converters.psi116_topology_resolver import uxml_adapter as adapter
+        matrix = (
+            ("INPUT_XML_RUN_PARTITION_MISMATCH",
+             "test_IA1_single_run_delta_only_forgery_partition_refused"),
+            ("INPUT_XML_NODE_LITERAL_ALIAS",
+             "test_IA5_integer_alias_30_vs_30_000000_refuses"),
+            ("INPUT_XML_INVALID_NODE_NUMBER",
+             "test_IA4_fractional_100_5_node_number_refuses_without_truncation"),
+            ("INPUT_XML_RUN_ID_NOT_FOUND",
+             "test_IA4_unknown_run_id_refuses_instead_of_empty_findings"),
+            ("INPUT_XML_INCOMPLETE_ABSOLUTE_ANCHOR",
+             "test_IA2_incomplete_absolute_anchor_is_named"),
+            ("INPUT_XML_INVALID_NUMBER",
+             "test_IA2_invalid_non_numeric_anchor_is_named"),
+            ("INPUT_XML_NONFINITE_ABSOLUTE_ANCHOR",
+             "test_IA2_nonfinite_absolute_anchor_is_named"),
+            ("INPUT_XML_RUN_IDENTITY_INVALID",
+             "test_B2_run_identity_required"),
+            ("INPUT_XML_RUN_COVERAGE_INCOMPLETE",
+             "test_B2_run_coverage_must_be_complete"),
+            ("INPUT_XML_RUN_FRAME_INVALID",
+             "test_B2_run_frame_cross_unanchored_policy_required"),
+            ("INPUT_XML_RAW_RECORD_ID_MISMATCH",
+             "test_B2_raw_record_identity_cannot_drift"),
+            ("INPUT_XML_NESTED_SOURCE_EVIDENCE_MISMATCH",
+             "test_B2_nested_source_bend_evidence_cannot_drift"),
+            ("INPUT_XML_PORT_FRAME_MISMATCH",
+             "test_B2_port_coordinate_frame_cannot_drift"),
+            ("INPUT_XML_DELTA_PATH_CONFLICT",
+             "test_B2_delta_path_conflict_between_shared_node_ports"),
+            ("INPUT_XML_BEND_COMPONENT_TYPE_CONFLICT",
+             "test_B2_bend_component_type_from_original_source"),
+            ("INPUT_XML_CROSS_UNANCHORED_RUN_GAP_PROXIMITY_JOIN_REFUSED",
+             "test_B1_M05_mixed_anchored_unanchored_resolve_refusal"),
+        )
+        self.assertEqual(len(matrix), 16)
+        original_need = adapter._need
+        for code, name in matrix:
+            with self.subTest(guard=code):
+                witness = self.scenario(name)
+                witness()  # GREEN control
+                if code == "INPUT_XML_CROSS_UNANCHORED_RUN_GAP_PROXIMITY_JOIN_REFUSED":
+                    original = inspect.getsource(adapter.resolve_from_uxml)
+                    needle = ("raise UxmlPsi116Error("
+                              "'INPUT_XML_CROSS_UNANCHORED_RUN_GAP_PROXIMITY_JOIN_REFUSED')")
+                    self.assertEqual(original.count(needle), 1)
+                    modified = original.replace(needle, "pass  # DELETE_ONE_GUARD")
+                    scope = {}
+                    exec(compile(modified, "<mutant-run-proximity>", "exec"),
+                         adapter.__dict__, scope)
+                    with mock.patch.object(self.cases, "resolve_from_uxml",
+                                           scope["resolve_from_uxml"]):
+                        self.must_go_red(witness)
+                    continue
+                deleted = [0]
+                def delete_one(ok, reason):
+                    if (not ok and deleted[0] == 0 and
+                            reason.split(":", 1)[0] == code):
+                        deleted[0] += 1
+                        return None  # DELETE ONE failing named _need guard
+                    return original_need(ok, reason)
+                with mock.patch.object(adapter, "_need", side_effect=delete_one):
+                    self.must_go_red(witness)
+                self.assertEqual(deleted, [1], code + ":MUTANT_NEVER_EXERCISED")
+                print("MUTANT_RED:ADAPTER:" + code)
+
+    def test_4_crossformat_checks_each_have_green_control_red_mutant(self):
+        from converters.psi116_topology_resolver import uxml_compare as compare
+        matrix = (
+            ("CROSS_FORMAT_PSI116_SOURCE_REQUIRED",
+             "test_IA4_crossformat_requires_psi116_source"),
+            ("CROSS_FORMAT_INPUT_XML_SOURCE_REQUIRED",
+             "test_B2_crossformat_requires_inputxml_source"),
+            ("CROSS_FORMAT_HUB_FRAME_UNVERIFIED",
+             "test_B2_crossformat_requires_verified_hub_frame"),
+            ("CROSS_FORMAT_UNANCHORED_ABSOLUTE_FRAME_COMPARISON_REFUSED",
+             "test_B1_M12_mixed_anchored_unanchored_crossformat_refusal"),
+        )
+        self.assertEqual(len(matrix), 4)
+        source = inspect.getsource(compare.compare_cross_format_uxml)
+        marker = ('    _need = lambda condition, code: (\n'
+                  '        None if condition else (_ for _ in ()).throw(UxmlPsi116Error(code)))')
+        self.assertEqual(source.count(marker), 1)
+        for code, name in matrix:
+            with self.subTest(compare_guard=code):
+                witness = self.scenario(name)
+                witness()  # GREEN control
+                mutant_source = source.replace(
+                    marker, marker + "\n    _original_gate = _need"
+                    + "\n    _need = lambda condition, code: ("
+                    + "None if code == " + repr(code)
+                    + " else _original_gate(condition, code))")
+                scope = {}
+                exec(compile(mutant_source, "<mutant-crossformat>", "exec"),
+                     compare.__dict__, scope)
+                with mock.patch.object(self.cases, "compare_cross_format_uxml",
+                                       scope["compare_cross_format_uxml"]):
+                    self.must_go_red(witness)
+                print("MUTANT_RED:COMPARE:" + code)
+
+    def test_native_apply_guard_deleted_witness_goes_red(self):
+        from converters.psi116_topology_resolver import transaction
+        witness = lambda: self._require_native_inputxml_apply_hold(transaction)
+        witness()
+        with mock.patch.object(transaction, "_refuse_inputxml_native_apply",
+                               lambda source: None):
+            self.must_go_red(witness)
+        print("MUTANT_RED:NATIVE_APPLY:INPUT_XML_APPLY_NOT_ENABLED")
+
+    def _require_native_inputxml_apply_hold(self, transaction):
+        source = self.cases.FinalInputXmlHoldGuards.input_path
+        with self.assertRaises(ValueError) as rejected:
+            transaction.apply_topofix_transaction(
+                source, policy=transaction.TransactionPolicy(apply_all_safe=True))
+        self.assertEqual(str(rejected.exception), "INPUT_XML_APPLY_NOT_ENABLED")
+
+    def test_two_cli_entrypoint_guards_deleted_witnesses_go_red(self):
+        from converters.psi116_topology_resolver import (
+            uxml_export_ops, uxml_patch_psi116,
+        )
+        for module in (uxml_export_ops, uxml_patch_psi116):
+            with self.subTest(module=module.__name__):
+                with tempfile.TemporaryDirectory(prefix="public-s3-cli-mutant-") as tmp:
+                    source = self.cases.FinalInputXmlHoldGuards.input_path
+                    ops = Path(tmp) / "ops.json"
+                    argv = [str(source), str(ops), "--xcu-root", str(Path(tmp)/"missing-xcu")]
+                    def witness():
+                        capture = io.StringIO()
+                        with mock.patch("sys.stdout", capture):
+                            returned = module.main(argv)
+                        self.assertEqual(returned, 1)
+                        self.assertEqual(capture.getvalue().strip().splitlines(),
+                                         ["DIFFERENT", "ERROR: INPUT_XML_APPLY_NOT_ENABLED"])
+                        self.assertFalse(ops.exists())
+                    witness()  # GREEN control
+                    with mock.patch.object(module, "_refuse_inputxml_native_apply",
+                                           lambda original: None):
+                        self.must_go_red(witness)
+                print("MUTANT_RED:CLI:" + module.__name__)
 
 
 if __name__ == "__main__":
