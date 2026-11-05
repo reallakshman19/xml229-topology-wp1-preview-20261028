@@ -728,8 +728,8 @@ def _document_from_caesar_inputxml(uxml: dict, *,
             source_rows[-1] = replace(previous,
                 inputxml_record_keys=(*previous.inputxml_record_keys,key))
         source_rows.append(new_record("TO"))
-    for i, run in enumerate(runs):
-        _need(run.get("anchored") is any(key[0] == i for key in literal_anchors),
+    for i, run in enumerate(source_runs):
+        _need(run["anchored"] is any(key[0] == i for key in literal_anchors),
               "INPUT_XML_FALSE_ANCHORED_OR_UNANCHORED_RUN:" + run["id"])
     branch_records = []
     for i, records in enumerate(branches_raw):
