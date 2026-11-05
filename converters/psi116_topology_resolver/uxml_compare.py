@@ -93,13 +93,20 @@ def compare_cross_format_uxml(psi_uxml: dict, input_uxml: dict) -> list[str]:
     from .uxml_adapter import UxmlPsi116Error
     _need = lambda condition, code: (
         None if condition else (_ for _ in ()).throw(UxmlPsi116Error(code)))
-    _need(len(psi_uxml.get("sources") or []) == 1 and
+    _need(isinstance(psi_uxml, dict) and
+          isinstance(psi_uxml.get("sources"), list) and
+          len(psi_uxml["sources"]) == 1 and
+          isinstance(psi_uxml["sources"][0], dict) and
           psi_uxml["sources"][0].get("format") == "PSI116",
           "CROSS_FORMAT_PSI116_SOURCE_REQUIRED")
-    _need(len(input_uxml.get("sources") or []) == 1 and
+    _need(isinstance(input_uxml, dict) and
+          isinstance(input_uxml.get("sources"), list) and
+          len(input_uxml["sources"]) == 1 and
+          isinstance(input_uxml["sources"][0], dict) and
           input_uxml["sources"][0].get("format") == "INPUT_XML",
           "CROSS_FORMAT_INPUT_XML_SOURCE_REQUIRED")
     frame = input_uxml.get("coordinateFrame") or {}
+    _need(isinstance(frame, dict), "CROSS_FORMAT_HUB_FRAME_UNVERIFIED")
     _need(frame.get("hub") == "PSI116_XYZ_MM" and
           frame.get("transform") == "(X,-Z,Y)",
           "CROSS_FORMAT_HUB_FRAME_UNVERIFIED")
@@ -138,7 +145,11 @@ def compare_cross_format_uxml(psi_uxml: dict, input_uxml: dict) -> list[str]:
         literal=info.get("toNode")
         try:
             node_number=_caesar_int(literal, "CROSS_FORMAT_TO_NODE") if isinstance(literal,str) else None
-        except (ValueError,TypeError):
+        except UxmlPsi116Error:
+            # Strict source-node refusals must never be swallowed by the
+            # broad ValueError fallback; source validation normally runs first.
+            raise
+        except (ValueError, TypeError):
             continue
         source_evidence[node_number].append(info)
 
