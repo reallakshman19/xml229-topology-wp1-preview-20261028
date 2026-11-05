@@ -240,14 +240,12 @@ def document_from_uxml(uxml: dict, *, source_name: str | None = None) -> Psi116D
 
 def resolve_from_uxml(uxml: dict, config: ResolverConfig | None = None,
                       *, source_name: str | None = None):
-    """Same TopoFix analyzer; no modifications to parser.py or resolver.py."""
-    if (isinstance(uxml, dict) and isinstance(uxml.get("sources"), list) and
-            len(uxml["sources"]) == 1 and isinstance(uxml["sources"][0], dict) and
-            uxml["sources"][0].get("format") == "INPUT_XML"):
-        runs=(uxml.get('inputXml') or {}).get('runs') or []
-        if len(runs)>1 and any(not r.get('anchored') for r in runs):
-            raise UxmlPsi116Error('INPUT_XML_CROSS_UNANCHORED_RUN_GAP_PROXIMITY_JOIN_REFUSED')
-    return analyze_document(document_from_uxml(uxml, source_name=source_name), config)
+    """Same TopoFix analyzer; all InputXML run trust comes from verified source."""
+    document = document_from_uxml(uxml, source_name=source_name)
+    runs = _verified_inputxml_document_runs(document)
+    if len(runs) > 1 and any(not anchored for _, anchored in runs):
+        raise UxmlPsi116Error('INPUT_XML_CROSS_UNANCHORED_RUN_GAP_PROXIMITY_JOIN_REFUSED')
+    return analyze_document(document, config)
 
 
 @dataclass(frozen=True)
@@ -294,14 +292,98 @@ def _caesar_hub_delta(attrs: Mapping[str, str], label: str) -> Position:
     return Position(axes[0], -axes[2], axes[1])
 
 
-def _caesar_hub_absolute(attrs: Mapping[str, str], prefix: str) -> Position | None:
-    values = [attrs.get(prefix + "_" + axis) for axis in "XYZ"]
-    if all(v is None for v in values):
+def _caesar_hub_absolute(attrs: Mapping[str, str], prefix: str,
+                         index: int | None = None) -> Position | None:
+    """XCU DeltaGraph point(): case-insensitive trimmed XYZ; sentinel IS an anchor."""
+    keys = [prefix + "_" + axis for axis in "XYZ"]
+    values = [next((str(value).strip() for name, value in attrs.items()
+                    if name.upper() == key), "") for key in keys]
+    if all(value == "" for value in values):
         return None
-    _need(all(v is not None for v in values), "INPUT_XML_INCOMPLETE_ABSOLUTE_ANCHOR")
-    nums = [float(v) for v in values]
-    _need(all(math.isfinite(v) for v in nums), "INPUT_XML_NONFINITE_ABSOLUTE_ANCHOR")
+    _need(all(value != "" for value in values), "INPUT_XML_INCOMPLETE_ABSOLUTE_ANCHOR")
+    nums = []
+    for key, value in zip(keys, values):
+        _need(bool(re.fullmatch(
+            r"[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?", value)),
+            "INPUT_XML_INVALID_NUMBER:E" + str(index) + ":" + key)
+        num = float(value)
+        _need(math.isfinite(num), "INPUT_XML_NONFINITE_ABSOLUTE_ANCHOR")
+        nums.append(num)
     return Position(nums[0], -nums[2], nums[1])
+
+
+def _recompute_inputxml_runs(rows: list[ET.Element]) -> list[dict]:
+    """XCU UxmlInputXmlDeltaGraph.js union-find, exact literal identity/order.
+
+    Partition membership, run IDs, firstNode, and anchored status are derived
+    exclusively from original source; no hub fields can create a connection.
+    """
+    edges = []
+    literal_by_integer: dict[int, str] = {}
+    for index, element in enumerate(rows):
+        attrs = element.attrib
+        endpoints = []
+        for endpoint in ("FROM", "TO"):
+            literal = attrs.get(endpoint + "_NODE")
+            _need(isinstance(literal, str) and bool(literal),
+                  "INPUT_XML_RECORD_NODE_ID_MISSING")
+            integer = _caesar_int(literal, "E" + str(index) + ":" + endpoint)
+            previous = literal_by_integer.setdefault(integer, literal)
+            _need(previous == literal, "INPUT_XML_NODE_LITERAL_ALIAS")
+            endpoints.append(literal)
+        edges.append((index, endpoints[0], endpoints[1],
+                      _caesar_hub_absolute(attrs, "FROM", index),
+                      _caesar_hub_absolute(attrs, "TO", index)))
+
+    parent: dict[str, str] = {}
+    def find(node: str) -> str:
+        if node not in parent:
+            parent[node] = node
+        if parent[node] != node:
+            parent[node] = find(parent[node])
+        return parent[node]
+
+    for _, from_node, to_node, _, _ in edges:
+        start, end = find(from_node), find(to_node)
+        if start != end:
+            parent[end] = start
+
+    groups: dict[str, list[tuple]] = {}
+    for edge in edges:
+        groups.setdefault(find(edge[1]), []).append(edge)
+    runs: list[dict] = []
+    for group in groups.values():
+        index = len(runs)
+        anchored_start = next(
+            (node for _, frm, to, from_absolute, to_absolute in group
+             for node, absolute in ((frm, from_absolute), (to, to_absolute))
+             if absolute is not None), None)
+        first_node = anchored_start if anchored_start is not None else group[0][1]
+        nodes = {node for _, frm, to, _, _ in group for node in (frm, to)}
+        runs.append({
+            "id": "RUN-" + str(index).zfill(4),
+            "elementIndices": [edge[0] for edge in group],
+            "edgeCount": len(group),
+            "nodeCount": len(nodes),
+            "firstNode": first_node,
+            "anchored": anchored_start is not None,
+            "hubFrame": "PSI116_XYZ_MM",
+            "sourceFrame": "CAESAR_INPUTXML_XYZ_MM",
+            "crossUnanchoredRunPolicy": "REFUSE_CROSS_RUN_GAP_PROXIMITY_JOIN",
+        })
+    return runs
+
+
+def _verified_inputxml_document_runs(document: Psi116Document) -> tuple[tuple[str, bool], ...]:
+    """Read trusted run membership on immutable, verified source-projected nodes."""
+    frames: dict[str, bool] = {}
+    for branch in document.branches:
+        for record in branch.nodes:
+            if isinstance(record, InputXmlNodeRecord):
+                previous = frames.setdefault(record.inputxml_run_id, record.inputxml_anchored)
+                _need(previous is record.inputxml_anchored,
+                      "INPUT_XML_RUN_PARTITION_MISMATCH")
+    return tuple(frames.items())
 
 
 def _close(a: Position, b: Position, tolerance: float = .001) -> bool:
@@ -416,6 +498,9 @@ def _document_from_caesar_inputxml(uxml: dict, *,
           frame.get("transform") == "(X,-Z,Y)",
           "INPUT_XML_COORDINATE_FRAME_MISMATCH")
     rows, namespace = _caesar_original_rows(source_text)
+    # Detect integer-colliding but literally distinct CAESAR node identifiers
+    # even when a forged partition or sourceRefs would otherwise fail first.
+    source_runs = _recompute_inputxml_runs(rows)
     comps, ports = uxml.get("components"), uxml.get("ports")
     _need(isinstance(comps, list) and isinstance(ports, list) and
           len(comps) == len(rows) and scope.get("elementCount") == len(rows),
@@ -440,6 +525,19 @@ def _document_from_caesar_inputxml(uxml: dict, *,
                   "INPUT_XML_DUPLICATE_OR_INVALID_RUN_ELEMENT_INDEX")
             run_by_index[ix] = (run_index, run)
     _need(set(run_by_index) == set(range(len(rows))), "INPUT_XML_RUN_COVERAGE_INCOMPLETE")
+    run_fields = ("id", "elementIndices", "edgeCount", "nodeCount",
+                  "firstNode", "anchored")
+    _need(len(runs) == len(source_runs) and all(
+        all(hub_run.get(field) == trusted_run[field] for field in run_fields)
+        for hub_run, trusted_run in zip(runs, source_runs)),
+        "INPUT_XML_RUN_PARTITION_MISMATCH")
+    # Discard hub run membership. All downstream sourceRef/ports/route checks
+    # and output InputXmlNodeRecord fields use ONLY original-source partition.
+    run_by_index = {
+        index: (run_i, run)
+        for run_i, run in enumerate(source_runs)
+        for index in run["elementIndices"]
+    }
     ports_by_component: dict[str, list[dict]] = {}
     for port in ports:
         _need(isinstance(port, dict) and isinstance(port.get("componentId"), str),
@@ -546,7 +644,7 @@ def _document_from_caesar_inputxml(uxml: dict, *,
                       "INPUT_XML_DELTA_PATH_CONFLICT:" + key + ":" + node)
             else:
                 visited_nodes[tag] = val
-            absolute = _caesar_hub_absolute(attrs, ep)
+            absolute = _caesar_hub_absolute(attrs, ep, index)
             if absolute is not None:
                 literal_anchors[tag] = absolute
                 _need(_close(absolute, val),
