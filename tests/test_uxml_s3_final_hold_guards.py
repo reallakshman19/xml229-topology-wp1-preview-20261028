@@ -383,6 +383,12 @@ class FinalInputXmlHoldGuards(unittest.TestCase):
         self.exact("INPUT_XML_RUN_RESOLUTION_FORMAT_REQUIRED",
                    lambda: resolve_inputxml_run_from_uxml(self.psi, "RUN-0000"))
 
+    def test_IA4_crossformat_requires_psi116_source(self):
+        hub = deepcopy(self.psi)
+        hub["sources"][0]["format"] = "INPUT_XML"
+        self.exact("CROSS_FORMAT_PSI116_SOURCE_REQUIRED",
+                   lambda: compare_cross_format_uxml(hub, self.input))
+
     def test_B2_crossformat_requires_inputxml_source(self):
         hub = self.hub()
         hub["sources"][0]["format"] = "PSI116"
