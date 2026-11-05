@@ -126,7 +126,7 @@ jobs:
           set -euo pipefail
           python3 -B -m unittest discover -s tests -p test_uxml_s3_caesar.py -v 2>&1 | tee "$RUNNER_TEMP/s3-caesar.log"
           python3 -B -m unittest discover -s tests -p test_uxml_s3_reconcile.py -v 2>&1 | tee "$RUNNER_TEMP/s3-reconcile.log"
-          python3 -B -m unittest discover -s tests -p test_uxml_s3_mutation_guards.py -v 2>&1 | tee "$RUNNER_TEMP/s3-mutants.log"
+          python3 -u -B -m unittest discover -s tests -p test_uxml_s3_mutation_guards.py -v 2>&1 | tee "$RUNNER_TEMP/s3-mutants.log"
           test "$(grep -c '^MUTANT_RED:ADAPTER:' "$RUNNER_TEMP/s3-mutants.log")" = 16
           test "$(grep -c '^MUTANT_RED:COMPARE:' "$RUNNER_TEMP/s3-mutants.log")" = 4
           test "$(grep -c '^MUTANT_RED:CLI:' "$RUNNER_TEMP/s3-mutants.log")" = 2
