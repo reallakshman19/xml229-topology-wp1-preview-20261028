@@ -164,7 +164,9 @@ class S3ExactCodeGuards(unittest.TestCase):
             if port["sourceRefs"][0]["runId"] == run["id"]:
                 port["sourceRefs"][0]["anchored"] = True
                 port["anchored"] = True
-        self.exact("INPUT_XML_FALSE_ANCHORED_OR_UNANCHORED_RUN:" + run["id"],
+        # The source-derived run-partition gate now refuses a forged anchor
+        # before any downstream, redundant false-anchor consistency check.
+        self.exact("INPUT_XML_RUN_PARTITION_MISMATCH",
                    lambda: document_from_uxml(hub))
 
     def test_M12_all_unanchored_cross_format_refuses_absolute_comparison(self):
