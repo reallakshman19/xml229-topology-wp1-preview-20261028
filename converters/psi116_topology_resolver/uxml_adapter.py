@@ -304,7 +304,7 @@ def _caesar_hub_absolute(attrs: Mapping[str, str], prefix: str,
     nums = []
     for key, value in zip(keys, values):
         _need(bool(re.fullmatch(
-            r"[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?", value)),
+            r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?", value)),
             "INPUT_XML_INVALID_NUMBER:E" + str(index) + ":" + key)
         num = float(value)
         _need(math.isfinite(num), "INPUT_XML_NONFINITE_ABSOLUTE_ANCHOR")
