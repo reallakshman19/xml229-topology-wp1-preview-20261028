@@ -464,6 +464,118 @@ class S3Step2BDeleteOneGuardMutants(unittest.TestCase):
                 self.must_go_red(witness)
                 print("MUTANT_RED:R2_B3:" + label + "_EDGECOUNT_TYPE", flush=True)
 
+    @staticmethod
+    def _r3_compiled_mutant(module, original_function, deleted, replacement, name):
+        source = inspect.getsource(original_function)
+        if source.count(deleted) != 1:
+            raise AssertionError("R3_SINGLE_EDIT_NOT_UNIQUE:" + name)
+        ns = {}
+        exec(compile(source.replace(deleted, replacement), "<R3-" + name + ">", "exec"),
+             module.__dict__, ns)
+        return ns[original_function.__name__]
+
+    def test_R3_C1_endpoint_guard_and_wide_fuzz_kill_one_edit(self):
+        from converters.psi116_topology_resolver import uxml_adapter as adapter
+        witness = self.scenario("test_R3_C1_nonstring_endpoints_each_named_beyond_first_port")
+        wider = self.scenario("test_R2_B1_all_inputxml_read_paths_are_named_on_type_fuzz")
+        witness()
+        wider()
+        deleted = 'isinstance(ep, str) and '
+        mutant = self._r3_compiled_mutant(
+            adapter, adapter._document_from_caesar_inputxml, deleted, "", "C1_ENDPOINT")
+        with mock.patch.object(adapter, "_document_from_caesar_inputxml", mutant):
+            self.must_go_red(witness)
+            self.must_go_red(wider)
+        print("MUTANT_RED:R3_C1:ENDPOINT_TYPE", flush=True)
+        print("MUTANT_RED:R3_C5:WIDE_ENDPOINT_FUZZ", flush=True)
+
+    def test_R3_C2_sourceAttributes_guard_and_wide_fuzz_kill_one_edit(self):
+        from converters.psi116_topology_resolver import uxml_compare as compare
+        witness = self.scenario(
+            "test_R3_C2_sourceAttributes_shape_refused_for_every_component_in_compare")
+        wider = self.scenario("test_R2_B1_all_inputxml_read_paths_are_named_on_type_fuzz")
+        witness()
+        wider()
+        deleted = (
+            '        _need(info.get("sourceAttributes") is None or\n'
+            '              isinstance(info.get("sourceAttributes"), dict),\n'
+            '              "CROSS_FORMAT_SOURCE_ATTRIBUTES_INVALID")\n'
+        )
+        mutant = self._r3_compiled_mutant(
+            compare, compare.compare_cross_format_uxml,
+            deleted, "", "C2_SOURCE_ATTRIBUTES")
+        with mock.patch.object(compare, "compare_cross_format_uxml", mutant), \
+             mock.patch.object(self.cases, "compare_cross_format_uxml", mutant):
+            self.must_go_red(witness)
+            self.must_go_red(wider)
+        print("MUTANT_RED:R3_C2:SOURCE_ATTRIBUTES", flush=True)
+        print("MUTANT_RED:R3_C5:WIDE_SOURCE_ATTRIBUTES_FUZZ", flush=True)
+
+    def test_R3_C3_oversized_integer_guard_kills_single_edit(self):
+        from converters.psi116_topology_resolver import uxml_adapter as adapter
+        witness = self.scenario("test_R3_C3_oversized_honest_reader_node_literal_is_named")
+        witness()
+        deleted = (
+            '    _need(len(value.split(".", 1)[0].lstrip("+-")) <= 9,\n'
+            '          "INPUT_XML_INVALID_NODE_NUMBER:" + label)\n'
+        )
+        mutant = self._r3_compiled_mutant(
+            adapter, adapter._caesar_int, deleted, "", "C3_DIGIT_BOUND")
+        with mock.patch.object(adapter, "_caesar_int", mutant):
+            self.must_go_red(witness)
+        print("MUTANT_RED:R3_C3:OVERSIZED_INTEGER", flush=True)
+
+    def test_R3_C4_four_guard_families_each_have_exact_green_red(self):
+        from converters.psi116_topology_resolver import uxml_adapter as adapter
+        from converters.psi116_topology_resolver import uxml_compare as compare
+        docs = (
+            ("RUN_ELEMENT_INDICES",
+             "test_R3_C4_swapped_run_element_indices_refused",
+             adapter, adapter._document_from_caesar_inputxml,
+             '"id", "elementIndices", "edgeCount",',
+             '"id", "edgeCount",',
+             "_document_from_caesar_inputxml"),
+            ("COMPONENT_TYPE_STR",
+             "test_R3_C4_component_type_nonstring_later_components_refused",
+             adapter, adapter._document_from_caesar_inputxml,
+             '        _need(isinstance(info.get("componentType"), str),\n'
+             '              "INPUT_XML_RAW_RECORD_ID_MISMATCH:" + key)\n',
+             "",
+             "_document_from_caesar_inputxml"),
+        )
+        for label, case, module, original, before, after, target in docs:
+            with self.subTest(guard=label):
+                witness = self.scenario(case)
+                witness()
+                mutant = self._r3_compiled_mutant(module, original, before, after, label)
+                with mock.patch.object(module, target, mutant):
+                    self.must_go_red(witness)
+                print("MUTANT_RED:R3_C4:" + label, flush=True)
+
+        original = compare.compare_cross_format_uxml
+        source_guards = (
+            ("FRAME_DICT", "test_R3_C4_compare_frame_dict_guard_refuses",
+             '    _need(isinstance(frame, dict), "CROSS_FORMAT_HUB_FRAME_UNVERIFIED")\n'),
+            ("PSI_SOURCES_LIST", "test_R3_C4_compare_sources_and_entries_refuse",
+             '          isinstance(psi_uxml.get("sources"), list) and\n'),
+            ("PSI_SOURCE_ENTRY", "test_R3_C4_compare_sources_and_entries_refuse",
+             '          isinstance(psi_uxml["sources"][0], dict) and\n'),
+            ("INPUT_SOURCES_LIST", "test_R3_C4_compare_sources_and_entries_refuse",
+             '          isinstance(input_uxml.get("sources"), list) and\n'),
+            ("INPUT_SOURCE_ENTRY", "test_R3_C4_compare_sources_and_entries_refuse",
+             '          isinstance(input_uxml["sources"][0], dict) and\n'),
+        )
+        for label, case, deleted in source_guards:
+            with self.subTest(guard=label):
+                witness = self.scenario(case)
+                witness()
+                mutant = self._r3_compiled_mutant(
+                    compare, original, deleted, "", label)
+                with mock.patch.object(compare, "compare_cross_format_uxml", mutant), \
+                     mock.patch.object(self.cases, "compare_cross_format_uxml", mutant):
+                    self.must_go_red(witness)
+                print("MUTANT_RED:R3_C4:" + label, flush=True)
+
     def test_T1_honest_source_variants_each_kill_the_matching_mutant(self):
         from converters.psi116_topology_resolver import uxml_adapter as adapter
 
