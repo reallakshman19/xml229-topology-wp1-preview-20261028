@@ -430,6 +430,7 @@ class FinalInputXmlHoldGuards(unittest.TestCase):
             ("components", 0, "rawAttributes", "inputXml", "to"),
             ("ports",), ("ports", 0), ("ports", 0, "componentId"),
             ("ports", 0, "sourceRefs"), ("ports", 0, "sourceRefs", 0),
+            ("ports", 0, "sourceRefs", 0, "endpoint"),
             ("ports", 0, "point"), ("ports", 0, "point", "x"),
             ("ports", 0, "runId"), ("ports", 0, "anchored"),
             ("ports", 0, "coordinateFrame"),
@@ -437,8 +438,26 @@ class FinalInputXmlHoldGuards(unittest.TestCase):
         replacements = (("str", "x"), ("list", ["x"]), ("none", None),
                         ("int", 23), ("bool", True))
         original = self.hub()
+        # Enumerate EVERY existing index of each list encountered by a
+        # template (sources, runs, components, ports and nested sourceRefs).
+        # This prevents an early port-0 refusal masking defects at E1-E5.
+        expanded_paths = []
+        for template in paths:
+            states = [(original, ())]
+            for part in template:
+                updated = []
+                for value, prefix in states:
+                    if type(part) is int and isinstance(value, list):
+                        updated.extend((value[i], prefix + (i,))
+                                       for i in range(len(value)))
+                    else:
+                        updated.append((value[part], prefix + (part,)))
+                states = updated
+            expanded_paths.extend(prefix for _, prefix in states)
+        expanded_paths = list(dict.fromkeys(expanded_paths))
         tested = 0
-        for path in paths:
+        tolerated_valid_strings = 0
+        for path in expanded_paths:
             cursor = original
             for part in path:
                 cursor = cursor[part]
@@ -459,10 +478,30 @@ class FinalInputXmlHoldGuards(unittest.TestCase):
                         self.fail("UNNAMED_INPUT_XML_EXCEPTION " +
                                   repr(path) + " " + label + " " + repr(error))
                     else:
-                        self.fail("MALFORMED_INPUT_XML_HUB_ACCEPTED " +
-                                  repr(path) + " " + label)
+                        # A string is structurally valid componentType in an
+                        # ordinary PIPE with no original SIF/BEND witness.
+                        # Type-fuzzing must not imply new engineering policy.
+                        if path[-1] == "componentType" and type(new_value) is str:
+                            tolerated_valid_strings += 1
+                        else:
+                            self.fail("MALFORMED_INPUT_XML_HUB_ACCEPTED " +
+                                      repr(path) + " " + label)
                     tested += 1
-        self.assertGreaterEqual(tested, 250, "fuzz matrix coverage unexpectedly shrank")
+        compare_count = 0
+        for component_index in range(len(original["components"])):
+            for label, new_value in (("str", "x"), ("list", ["x"]),
+                                     ("int", 23), ("bool", True)):
+                with self.subTest(compare_component=component_index, replacement=label):
+                    hub = self.hub()
+                    hub["components"][component_index]["rawAttributes"]["inputXml"][
+                        "sourceAttributes"] = deepcopy(new_value)
+                    self.exact("CROSS_FORMAT_SOURCE_ATTRIBUTES_INVALID",
+                               lambda: compare_cross_format_uxml(self.psi, hub))
+                    compare_count += 1
+        self.assertGreaterEqual(tested, 800, "widened type-fuzz coverage shrank")
+        self.assertEqual(compare_count, 4 * len(original["components"]))
+        print("R3_WIDE_TYPE_FUZZ_CASES=" + str(tested + compare_count) +
+              " UNNAMED=0 VALID_STRINGS=" + str(tolerated_valid_strings), flush=True)
 
     def test_R3_C1_nonstring_endpoints_each_named_beyond_first_port(self):
         for port_index in (1, 7, 11):
