@@ -368,6 +368,179 @@ class FinalInputXmlHoldGuards(unittest.TestCase):
                 self.exact("INPUT_XML_INVALID_NODE_NUMBER:E5:FROM",
                            lambda: document_from_uxml(hub))
 
+    def test_R2_B1a_non_dict_port_source_ref_exact(self):
+        hub = self.hub()
+        hub["ports"][0]["sourceRefs"] = ["x"]
+        self.exact("INPUT_XML_PORT_SOURCE_REF_MISMATCH:" + self.key(hub, 0),
+                   lambda: document_from_uxml(hub))
+
+    def test_R2_B1b_non_dict_component_raw_attributes_exact(self):
+        hub = self.hub()
+        hub["components"][0]["rawAttributes"] = "x"
+        self.exact("INPUT_XML_RAW_RECORD_ID_MISMATCH:" + self.key(hub, 0),
+                   lambda: document_from_uxml(hub))
+
+    def test_R2_B1c_non_dict_component_inputxml_evidence_exact(self):
+        hub = self.hub()
+        hub["components"][0]["rawAttributes"]["inputXml"] = [1]
+        self.exact("INPUT_XML_RAW_RECORD_ID_MISMATCH:" + self.key(hub, 0),
+                   lambda: document_from_uxml(hub))
+
+    def test_R2_B1_all_inputxml_read_paths_are_named_on_type_fuzz(self):
+        # Target ALL hub-owned collections and fields used by the InputXML
+        # source-backed path, not untrusted private source data. Primitive
+        # replacements must not leak AttributeError/TypeError/IndexError.
+        paths = (
+            ("schemaVersion",), ("profile",), ("sources",),
+            ("sources", 0), ("sources", 0, "format"),
+            ("sources", 0, "sourceText"), ("sources", 0, "hash"),
+            ("inputXml",), ("inputXml", "sourceSha256"),
+            ("inputXml", "coordinateAuthority"), ("inputXml", "sourceFrame"),
+            ("inputXml", "hubFrame"), ("inputXml", "elementCount"),
+            ("inputXml", "runs"), ("inputXml", "runs", 0),
+            ("inputXml", "runs", 0, "id"),
+            ("inputXml", "runs", 0, "anchored"),
+            ("inputXml", "runs", 0, "elementIndices"),
+            ("inputXml", "runs", 0, "edgeCount"),
+            ("inputXml", "runs", 0, "nodeCount"),
+            ("inputXml", "runs", 0, "firstNode"),
+            ("inputXml", "runs", 0, "hubFrame"),
+            ("inputXml", "runs", 0, "sourceFrame"),
+            ("inputXml", "runs", 0, "crossUnanchoredRunPolicy"),
+            ("coordinateFrame",), ("coordinateFrame", "source"),
+            ("coordinateFrame", "hub"), ("coordinateFrame", "transform"),
+            ("components",), ("components", 0),
+            ("components", 0, "id"), ("components", 0, "sourceRefs"),
+            ("components", 0, "sourceRefs", 0),
+            ("components", 0, "refNo"), ("components", 0, "rawAttributes"),
+            ("components", 0, "rawAttributes", "inputXml"),
+            ("components", 0, "rawAttributes", "inputXml", "recordKey"),
+            ("components", 0, "rawAttributes", "inputXml", "elementIndex"),
+            ("components", 0, "rawAttributes", "inputXml", "fromNode"),
+            ("components", 0, "rawAttributes", "inputXml", "toNode"),
+            ("components", 0, "rawAttributes", "inputXml", "runId"),
+            ("components", 0, "rawAttributes", "inputXml", "anchored"),
+            ("components", 0, "rawAttributes", "inputXml", "physicalEvidence"),
+            ("components", 0, "rawAttributes", "inputXml", "outsideDiameter"),
+            ("components", 0, "rawAttributes", "inputXml", "wallThickness"),
+            ("components", 0, "rawAttributes", "inputXml", "bendEvidence"),
+            ("components", 0, "rawAttributes", "inputXml", "sifEvidence"),
+            ("components", 0, "rawAttributes", "inputXml", "componentType"),
+            ("components", 0, "rawAttributes", "inputXml", "from"),
+            ("components", 0, "rawAttributes", "inputXml", "to"),
+            ("ports",), ("ports", 0), ("ports", 0, "componentId"),
+            ("ports", 0, "sourceRefs"), ("ports", 0, "sourceRefs", 0),
+            ("ports", 0, "point"), ("ports", 0, "point", "x"),
+            ("ports", 0, "runId"), ("ports", 0, "anchored"),
+            ("ports", 0, "coordinateFrame"),
+        )
+        replacements = (("str", "x"), ("list", ["x"]), ("none", None),
+                        ("int", 23), ("bool", True))
+        original = self.hub()
+        tested = 0
+        for path in paths:
+            cursor = original
+            for part in path:
+                cursor = cursor[part]
+            for label, new_value in replacements:
+                if cursor == new_value:
+                    continue
+                with self.subTest(path=path, replacement=label):
+                    hub = deepcopy(original)
+                    parent = hub
+                    for part in path[:-1]:
+                        parent = parent[part]
+                    parent[path[-1]] = deepcopy(new_value)
+                    try:
+                        document_from_uxml(hub)
+                    except UxmlPsi116Error as error:
+                        self.assertRegex(str(error), r"^[A-Z][A-Z0-9_]*(?::[^\n]+)?$")
+                    except Exception as error:
+                        self.fail("UNNAMED_INPUT_XML_EXCEPTION " +
+                                  repr(path) + " " + label + " " + repr(error))
+                    else:
+                        self.fail("MALFORMED_INPUT_XML_HUB_ACCEPTED " +
+                                  repr(path) + " " + label)
+                    tested += 1
+        self.assertGreaterEqual(tested, 250, "fuzz matrix coverage unexpectedly shrank")
+
+    def test_R2_B2_extra_empty_run_requires_same_partition_count(self):
+        hub = self.hub()
+        self.assertEqual(len(hub["inputXml"]["runs"]), 2)
+        phantom = deepcopy(hub["inputXml"]["runs"][1])
+        phantom.update(id="RUN-0002", elementIndices=[], edgeCount=0,
+                       nodeCount=0, anchored=False, firstNode="")
+        hub["inputXml"]["runs"].append(phantom)
+        self.exact("INPUT_XML_RUN_PARTITION_MISMATCH",
+                   lambda: document_from_uxml(hub))
+
+    def test_R2_B3_float_edgeCount_refuses_partition_type(self):
+        hub = self.hub()
+        count = hub["inputXml"]["runs"][0]["edgeCount"]
+        self.assertGreater(count, 1)
+        hub["inputXml"]["runs"][0]["edgeCount"] = float(count)
+        self.exact("INPUT_XML_RUN_PARTITION_MISMATCH",
+                   lambda: document_from_uxml(hub))
+
+    def test_R2_B3_bool_edgeCount_refuses_partition_type(self):
+        hub = self.hub()
+        index = next(i for i, run in enumerate(hub["inputXml"]["runs"])
+                     if run["edgeCount"] == 1)
+        hub["inputXml"]["runs"][index]["edgeCount"] = True
+        self.exact("INPUT_XML_RUN_PARTITION_MISMATCH",
+                   lambda: document_from_uxml(hub))
+
+    def test_R2_N1_reject_non_ascii_anchor_digits(self):
+        from converters.psi116_topology_resolver.uxml_adapter import _caesar_hub_absolute
+        self.exact("INPUT_XML_INVALID_NUMBER:E5:FROM_X",
+                   lambda: _caesar_hub_absolute(
+                       {"FROM_X": "\u0661.0", "FROM_Y": "2", "FROM_Z": "3"},
+                       "FROM", 5))
+
+    def test_R2_N1_trim_exact_ecmascript_feFF_yes_u0085_no(self):
+        from converters.psi116_topology_resolver.uxml_adapter import _caesar_hub_absolute
+        result = _caesar_hub_absolute(
+            {"FROM_X": "\ufeff 12.0 \ufeff", "FROM_Y": "2", "FROM_Z": "3"},
+            "FROM", 5)
+        self.assertEqual(result.as_list(), [12.0, -3.0, 2.0])
+        self.exact("INPUT_XML_INVALID_NUMBER:E5:FROM_X",
+                   lambda: _caesar_hub_absolute(
+                       {"FROM_X": "\u0085" + "12.0", "FROM_Y": "2",
+                        "FROM_Z": "3"}, "FROM", 5))
+
+    def test_R2_N2_unverified_hub_metadata_is_explicitly_ignored(self):
+        hub = self.hub()
+        changed = self.hub()
+        for run in changed["inputXml"]["runs"]:
+            run["authority"] = ["UNTRUSTED_NOT_READ"]
+            run["gapPolicy"] = {"untrusted": True}
+        changed["coordinateFrame"]["runCount"] = "FAKE_RUN_COUNT"
+        changed["coordinateFrame"]["unanchoredRunCount"] = -1000
+        self.assertEqual(
+            self._projection_signature(document_from_uxml(hub)),
+            self._projection_signature(document_from_uxml(changed)))
+        from converters.psi116_topology_resolver.models import ResolverConfig
+        cfg = ResolverConfig()
+        self.assertEqual(
+            resolve_from_uxml(hub).findings_payload(cfg)["summary"]["findingCountsByCode"],
+            resolve_from_uxml(changed).findings_payload(cfg)["summary"]["findingCountsByCode"])
+
+    def test_R2_N4_comparator_preserves_named_node_error(self):
+        from unittest import mock
+        from converters.psi116_topology_resolver import uxml_compare as comparator
+        from converters.psi116_topology_resolver.uxml_adapter import UxmlPsi116Error
+        original = comparator._caesar_int
+        invoked = [0]
+        def synthetic_refusal(value, label):
+            if label == "CROSS_FORMAT_TO_NODE":
+                invoked[0] += 1
+                raise UxmlPsi116Error("SYNTHETIC_CROSS_FORMAT_NAMED_REFUSAL")
+            return original(value, label)
+        with mock.patch.object(comparator, "_caesar_int", synthetic_refusal):
+            self.exact("SYNTHETIC_CROSS_FORMAT_NAMED_REFUSAL",
+                       lambda: comparator.compare_cross_format_uxml(self.psi, self.input))
+        self.assertGreater(invoked[0], 0)
+
     def test_B1_M05_mixed_anchored_unanchored_resolve_refusal(self):
         self.exact("INPUT_XML_CROSS_UNANCHORED_RUN_GAP_PROXIMITY_JOIN_REFUSED",
                    lambda: resolve_from_uxml(self.mixed()))
