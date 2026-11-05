@@ -116,7 +116,7 @@ jobs:
               return count,skips
           before,old_skips=run(baseline,"MAIN_F4509B5A")
           now,new_skips=run(work,"STEP_2A_HEAD")
-          assert now==before+62,(before,now,"EXPECTED_16_2A_PLUS_20_R1_PLUS_26_R2_TESTS")
+          assert now==before+79,(before,now,"EXPECTED_196_PRESTEP2B_PLUS_17_STEP2B_TESTS")
           assert new_skips<=old_skips,(old_skips,new_skips,"NEW_TEST_SKIPS_REFUSED")
           print(f"PYTHON_BASELINE_DELTA={now-before}; NEW_SKIPS={max(0,new_skips-old_skips)}")
           PY
@@ -127,6 +127,10 @@ jobs:
           python3 -B -m unittest discover -s tests -p test_uxml_s3_caesar.py -v 2>&1 | tee "$RUNNER_TEMP/s3-caesar.log"
           python3 -B -m unittest discover -s tests -p test_uxml_s3_reconcile.py -v 2>&1 | tee "$RUNNER_TEMP/s3-reconcile.log"
           python3 -B -m unittest discover -s tests -p test_uxml_s3_mutation_guards.py -v 2>&1 | tee "$RUNNER_TEMP/s3-mutants.log"
+          test "$(grep -c '^MUTANT_RED:ADAPTER:' "$RUNNER_TEMP/s3-mutants.log")" = 16
+          test "$(grep -c '^MUTANT_RED:COMPARE:' "$RUNNER_TEMP/s3-mutants.log")" = 4
+          test "$(grep -c '^MUTANT_RED:CLI:' "$RUNNER_TEMP/s3-mutants.log")" = 2
+          grep -Fq 'MUTANT_RED:NATIVE_APPLY:INPUT_XML_APPLY_NOT_ENABLED' "$RUNNER_TEMP/s3-mutants.log"
           python3 -B -m unittest discover -s tests -p test_uxml_s3_final_hold_guards.py -v 2>&1 | tee "$RUNNER_TEMP/s3-final-guards.log"
           python3 -B -m unittest discover -s tests -p test_uxml_s3_readonly_guard.py -v 2>&1 | tee "$RUNNER_TEMP/s3-readonly.log"
           if grep -Eqi '\bskipped\b' "$RUNNER_TEMP/s3-caesar.log" "$RUNNER_TEMP/s3-reconcile.log" "$RUNNER_TEMP/s3-readonly.log" "$RUNNER_TEMP/s3-mutants.log" "$RUNNER_TEMP/s3-final-guards.log"; then
