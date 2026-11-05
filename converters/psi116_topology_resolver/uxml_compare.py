@@ -17,7 +17,8 @@ from .models import ResolverConfig
 from .parser import read_psi116_xml
 from .resolver import analyze_document
 from .uxml_adapter import (
-    _verified_inputxml_document_runs, document_from_uxml, resolve_from_uxml,
+    _caesar_int, _verified_inputxml_document_runs, document_from_uxml,
+    resolve_from_uxml,
 )
 
 
@@ -136,7 +137,7 @@ def compare_cross_format_uxml(psi_uxml: dict, input_uxml: dict) -> list[str]:
         info=(comp.get("rawAttributes") or {}).get("inputXml") or {}
         literal=info.get("toNode")
         try:
-            node_number=int(literal.split(".",1)[0]) if isinstance(literal,str) else None
+            node_number=_caesar_int(literal, "CROSS_FORMAT_TO_NODE") if isinstance(literal,str) else None
         except (ValueError,TypeError):
             continue
         source_evidence[node_number].append(info)
