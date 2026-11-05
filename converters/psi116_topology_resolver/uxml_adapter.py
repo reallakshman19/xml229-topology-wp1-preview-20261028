@@ -263,6 +263,12 @@ class InputXmlNodeRecord(NodeRecord):
 def _caesar_int(value: str, label: str) -> int:
     _need(isinstance(value, str) and re.fullmatch(r"[+-]?[0-9]+(?:\.0+)?", value) is not None,
           "INPUT_XML_INVALID_NODE_NUMBER:" + label)
+    # Python 3.11+ refuses int strings above its digit cap with a generic
+    # ValueError; CAESAR node identifiers are at most 9 integral digits.
+    # Enforce this before int() so even a 4500-digit honest XCU source fails
+    # with the same stable, named InputXML refusal.
+    _need(len(value.split(".", 1)[0].lstrip("+-")) <= 9,
+          "INPUT_XML_INVALID_NODE_NUMBER:" + label)
     return int(value.split(".", 1)[0])
 
 
@@ -662,7 +668,8 @@ def _document_from_caesar_inputxml(uxml: dict, *,
             _need(isinstance(refs[0], dict),
                   "INPUT_XML_PORT_SOURCE_REF_MISMATCH:" + key)
             ep = refs[0].get("endpoint")
-            _need(ep in {"FROM", "TO"} and refs == [{**expected, "endpoint": ep}],
+            _need(isinstance(ep, str) and ep in {"FROM", "TO"} and
+                  refs == [{**expected, "endpoint": ep}],
                   "INPUT_XML_PORT_SOURCE_REF_MISMATCH:" + key)
             _need(ep not in positions, "INPUT_XML_DUPLICATE_ENDPOINT:" + key)
             position = _position(port.get("point"))
