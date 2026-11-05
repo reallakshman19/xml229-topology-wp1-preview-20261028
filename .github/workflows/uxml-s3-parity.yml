@@ -18,6 +18,7 @@ on:
       - 'tabs/topology-workspace/topology-worker.mjs'
       - 'tests/test_uxml_s3_mutation_guards.py'
       - 'tests/test_uxml_s3_final_hold_guards.py'
+      - 'tests/test_uxml_s3_long_run.py'
       - 'tests/test_uxml_s3_caesar.py'
       - 'tests/test_uxml_s3_reconcile.py'
       - 'tests/test_uxml_s3_readonly_guard.py'
@@ -116,9 +117,58 @@ jobs:
               return count,skips
           before,old_skips=run(baseline,"MAIN_F4509B5A")
           now,new_skips=run(work,"STEP_2A_HEAD")
-          assert now==before+80,(before,now,"EXPECTED_196_PRESTEP2B_PLUS_18_STEP2B_TESTS")
+          assert now==before+91,(before,now,"EXPECTED_214_PRE_REPAIR_PLUS_11_R1_TESTS")
           assert new_skips<=old_skips,(old_skips,new_skips,"NEW_TEST_SKIPS_REFUSED")
           print(f"PYTHON_BASELINE_DELTA={now-before}; NEW_SKIPS={max(0,new_skips-old_skips)}")
+          PY
+      - name: Original d196e345 B1 repro at N=1200 and N=5000 from pinned public reader
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin d196e345c17b7cbc74df9219c56e816efc5d2ee4
+          git worktree add --detach "$RUNNER_TEMP/topofix-2b-fork" d196e345c17b7cbc74df9219c56e816efc5d2ee4
+          python3 -u - <<'PY'
+          import json, os, subprocess, sys, tempfile
+          from pathlib import Path
+          root=Path(os.environ["GITHUB_WORKSPACE"])
+          sys.path.insert(0,str(root/"tests"))
+          from test_uxml_s3_long_run import PublicXcuLongRunRegression
+          PublicXcuLongRunRegression.setUpClass()
+          witness=PublicXcuLongRunRegression(
+              "test_B1_reverse_1200_original_source_document_and_real_resolve")
+          baseline=Path(os.environ["RUNNER_TEMP"])/"topofix-2b-fork"
+          code="""
+          import json,sys
+          from converters.psi116_topology_resolver.uxml_adapter import (
+              document_from_uxml, resolve_from_uxml)
+          with open(sys.argv[1],encoding="utf-8") as file:
+              hub=json.load(file)
+          for name,analyze in (("DOCUMENT",document_from_uxml),
+                               ("RESOLVE",resolve_from_uxml)):
+              try:
+                  analyze(hub)
+              except RecursionError:
+                  print(name+"=RECURSION_ERROR")
+              else:
+                  raise SystemExit("BASE_B1_RECURSION_EXPECTED:"+name)
+          """
+          for count in (1200,5000):
+              hub=witness.hub(count,reverse=True)
+              with tempfile.TemporaryDirectory(prefix="public-b1-old-repro-") as folder:
+                  path=Path(folder)/"source-backed-hub.json"
+                  path.write_text(json.dumps(hub),encoding="utf-8")
+                  env=os.environ.copy()
+                  env["PYTHONPATH"]=str(baseline)
+                  proc=subprocess.run(
+                      [sys.executable,"-B","-c",code,str(path)],
+                      cwd=baseline,env=env,capture_output=True,text=True,timeout=90)
+                  if proc.returncode:
+                      raise AssertionError(f"BASE_D196_B1_N{count}_REPRO_FAILED: "+
+                                           proc.stdout+proc.stderr)
+                  assert proc.stdout.splitlines()==[
+                      "DOCUMENT=RECURSION_ERROR","RESOLVE=RECURSION_ERROR"],proc.stdout
+                  print(f"BASE_D196_B1_N{count}=DOCUMENT_RECURSION_ERROR_"
+                        "RESOLVE_RECURSION_ERROR",flush=True)
           PY
       - name: Rerun S3 synthetic/public tests on ddd3 pin and enforce no skips
         shell: bash
@@ -129,6 +179,8 @@ jobs:
           python3 -u -B -m unittest discover -s tests -p test_uxml_s3_mutation_guards.py -v 2>&1 | tee "$RUNNER_TEMP/s3-mutants.log"
           test "$(grep -c '^MUTANT_RED:ADAPTER:' "$RUNNER_TEMP/s3-mutants.log")" = 16
           test "$(grep -c '^MUTANT_RED:COMPARE:' "$RUNNER_TEMP/s3-mutants.log")" = 4
+          test "$(grep -c '^MUTANT_RED:T1:' "$RUNNER_TEMP/s3-mutants.log")" = 3
+          test "$(grep -c '^MUTANT_RED:T2:' "$RUNNER_TEMP/s3-mutants.log")" = 2
           test "$(grep -c '^MUTANT_RED:CLI:' "$RUNNER_TEMP/s3-mutants.log")" = 2
           grep -Fq 'MUTANT_RED:NATIVE_APPLY:INPUT_XML_APPLY_NOT_ENABLED' "$RUNNER_TEMP/s3-mutants.log"
           python3 -B -m unittest discover -s tests -p test_uxml_s3_final_hold_guards.py -v 2>&1 | tee "$RUNNER_TEMP/s3-final-guards.log"
