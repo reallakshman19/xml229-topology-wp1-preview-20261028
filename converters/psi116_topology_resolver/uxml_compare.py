@@ -16,7 +16,9 @@ import sys
 from .models import ResolverConfig
 from .parser import read_psi116_xml
 from .resolver import analyze_document
-from .uxml_adapter import document_from_uxml, resolve_from_uxml
+from .uxml_adapter import (
+    _verified_inputxml_document_runs, document_from_uxml, resolve_from_uxml,
+)
 
 
 def _diff(path, left, right, out):
@@ -100,12 +102,15 @@ def compare_cross_format_uxml(psi_uxml: dict, input_uxml: dict) -> list[str]:
     _need(frame.get("hub") == "PSI116_XYZ_MM" and
           frame.get("transform") == "(X,-Z,Y)",
           "CROSS_FORMAT_HUB_FRAME_UNVERIFIED")
-    runs=(input_uxml.get("inputXml") or {}).get("runs") or []
-    _need(runs and all(r.get("anchored") is True for r in runs),
+    # Verify original-source partition FIRST. The UXML document's run metadata
+    # is not an independent frame authority: a forged all-anchored run must
+    # fail before any absolute PSI116 comparison or global-proximity analysis.
+    input_doc = document_from_uxml(input_uxml)
+    trusted_runs = _verified_inputxml_document_runs(input_doc)
+    _need(bool(trusted_runs) and all(anchored for _, anchored in trusted_runs),
           "CROSS_FORMAT_UNANCHORED_ABSOLUTE_FRAME_COMPARISON_REFUSED")
 
     psi_doc = document_from_uxml(psi_uxml)
-    input_doc = document_from_uxml(input_uxml)
     psi_result = resolve_from_uxml(psi_uxml)
     input_result = resolve_from_uxml(input_uxml)
     config = ResolverConfig()
