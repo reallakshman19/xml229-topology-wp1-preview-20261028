@@ -110,6 +110,15 @@ def compare_cross_format_uxml(psi_uxml: dict, input_uxml: dict) -> list[str]:
     _need(isinstance(psi_uxml.get("components"), list) and
           isinstance(psi_uxml.get("ports"), list),
           "UXML_SOURCE_RECORD_COLLECTION_INVALID")
+    # A3-R1: validate only the PSI116 UXML comparison boundary. The native
+    # PSI116 adapter/parser and legitimate-source semantics are unchanged.
+    _need(all(isinstance(component, dict) and
+              isinstance(component.get("rawAttributes"), dict)
+              for component in psi_uxml["components"]),
+          "UXML_PSI116_HUB_SHAPE_INVALID")
+    _need(all(isinstance(pipeline.get("rawAttributes"), dict)
+              for pipeline in psi_uxml["pipelines"]),
+          "UXML_PSI116_HUB_SHAPE_INVALID")
     _need(isinstance(input_uxml, dict) and
           isinstance(input_uxml.get("sources"), list) and
           len(input_uxml["sources"]) == 1 and
@@ -129,8 +138,16 @@ def compare_cross_format_uxml(psi_uxml: dict, input_uxml: dict) -> list[str]:
     _need(bool(trusted_runs) and all(anchored for _, anchored in trusted_runs),
           "CROSS_FORMAT_UNANCHORED_ABSOLUTE_FRAME_COMPARISON_REFUSED")
 
-    psi_doc = document_from_uxml(psi_uxml)
-    psi_result = resolve_from_uxml(psi_uxml)
+    try:
+        psi_doc = document_from_uxml(psi_uxml)
+        psi_result = resolve_from_uxml(psi_uxml)
+    except UxmlPsi116Error:
+        # Preserve all existing named PSI116 source/provenance refusals.
+        raise
+    except (AttributeError, KeyError, TypeError, OverflowError, ValueError) as exc:
+        # Malformed hand-edited PSI116 hubs must never leak Python exception
+        # text (or a CLI traceback) through this comparison-only entrypoint.
+        raise UxmlPsi116Error("UXML_PSI116_HUB_SHAPE_INVALID") from exc
     input_result = resolve_from_uxml(input_uxml)
     config = ResolverConfig()
     diffs: list[str] = []
