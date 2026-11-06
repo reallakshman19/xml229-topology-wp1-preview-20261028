@@ -503,6 +503,136 @@ class FinalInputXmlHoldGuards(unittest.TestCase):
         print("R3_WIDE_TYPE_FUZZ_CASES=" + str(tested + compare_count) +
               " UNNAMED=0 VALID_STRINGS=" + str(tolerated_valid_strings), flush=True)
 
+    def test_A3_T1_to_only_absolute_anchor_is_source_verified(self):
+        from converters.psi116_topology_resolver.uxml_adapter import (
+            _recompute_inputxml_runs,
+        )
+        # The second public run is a one-edge run. Strip ONLY its FROM_X/Y/Z;
+        # retain TO_X/Y/Z as its sole absolute anchor, via strict XCU reader.
+        def only_to(tag):
+            updated, n = re.subn(r'\s+FROM_[XYZ]="[^"]*"', "", tag)
+            self.assertEqual(n, 3)
+            return updated
+        hub = self._change_last_source_element(only_to, strict_reader=True)
+        rows, _ = _caesar_original_rows(hub["sources"][0]["sourceText"])
+        self.assertEqual(len(rows), 6)
+        self.assertFalse(any("FROM_" + axis in rows[5].attrib for axis in "XYZ"))
+        self.assertTrue(all("TO_" + axis in rows[5].attrib for axis in "XYZ"))
+        run = hub["inputXml"]["runs"][1]
+        self.assertEqual((run["id"], run["anchored"], run["firstNode"]),
+                         ("RUN-0001", True, "110.000000"))
+        derived = _recompute_inputxml_runs(rows)[1]
+        for field in ("id", "elementIndices", "edgeCount",
+                      "nodeCount", "firstNode", "anchored"):
+            self.assertEqual(derived[field], run[field], field)
+        document_from_uxml(hub)
+        resolve_from_uxml(hub)
+
+    def _a3_closed_loop_hub(self):
+        # Close original public 10->20->30->50->60 route to 10, with a
+        # source-consistent -200 X / -150 Y closing delta and literal XYZ
+        # absolute TO at 0,0,0. The original E4 20->40 branch and separate
+        # E5 100->110 run remain, so run ID and ordering are testable.
+        text = self.input_path.read_text(encoding="utf-8")
+        tags = list(re.finditer(r"<PIPINGELEMENT\b[^>]*>", text))
+        self.assertEqual(len(tags), 6)
+        tag = tags[3]
+        updated = tag.group()
+        changes = {
+            "TO_NODE": "10.000000",
+            "DELTA_X": "-200.000000",
+            "DELTA_Y": "-150.000000",
+            "TO_X": "0.000000",
+            "TO_Y": "0.000000",
+            "TO_Z": "0.000000",
+        }
+        for name, value in changes.items():
+            pattern = r'(\b' + re.escape(name) + r'=")[^"]*(")'
+            updated, count = re.subn(pattern, lambda m: m[1] + value + m[2], updated)
+            self.assertEqual(count, 1, name)
+        altered = text[:tag.start()] + updated + text[tag.end():]
+        with tempfile.TemporaryDirectory(prefix="public-a3-cycle-") as folder:
+            path = Path(folder) / SOURCE
+            path.write_text(altered, encoding="utf-8")
+            return self._strict(path, self.reader)
+
+    def test_A3_T2_closed_loop_matches_xcu_partition_identity(self):
+        from converters.psi116_topology_resolver.uxml_adapter import (
+            _recompute_inputxml_runs,
+        )
+        hub = self._a3_closed_loop_hub()
+        rows, _ = _caesar_original_rows(hub["sources"][0]["sourceText"])
+        self.assertEqual((rows[0].get("FROM_NODE"), rows[3].get("TO_NODE")),
+                         ("10.000000", "10.000000"))
+        self.assertEqual([(row.get("FROM_NODE"), row.get("TO_NODE"))
+                          for row in rows[:4]][-1][1], rows[0].get("FROM_NODE"))
+        trusted = _recompute_inputxml_runs(rows)
+        reader_runs = hub["inputXml"]["runs"]
+        self.assertEqual(len(trusted), 2)
+        self.assertEqual(len(reader_runs), 2)
+        self.assertEqual(
+            [(run["id"], run["elementIndices"], run["edgeCount"],
+              run["nodeCount"], run["firstNode"]) for run in reader_runs],
+            [("RUN-0000", [0, 1, 2, 3, 4], 5, 5, "10.000000"),
+             ("RUN-0001", [5], 1, 2, "100.000000")])
+        for actual, expected in zip(trusted, reader_runs):
+            for field in ("id", "elementIndices", "edgeCount",
+                          "nodeCount", "firstNode", "anchored"):
+                self.assertEqual(actual[field], expected[field], field)
+        document_from_uxml(hub)
+        resolve_from_uxml(hub)
+
+    def test_A3_T3_exact_9_digit_caesar_node_boundary(self):
+        from converters.psi116_topology_resolver.uxml_adapter import _caesar_int
+        self.assertEqual(_caesar_int("999999999.000000", "A3_BOUND"), 999999999)
+        self.assertEqual(_caesar_int("+999999999", "A3_BOUND"), 999999999)
+        self.exact("INPUT_XML_INVALID_NODE_NUMBER:A3_BOUND",
+                   lambda: _caesar_int("1000000000.000000", "A3_BOUND"))
+        self.exact("INPUT_XML_INVALID_NODE_NUMBER:A3_BOUND",
+                   lambda: _caesar_int("9999999999", "A3_BOUND"))
+
+    def _a3_bad_psi_hubs(self):
+        scenarios = (
+            ("scope_non_dict", "UXML_PSI116_PROVENANCE_MISMATCH",
+             lambda psi: psi.__setitem__("psi116", ["malformed"])),
+            ("branch_entry_non_dict", "UXML_SOURCE_RECORD_COLLECTION_INVALID",
+             lambda psi: psi["pipelines"].__setitem__(0, "malformed")),
+            ("components_missing", "UXML_SOURCE_RECORD_COLLECTION_INVALID",
+             lambda psi: psi.pop("components")),
+            ("ports_non_list", "UXML_SOURCE_RECORD_COLLECTION_INVALID",
+             lambda psi: psi.__setitem__("ports", "malformed")),
+            ("pipelines_missing", "UXML_SOURCE_RECORD_COLLECTION_INVALID",
+             lambda psi: psi.pop("pipelines")),
+        )
+        for label, expected, edit in scenarios:
+            psi = deepcopy(self.psi)
+            edit(psi)
+            yield label, expected, psi
+
+    def test_A3_T4_malformed_psi_hubs_named_in_compare_and_cli(self):
+        from contextlib import redirect_stdout, redirect_stderr
+        import io
+        from converters.psi116_topology_resolver.uxml_compare import main
+        # The existing pinned PSI116 tests cover unchanged honest behaviour.
+        self.assertEqual(len(compare_cross_format_uxml(self.psi, self.input)), 13)
+        document_from_uxml(self.psi)
+        for label, code, psi in self._a3_bad_psi_hubs():
+            with self.subTest(shape=label):
+                self.exact(code, lambda: compare_cross_format_uxml(psi, self.input))
+                with tempfile.TemporaryDirectory(prefix="public-a3-psi-") as folder:
+                    psi_path = Path(folder) / "malformed-psi.uxml.json"
+                    input_path = Path(folder) / "public-input.uxml.json"
+                    psi_path.write_text(json.dumps(psi), encoding="utf-8")
+                    input_path.write_text(json.dumps(self.input), encoding="utf-8")
+                    stdout, stderr = io.StringIO(), io.StringIO()
+                    with redirect_stdout(stdout), redirect_stderr(stderr):
+                        exit_code = main(
+                            [str(psi_path), str(input_path), "--cross-format"])
+                    self.assertEqual(exit_code, 1)
+                    self.assertEqual(stdout.getvalue().strip().splitlines(),
+                                     ["DIFFERENT", "ERROR: " + code])
+                    self.assertNotIn("Traceback", stderr.getvalue())
+
     def test_R3_C1_nonstring_endpoints_each_named_beyond_first_port(self):
         for port_index in (1, 7, 11):
             for shape in (["FROM"], {"endpoint": "FROM"}):
