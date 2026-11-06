@@ -637,6 +637,65 @@ class S3Step2BDeleteOneGuardMutants(unittest.TestCase):
                     self.must_go_red(witness)
                 print("MUTANT_RED:A3:T4_" + label, flush=True)
 
+    def test_A3_R1_R4_nested_guards_exception_map_and_ports_one_edit_mutants(self):
+        from converters.psi116_topology_resolver import uxml_compare as compare
+
+        source = inspect.getsource(compare.compare_cross_format_uxml)
+        variants = (
+            ("COMPONENT_RAW_ATTRIBUTES",
+             '    _need(all(isinstance(component, dict) and\n'
+             '              isinstance(component.get("rawAttributes"), dict)\n'
+             '              for component in psi_uxml["components"]),\n'
+             '          "UXML_PSI116_HUB_SHAPE_INVALID")\n',
+             "",
+             "test_A3_R1_nested_component_pipeline_raw_attributes_are_named",
+             "A3_R1"),
+            ("PIPELINE_RAW_ATTRIBUTES",
+             '    _need(all(isinstance(pipeline.get("rawAttributes"), dict)\n'
+             '              for pipeline in psi_uxml["pipelines"]),\n'
+             '          "UXML_PSI116_HUB_SHAPE_INVALID")\n',
+             "",
+             "test_A3_R1_nested_component_pipeline_raw_attributes_are_named",
+             "A3_R1"),
+            ("EXCEPTION_MAP",
+             'raise UxmlPsi116Error("UXML_PSI116_HUB_SHAPE_INVALID") from exc',
+             'raise  # MUTANT: leak the original adapter exception',
+             "test_A3_R1_plain_adapter_errors_are_normalized_to_one_code",
+             "A3_R1"),
+            ("PORTS_LIST",
+             'isinstance(psi_uxml.get("components"), list) and\n'
+             '          isinstance(psi_uxml.get("ports"), list)',
+             'isinstance(psi_uxml.get("components"), list)',
+             "test_A3_R3_ports_none_requires_collection_guard",
+             "A3_R3"),
+        )
+        self.assertEqual(len(variants), 4)
+        for label, before, after, name, category in variants:
+            with self.subTest(single_deleted_guard=label):
+                witness = self.scenario(name)
+                witness()  # unchanged GREEN exact code
+                self.assertEqual(source.count(before), 1, "MUTANT_TARGET_NOT_UNIQUE:" + label)
+                mutant = self._r3_compiled_mutant(
+                    compare, compare.compare_cross_format_uxml,
+                    before, after, "A3_R1_" + label)
+                with mock.patch.object(compare, "compare_cross_format_uxml", mutant), \
+                     mock.patch.object(self.cases, "compare_cross_format_uxml", mutant):
+                    self.must_go_red(witness)
+                    if label == "EXCEPTION_MAP":
+                        cli_witness = self.scenario(
+                            "test_A3_R2_inprocess_cli_named_for_mutation_witness")
+                        # A separate real CLI invocation is also pinned in the
+                        # unchanged test suite. This in-process invocation
+                        # proves the exact error text changes with ONE edit.
+                        self.must_go_red(cli_witness)
+                        print("MUTANT_RED:A3_R2:CLI_EXACT_NAMED_CODE", flush=True)
+                    elif label == "PORTS_LIST":
+                        collection_witness = self.scenario(
+                            "test_A3_R4_pipeline_null_dict_and_ports_none_keep_collection_code")
+                        self.must_go_red(collection_witness)
+                print("MUTANT_RED:" + category + ":" + label, flush=True)
+        print("MUTANT_RED:A3_R4:ALL_FOUR_GUARDS_KILLED", flush=True)
+
     def test_T1_honest_source_variants_each_kill_the_matching_mutant(self):
         from converters.psi116_topology_resolver import uxml_adapter as adapter
 
