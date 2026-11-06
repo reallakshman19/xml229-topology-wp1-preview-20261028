@@ -576,6 +576,67 @@ class S3Step2BDeleteOneGuardMutants(unittest.TestCase):
                     self.must_go_red(witness)
                 print("MUTANT_RED:R3_C4:" + label, flush=True)
 
+    def test_A3_T1_to_only_anchor_from_only_mutant_red(self):
+        from converters.psi116_topology_resolver import uxml_adapter as adapter
+        witness = self.scenario("test_A3_T1_to_only_absolute_anchor_is_source_verified")
+        witness()  # GREEN real public XCU strict reader and document/resolve
+        mutant = self._r3_compiled_mutant(
+            adapter, adapter._recompute_inputxml_runs,
+            '_caesar_hub_absolute(attrs, "TO", index)))',
+            "None))", "A3_T1_FROM_ONLY")
+        with mock.patch.object(adapter, "_recompute_inputxml_runs", mutant):
+            self.must_go_red(witness)
+        print("MUTANT_RED:A3:T1_FROM_ONLY_ANCHOR", flush=True)
+
+    def test_A3_T2_closed_cycle_union_find_mutant_red(self):
+        from converters.psi116_topology_resolver import uxml_adapter as adapter
+        witness = self.scenario("test_A3_T2_closed_loop_matches_xcu_partition_identity")
+        witness()  # GREEN XCU reader order/indices/counts/firstNode/doc/resolve
+        mutant = self._r3_compiled_mutant(
+            adapter, adapter._recompute_inputxml_runs,
+            '        if start != end:\n            parent[end] = start\n',
+            '        if start == end:\n'
+            '            parent.clear()  # MUTANT: destroy cycle union\n'
+            '        if start != end:\n'
+            '            parent[end] = start\n', "A3_T2_CYCLE_BREAK")
+        with mock.patch.object(adapter, "_recompute_inputxml_runs", mutant):
+            self.must_go_red(witness)
+        print("MUTANT_RED:A3:T2_CYCLE_UNION", flush=True)
+
+    def test_A3_T3_nine_digit_off_by_one_mutant_red(self):
+        from converters.psi116_topology_resolver import uxml_adapter as adapter
+        witness = self.scenario("test_A3_T3_exact_9_digit_caesar_node_boundary")
+        witness()  # GREEN 999999999 accepted; 1000000000 named refusal
+        mutant = self._r3_compiled_mutant(
+            adapter, adapter._caesar_int,
+            'len(value.split(".", 1)[0].lstrip("+-")) <= 9',
+            'len(value.split(".", 1)[0].lstrip("+-")) <= 10',
+            "A3_T3_BOUND_PLUS_ONE")
+        with mock.patch.object(adapter, "_caesar_int", mutant):
+            self.must_go_red(witness)
+        print("MUTANT_RED:A3:T3_BOUND_OFF_BY_ONE", flush=True)
+
+    def test_A3_T4_psi_hub_scope_and_branch_shape_mutants_red(self):
+        from converters.psi116_topology_resolver import uxml_compare as compare
+        witness = self.scenario("test_A3_T4_malformed_psi_hubs_named_in_compare_and_cli")
+        witness()  # GREEN direct compare + CLI for 5 public malformed shapes
+        guards = (
+            ("SCOPE", '    _need(isinstance(psi_uxml.get("psi116"), dict),\n'
+             '          "UXML_PSI116_PROVENANCE_MISMATCH")\n'),
+            ("BRANCH_ENTRY", '    _need(isinstance(psi_uxml.get("pipelines"), list) and\n'
+             '          all(isinstance(row, dict) for row in psi_uxml["pipelines"]),\n'
+             '          "UXML_SOURCE_RECORD_COLLECTION_INVALID")\n'),
+        )
+        for label, removed in guards:
+            with self.subTest(guard=label):
+                mutant = self._r3_compiled_mutant(
+                    compare, compare.compare_cross_format_uxml,
+                    removed, "", "A3_T4_" + label)
+                with mock.patch.object(compare, "compare_cross_format_uxml", mutant), \
+                     mock.patch.object(self.cases, "compare_cross_format_uxml", mutant):
+                    self.must_go_red(witness)
+                print("MUTANT_RED:A3:T4_" + label, flush=True)
+
     def test_T1_honest_source_variants_each_kill_the_matching_mutant(self):
         from converters.psi116_topology_resolver import uxml_adapter as adapter
 
