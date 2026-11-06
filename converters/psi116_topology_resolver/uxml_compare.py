@@ -99,6 +99,17 @@ def compare_cross_format_uxml(psi_uxml: dict, input_uxml: dict) -> list[str]:
           isinstance(psi_uxml["sources"][0], dict) and
           psi_uxml["sources"][0].get("format") == "PSI116",
           "CROSS_FORMAT_PSI116_SOURCE_REQUIRED")
+    # FU-A1: guard PSI116 hub shape at the compare boundary. The native
+    # PSI116 reader/adapter is intentionally unchanged; malformed JSON must
+    # produce named comparison refusals rather than Python attribute errors.
+    _need(isinstance(psi_uxml.get("psi116"), dict),
+          "UXML_PSI116_PROVENANCE_MISMATCH")
+    _need(isinstance(psi_uxml.get("pipelines"), list) and
+          all(isinstance(row, dict) for row in psi_uxml["pipelines"]),
+          "UXML_SOURCE_RECORD_COLLECTION_INVALID")
+    _need(isinstance(psi_uxml.get("components"), list) and
+          isinstance(psi_uxml.get("ports"), list),
+          "UXML_SOURCE_RECORD_COLLECTION_INVALID")
     _need(isinstance(input_uxml, dict) and
           isinstance(input_uxml.get("sources"), list) and
           len(input_uxml["sources"]) == 1 and
