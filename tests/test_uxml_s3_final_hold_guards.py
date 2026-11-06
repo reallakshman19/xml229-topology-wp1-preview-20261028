@@ -678,6 +678,26 @@ class FinalInputXmlHoldGuards(unittest.TestCase):
             mutation(psi)
             yield name, code, psi
 
+    def test_A3_R1_nested_guards_refuse_before_entering_any_adapter(self):
+        # The later exception-to-code wrapper would otherwise mask deletion of
+        # either nested shape guard. Explicitly prove fail-before-adapter, not
+        # merely that some downstream crash receives the same named code.
+        from unittest import mock
+        from converters.psi116_topology_resolver import uxml_compare as compare
+        selected = {"component_raw_list", "pipeline_raw_list"}
+        observed = set()
+        for name, code, psi in self._a3_r1_bad_psi_hubs():
+            if name not in selected:
+                continue
+            observed.add(name)
+            with self.subTest(malformed=name):
+                with mock.patch.object(compare, "document_from_uxml",
+                                       side_effect=AssertionError(
+                                           "MALFORMED_PSI_HUB_REACHED_ADAPTER")):
+                    self.exact(code,
+                               lambda: compare.compare_cross_format_uxml(psi, self.input))
+        self.assertEqual(observed, selected)
+
     def test_A3_R1_nested_component_pipeline_raw_attributes_are_named(self):
         for name, expected, psi in self._a3_r1_bad_psi_hubs():
             if not (name.startswith("component_raw_") or
