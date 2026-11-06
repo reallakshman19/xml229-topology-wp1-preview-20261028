@@ -648,14 +648,14 @@ class S3Step2BDeleteOneGuardMutants(unittest.TestCase):
              '              for component in psi_uxml["components"]),\n'
              '          "UXML_PSI116_HUB_SHAPE_INVALID")\n',
              "",
-             "test_A3_R1_nested_component_pipeline_raw_attributes_are_named",
+             "test_A3_R1_nested_guards_refuse_before_entering_any_adapter",
              "A3_R1"),
             ("PIPELINE_RAW_ATTRIBUTES",
              '    _need(all(isinstance(pipeline.get("rawAttributes"), dict)\n'
              '              for pipeline in psi_uxml["pipelines"]),\n'
              '          "UXML_PSI116_HUB_SHAPE_INVALID")\n',
              "",
-             "test_A3_R1_nested_component_pipeline_raw_attributes_are_named",
+             "test_A3_R1_nested_guards_refuse_before_entering_any_adapter",
              "A3_R1"),
             ("EXCEPTION_MAP",
              'raise UxmlPsi116Error("UXML_PSI116_HUB_SHAPE_INVALID") from exc',
