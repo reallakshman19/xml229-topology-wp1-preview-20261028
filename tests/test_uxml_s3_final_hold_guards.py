@@ -633,6 +633,156 @@ class FinalInputXmlHoldGuards(unittest.TestCase):
                                      ["DIFFERENT", "ERROR: " + code])
                     self.assertNotIn("Traceback", stderr.getvalue())
 
+    def _a3_r1_bad_psi_hubs(self):
+        # Strictly the pinned PUBLIC PSI116 reader's synthetic JSON, never
+        # Owner originals. Isolate every mutation in a fresh copy.
+        cases = (
+            ("component_raw_list", "UXML_PSI116_HUB_SHAPE_INVALID",
+             lambda p: p["components"][0].__setitem__("rawAttributes", ["bad"])),
+            ("component_raw_none", "UXML_PSI116_HUB_SHAPE_INVALID",
+             lambda p: p["components"][0].__setitem__("rawAttributes", None)),
+            ("component_raw_str", "UXML_PSI116_HUB_SHAPE_INVALID",
+             lambda p: p["components"][0].__setitem__("rawAttributes", "bad")),
+            ("pipeline_raw_list", "UXML_PSI116_HUB_SHAPE_INVALID",
+             lambda p: p["pipelines"][0].__setitem__("rawAttributes", ["bad"])),
+            ("pipeline_raw_none", "UXML_PSI116_HUB_SHAPE_INVALID",
+             lambda p: p["pipelines"][0].__setitem__("rawAttributes", None)),
+            ("pipeline_raw_str", "UXML_PSI116_HUB_SHAPE_INVALID",
+             lambda p: p["pipelines"][0].__setitem__("rawAttributes", "bad")),
+            ("pipeline_raw_int", "UXML_PSI116_HUB_SHAPE_INVALID",
+             lambda p: p["pipelines"][0].__setitem__("rawAttributes", 23)),
+            ("pipeline_raw_bool", "UXML_PSI116_HUB_SHAPE_INVALID",
+             lambda p: p["pipelines"][0].__setitem__("rawAttributes", True)),
+            ("weight_huge", "UXML_PSI116_HUB_SHAPE_INVALID",
+             lambda p: p["components"][0]["rawAttributes"]["psi116"].__setitem__(
+                 "weight", 10**400)),
+            ("position_x_huge", "UXML_PSI116_HUB_SHAPE_INVALID",
+             lambda p: p["components"][0]["rawAttributes"]["psi116"]["position"].__setitem__(
+                 "x", 10**400)),
+            ("node_number_missing", "UXML_PSI116_HUB_SHAPE_INVALID",
+             lambda p: p["components"][0]["rawAttributes"]["psi116"].pop("nodeNumber")),
+            ("branch_name_missing", "UXML_PSI116_HUB_SHAPE_INVALID",
+             lambda p: p["components"][0]["rawAttributes"]["psi116"].pop("branchName")),
+            ("source_index_str", "UXML_PSI116_HUB_SHAPE_INVALID",
+             lambda p: p["components"][0]["rawAttributes"]["psi116"].__setitem__(
+                 "sourceIndex", "0")),
+            ("pipelines_none", "UXML_SOURCE_RECORD_COLLECTION_INVALID",
+             lambda p: p.__setitem__("pipelines", None)),
+            ("pipelines_dict", "UXML_SOURCE_RECORD_COLLECTION_INVALID",
+             lambda p: p.__setitem__("pipelines", {"bad": "not a list"})),
+            ("ports_none", "UXML_SOURCE_RECORD_COLLECTION_INVALID",
+             lambda p: p.__setitem__("ports", None)),
+        )
+        for name, code, mutation in cases:
+            psi = deepcopy(self.psi)
+            mutation(psi)
+            yield name, code, psi
+
+    def test_A3_R1_nested_component_pipeline_raw_attributes_are_named(self):
+        for name, expected, psi in self._a3_r1_bad_psi_hubs():
+            if not (name.startswith("component_raw_") or
+                    name.startswith("pipeline_raw_")):
+                continue
+            with self.subTest(malformed=name):
+                self.exact(expected,
+                           lambda: compare_cross_format_uxml(psi, self.input))
+
+    def test_A3_R1_plain_adapter_errors_are_normalized_to_one_code(self):
+        names = {"weight_huge", "position_x_huge", "node_number_missing",
+                 "branch_name_missing", "source_index_str"}
+        found = set()
+        for name, expected, psi in self._a3_r1_bad_psi_hubs():
+            if name not in names:
+                continue
+            with self.subTest(malformed=name):
+                found.add(name)
+                self.exact(expected,
+                           lambda: compare_cross_format_uxml(psi, self.input))
+        self.assertEqual(found, names)
+
+    def test_A3_R1_existing_named_psi116_refusals_are_preserved(self):
+        psi = deepcopy(self.psi)
+        psi["sources"][0]["hash"] = "0" * 64
+        self.exact("UXML_ORIGINAL_SOURCE_SHA256_MISMATCH",
+                   lambda: compare_cross_format_uxml(psi, self.input))
+        psi = deepcopy(self.psi)
+        psi["components"][0]["rawAttributes"]["psi116"] = None
+        self.exact("UXML_PSI116_RECORD_FIELDS_MISSING",
+                   lambda: compare_cross_format_uxml(psi, self.input))
+        # Ordinary PSI116 + InputXML comparison remains 13 differences, with
+        # no suppression or CLOS/integrity semantic change.
+        self.assertEqual(len(compare_cross_format_uxml(self.psi, self.input)), 13)
+
+    def test_A3_R2_real_subprocess_cli_named_no_traceback(self):
+        # Invoke the actual -m CLI in a child Python interpreter, not a
+        # reimplemented error formatter. No private files or cwd assumptions.
+        selected = {"component_raw_none", "pipeline_raw_list", "weight_huge",
+                    "node_number_missing", "source_index_str", "ports_none"}
+        found = set()
+        for name, expected, psi in self._a3_r1_bad_psi_hubs():
+            if name not in selected:
+                continue
+            found.add(name)
+            with self.subTest(malformed=name):
+                with tempfile.TemporaryDirectory(prefix="public-a3-r1-cli-") as folder:
+                    a = Path(folder) / "psi.uxml.json"
+                    b = Path(folder) / "input.uxml.json"
+                    a.write_text(json.dumps(psi), encoding="utf-8")
+                    b.write_text(json.dumps(self.input), encoding="utf-8")
+                    proc = subprocess.run(
+                        [sys.executable, "-B", "-m",
+                         "converters.psi116_topology_resolver.uxml_compare",
+                         str(a), str(b), "--cross-format"],
+                        cwd=ROOT, capture_output=True, text=True, timeout=30)
+                    self.assertEqual(proc.returncode, 1)
+                    self.assertEqual(proc.stdout.splitlines(),
+                                     ["DIFFERENT", "ERROR: " + expected])
+                    self.assertNotIn("Traceback", proc.stderr)
+                    self.assertEqual(proc.stderr, "")
+        self.assertEqual(found, selected)
+
+    def test_A3_R2_inprocess_cli_named_for_mutation_witness(self):
+        # In-process real main() permits a single-edit comparison guard
+        # mutant to be injected without modifying source on disk.
+        from contextlib import redirect_stderr, redirect_stdout
+        import io
+        from converters.psi116_topology_resolver.uxml_compare import main
+        selected = {"node_number_missing", "component_raw_list", "ports_none"}
+        for name, expected, psi in self._a3_r1_bad_psi_hubs():
+            if name not in selected:
+                continue
+            with self.subTest(malformed=name):
+                with tempfile.TemporaryDirectory(prefix="public-a3-r1-main-") as folder:
+                    a = Path(folder) / "psi.json"
+                    b = Path(folder) / "input.json"
+                    a.write_text(json.dumps(psi), encoding="utf-8")
+                    b.write_text(json.dumps(self.input), encoding="utf-8")
+                    out, err = io.StringIO(), io.StringIO()
+                    with redirect_stdout(out), redirect_stderr(err):
+                        ret = main([str(a), str(b), "--cross-format"])
+                    self.assertEqual(ret, 1)
+                    self.assertEqual(out.getvalue().splitlines(),
+                                     ["DIFFERENT", "ERROR: " + expected])
+                    self.assertNotIn("Traceback", err.getvalue())
+
+    def test_A3_R3_ports_none_requires_collection_guard(self):
+        psi = deepcopy(self.psi)
+        psi["ports"] = None
+        self.exact("UXML_SOURCE_RECORD_COLLECTION_INVALID",
+                   lambda: compare_cross_format_uxml(psi, self.input))
+
+    def test_A3_R4_pipeline_null_dict_and_ports_none_keep_collection_code(self):
+        expected = {"pipelines_none", "pipelines_dict", "ports_none"}
+        observed = set()
+        for name, code, psi in self._a3_r1_bad_psi_hubs():
+            if name not in expected:
+                continue
+            observed.add(name)
+            with self.subTest(malformed=name):
+                self.assertEqual(code, "UXML_SOURCE_RECORD_COLLECTION_INVALID")
+                self.exact(code, lambda: compare_cross_format_uxml(psi, self.input))
+        self.assertEqual(observed, expected)
+
     def test_R3_C1_nonstring_endpoints_each_named_beyond_first_port(self):
         for port_index in (1, 7, 11):
             for shape in (["FROM"], {"endpoint": "FROM"}):
