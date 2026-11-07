@@ -51,6 +51,15 @@ def _require(ok: bool, reason: str) -> None:
         raise UxmlPatchError(reason)
 
 
+def _refuse_inputxml(uxml: object) -> None:
+    """Lane A is read-only for InputXML; lane B alone writes original files."""
+    if (isinstance(uxml, Mapping) and
+            isinstance(uxml.get("sources"), list) and
+            any(isinstance(source, Mapping) and source.get("format") == "INPUT_XML"
+                for source in uxml["sources"])):
+        raise UxmlPatchError("INPUT_XML_APPLY_NOT_ENABLED")
+
+
 def _source_sha(uxml: Mapping[str, Any]) -> str:
     sources = uxml.get("sources")
     _require(isinstance(sources, list) and len(sources) == 1 and
@@ -372,6 +381,7 @@ def export_edit_ops(
     source_name: str = "<memory>", config: ResolverConfig | None = None,
 ) -> dict[str, object]:
     """One operation for each selected, currently proposed mutating action."""
+    _refuse_inputxml(uxml)
     config = config or ResolverConfig()
     requested = policy if policy is not None else TransactionPolicy(apply_all_safe=True)
     _require(isinstance(requested, TransactionPolicy),
@@ -498,6 +508,7 @@ def apply_edit_ops(
     Caller must write fixed_xml to a NEW output path. No original write occurs.
     Empty op list returns None (no mutation/validation to run).
     """
+    _refuse_inputxml(uxml)
     config = config or ResolverConfig()
     original_path = Path(original)
     data = original_path.read_bytes()

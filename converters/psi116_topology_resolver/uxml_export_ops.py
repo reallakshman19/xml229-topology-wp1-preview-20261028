@@ -13,6 +13,7 @@ import subprocess
 from .transaction import TransactionPolicy
 from .uxml_edit_ops import UxmlPatchError, compare_patch_to_direct, export_edit_ops
 from .uxml_cli_common import load_pinned_uxml, print_difference
+from .transaction import _refuse_inputxml_native_apply
 
 
 def main(argv=None) -> int:
@@ -25,6 +26,7 @@ def main(argv=None) -> int:
                         help="Explicit currently PROPOSED auto-fix action; repeat for several")
     args = parser.parse_args(argv)
     try:
+        _refuse_inputxml_native_apply(args.psi116)
         if args.psi116.resolve() == args.ops_json.resolve():
             raise UxmlPatchError("UXML_ORIGINAL_OVERWRITE_FORBIDDEN")
         if args.uxml is not None and args.uxml.resolve() == args.ops_json.resolve():

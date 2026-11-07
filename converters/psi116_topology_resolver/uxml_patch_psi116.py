@@ -14,6 +14,7 @@ from pathlib import Path
 import subprocess
 
 from .uxml_cli_common import load_pinned_uxml, print_difference
+from .transaction import _refuse_inputxml_native_apply
 from .uxml_edit_ops import UxmlPatchError, compare_patch_to_direct
 
 
@@ -27,6 +28,7 @@ def main(argv=None) -> int:
     parser.add_argument("--validation", type=Path)
     args = parser.parse_args(argv)
     try:
+        _refuse_inputxml_native_apply(args.psi116)
         protected = {"original": args.psi116, "ops": args.ops_json}
         if args.uxml is not None:
             protected["uxml"] = args.uxml
