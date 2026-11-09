@@ -9,8 +9,8 @@
 - Both coders get the same prompts 1, 2 and 4. Prompts 3 and 5 differ.
 
 The old chats were full:
-- coder-a: https://chatgpt.com/c/6ae5bfb9-9928-83eb-bbf0-0656b352eb76
-- coder-b: https://chatgpt.com/c/6ae5bfc1-7ee4-83ed-ae7c-f68db779a2ee
+- coder-a: <CHAT_URL_REDACTED>
+- coder-b: <CHAT_URL_REDACTED>
 
 ---
 

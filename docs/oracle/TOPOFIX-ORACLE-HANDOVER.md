@@ -83,10 +83,10 @@
 
 | Name | Chat URL | Built-in browser tab | Doing now |
 |---|---|---|---|
-| coder-a3 | https://chatgpt.com/c/6ae75c1e-fcc8-83eb-af56-0e5892736968 | `tab-3` | **#30 REPAIR r1** (buddy of coder-a2) |
-| coder-a2 (RETIRED 20:28, do not use) | https://chatgpt.com/c/6ae67dc4-ce68-83eb-8ba2-2c283a691c6f | `tab-1` | **UXML-SHORT-DROP-DELETED-OWNER-RAW** (loss-contract option A), off #29 |
-| coder-b2 | https://chatgpt.com/c/6ae67dd0-86f0-83ed-98b0-c8b75fe96efa | `seed` | **UXML-S4.0-CONVERTER-AUDIT** (read-only), off XCU main |
-| progress-scribe | https://chatgpt.com/c/6ae61cab-5c38-83eb-9388-8e3fff761284 | — | idle |
+| coder-a3 | <CHAT_URL_REDACTED> | `tab-3` | **#30 REPAIR r1** (buddy of coder-a2) |
+| coder-a2 (RETIRED 20:28, do not use) | <CHAT_URL_REDACTED> | `tab-1` | **UXML-SHORT-DROP-DELETED-OWNER-RAW** (loss-contract option A), off #29 |
+| coder-b2 | <CHAT_URL_REDACTED> | `seed` | **UXML-S4.0-CONVERTER-AUDIT** (read-only), off XCU main |
+| progress-scribe | <CHAT_URL_REDACTED> | — | idle |
 | retired (chat full) | coder-a 6ae5bfb9…, coder-b 6ae5bfc1… | — | do not use |
 
 **Other pieces:**
