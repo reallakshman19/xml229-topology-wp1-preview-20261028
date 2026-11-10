@@ -24,11 +24,14 @@ UXML_PSI116_HUB_SHAPE_INVALID                  Otherwise unnamed PSI116 hub adap
                                               or wrong-typed componentType/rawComponentType,
                                               nodeName/hasRestraint/connectionType
 UXML_JSON_INVALID                             Malformed, BOM-prefixed, unbounded or deeply
-                                              nested JSON at the CLI
+                                              nested JSON or lone surrogate at the CLI
 Other named source/provenance/integrity errors from the native PSI116 and
 InputXML adapters propagate unchanged. Real analyzer exceptions are not
 reclassified as malformed hub JSON. Engine-side ValueError/TypeError/KeyError
 reach the CLI as ERROR: <engine text> by design (not HUB_SHAPE_INVALID).
+The hub field-type guard runs before PSI116 integrity checks; null-valued
+componentType/rawComponentType/nodeName/connectionType remain fail-closed
+(DIFFERENT, never EQUAL) rather than reclassified in this round.
 """
 from __future__ import annotations
 
@@ -168,7 +171,8 @@ def compare_cross_format_uxml(psi_uxml: dict, input_uxml: dict) -> list[str]:
                  isinstance(fields.get("nodeName"), str)) and
                 (fields.get("connectionType") is None or
                  isinstance(fields.get("connectionType"), str)) and
-                isinstance(fields.get("hasRestraint"), bool),
+                ("hasRestraint" not in fields or
+                 isinstance(fields.get("hasRestraint"), bool)),
                 "UXML_PSI116_HUB_SHAPE_INVALID")
     _need(isinstance(input_uxml, dict) and
           isinstance(input_uxml.get("sources"), list) and
@@ -359,9 +363,15 @@ def _load_hub_json(path: Path):
     """Map untrusted JSON decoding failures, never analyzer failures, to one code."""
     from .uxml_adapter import UxmlPsi116Error
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        decoded = json.loads(path.read_text(encoding="utf-8"))
+        # A JSON escape may decode into a lone U+D800 surrogate. Such text
+        # cannot be faithfully encoded as UTF-8 for original-source authority.
+        # Reject it here for both PSI116 and InputXML slots, before adapters.
+        json.dumps(decoded, ensure_ascii=False).encode("utf-8")
+        return decoded
     except (UnicodeError, RecursionError, ValueError) as exc:
-        # Includes JSONDecodeError, Python's 4300+ integral-digit limit and BOM.
+        # Includes JSONDecodeError, Python's 4300+ integral-digit limit, BOM
+        # and UnicodeEncodeError from a lone-surrogate JSON escape.
         raise UxmlPsi116Error("UXML_JSON_INVALID") from exc
 
 
