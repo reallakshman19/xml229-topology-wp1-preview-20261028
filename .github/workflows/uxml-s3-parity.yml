@@ -95,8 +95,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git fetch --no-tags --depth=1 origin f4509b5a11f6213040577af2d24a3824df3cc4a1
-          git worktree add --detach "$RUNNER_TEMP/topofix-main-baseline" f4509b5a11f6213040577af2d24a3824df3cc4a1
+          git fetch --no-tags --depth=1 origin 787e99140863de5f9f70d67ffc3e4dfd0be67e13
+          git worktree add --detach "$RUNNER_TEMP/topofix-main-baseline" 787e99140863de5f9f70d67ffc3e4dfd0be67e13
           python3 - <<'PY'
           import os, re, subprocess, sys
           from pathlib import Path
@@ -115,9 +115,9 @@ jobs:
               count=int(found.group(1)); skips=int(skipped.group(1)) if skipped else 0
               print(f"{label} PYTHON TESTS={count} SKIPS={skips} EXIT={proc.returncode}",flush=True)
               return count,skips
-          before,old_skips=run(baseline,"MAIN_F4509B5A")
-          now,new_skips=run(work,"STEP_2A_HEAD")
-          assert now==before+133,(before,now,"EXPECTED_258_PRE_A3_R1_PLUS_9_REPAIR_TESTS")
+          before,old_skips=run(baseline,"MAIN_787E9914")
+          now,new_skips=run(work,"A4_HEAD")
+          assert now==before+15,(before,now,"EXPECTED_267_MERGED_BASE_PLUS_15_A4_TESTS")
           assert new_skips<=old_skips,(old_skips,new_skips,"NEW_TEST_SKIPS_REFUSED")
           print(f"PYTHON_BASELINE_DELTA={now-before}; NEW_SKIPS={max(0,new_skips-old_skips)}")
           PY
@@ -214,6 +214,11 @@ jobs:
           test "$(grep -c '^MUTANT_RED:A3_R2:' "$RUNNER_TEMP/s3-mutants.log")" = 1
           test "$(grep -c '^MUTANT_RED:A3_R3:' "$RUNNER_TEMP/s3-mutants.log")" = 1
           test "$(grep -c '^MUTANT_RED:A3_R4:' "$RUNNER_TEMP/s3-mutants.log")" = 1
+          test "$(grep -c '^MUTANT_RED:A4_L1:' "$RUNNER_TEMP/s3-mutants.log")" = 2
+          test "$(grep -c '^MUTANT_RED:A4_L2:' "$RUNNER_TEMP/s3-mutants.log")" = 5
+          test "$(grep -c '^MUTANT_RED:A4_L3:' "$RUNNER_TEMP/s3-mutants.log")" = 3
+          test "$(grep -c '^MUTANT_RED:A4_L4:' "$RUNNER_TEMP/s3-mutants.log")" = 2
+          test "$(grep -c '^MUTANT_RED:A4_L5:' "$RUNNER_TEMP/s3-mutants.log")" = 1
           test "$(grep -c '^MUTANT_RED:CLI:' "$RUNNER_TEMP/s3-mutants.log")" = 2
           grep -Fq 'MUTANT_RED:NATIVE_APPLY:INPUT_XML_APPLY_NOT_ENABLED' "$RUNNER_TEMP/s3-mutants.log"
           python3 -B -m unittest discover -s tests -p test_uxml_s3_final_hold_guards.py -v 2>&1 | tee "$RUNNER_TEMP/s3-final-guards.log"
@@ -290,6 +295,68 @@ jobs:
               old.stdout.count(b"UNEXPLAINED CLASS="))
           print("A3_R1_HONEST_CLI_BYTE_IDENTICAL=PASS"
                 " A3_BASE=f3b8c72e DIFFERENCES=13",flush=True)
+          PY
+      - name: A4 four public PSI116/InputXML pairs byte-identical to merged base 787e9914
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin 787e99140863de5f9f70d67ffc3e4dfd0be67e13
+          git worktree add --detach "$RUNNER_TEMP/topofix-a4-main" 787e99140863de5f9f70d67ffc3e4dfd0be67e13
+          python3 - <<'PY'
+          import os,re,subprocess,sys,tempfile
+          from pathlib import Path
+          root=Path(os.environ["GITHUB_WORKSPACE"])
+          old=Path(os.environ["RUNNER_TEMP"])/"topofix-a4-main"
+          runner=Path(os.environ["XCU_UXML_ROOT"])
+          source=(runner/"tests/fixtures/uxml-s3-synthetic.workspace.input.xml").read_text()
+          tags=list(re.finditer(r"<PIPINGELEMENT\b[^>]*>",source))
+          assert len(tags)==6,("PUBLIC_PAIR_FIXTURE_DRIFT",len(tags))
+          lower=re.sub(r'\b(?:FROM|TO)_[XYZ](?==)',
+                       lambda m:m.group().lower(),source)
+          padded=re.sub(r'((?:FROM|TO)_[XYZ]=")([^"]+)(")',
+                        lambda m:m[1]+" \t"+m[2]+"\t "+m[3],source)
+          last=tags[-1]
+          last_to_only,n=re.subn(r'\s+FROM_[XYZ]="[^"]*"',"",last.group())
+          assert n==3,("PUBLIC_TO_ONLY_SOURCE_DRIFT",n)
+          to_only=source[:last.start()]+last_to_only+source[last.end():]
+          variants=(("canonical",source),("lowercase",lower),
+                    ("padded",padded),("to_only",to_only))
+          assert len(set(text for _,text in variants))==4
+          reader=runner/"tools/inputxml-to-uxml.mjs"
+          psi=Path(os.environ["RUNNER_TEMP"])/"s3-psi.uxml.json"
+          with tempfile.TemporaryDirectory(prefix="public-a4-four-pairs-") as folder:
+              for name,text in variants:
+                  xml=Path(folder)/(name+".input.xml")
+                  hub=Path(folder)/(name+".uxml.json")
+                  xml.write_text(text)
+                  reader_result=subprocess.run(
+                      ["node",str(reader),str(xml)],cwd=runner,
+                      capture_output=True,timeout=90)
+                  assert reader_result.returncode==0,(
+                      "PUBLIC_XCU_READER_REFUSED",name,reader_result.stderr.decode(errors="replace"))
+                  hub.write_bytes(reader_result.stdout)
+                  def compare(where):
+                      env=os.environ.copy();env["PYTHONPATH"]=str(where)
+                      return subprocess.run(
+                          [sys.executable,"-B","-m",
+                           "converters.psi116_topology_resolver.uxml_compare",
+                           str(psi),str(hub),"--cross-format"],
+                          cwd=where,env=env,capture_output=True,timeout=90)
+                  baseline,candidate=compare(old),compare(root)
+                  assert baseline.returncode==candidate.returncode==1,(
+                      "A4_HONEST_EXIT_CHANGED",name,baseline.returncode,candidate.returncode)
+                  assert baseline.stdout==candidate.stdout,(
+                      "A4_HONEST_STDOUT_CHANGED",name,baseline.stdout[:200],candidate.stdout[:200])
+                  assert baseline.stderr==candidate.stderr==b"",(
+                      "A4_HONEST_STDERR_CHANGED",name,baseline.stderr,candidate.stderr)
+                  count=baseline.stdout.count(b"UNEXPLAINED CLASS=")
+                  if name=="canonical":
+                      assert count==13,("A4_HONEST_CANONICAL_DIFFS_CHANGED",count)
+                  else:
+                      assert count>0,("A4_HONEST_VARIANT_NO_EVIDENCE",name)
+                  print("A4_HONEST_PAIR_BYTE_IDENTICAL="+name+
+                        " DIFFERENCES="+str(count),flush=True)
+          print("A4_HONEST_FOUR_PAIRS_BYTE_IDENTICAL=PASS PAIRS=4",flush=True)
           PY
       - name: All Node test modules
         shell: bash
