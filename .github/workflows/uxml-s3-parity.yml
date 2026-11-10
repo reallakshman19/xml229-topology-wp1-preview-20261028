@@ -117,7 +117,7 @@ jobs:
               return count,skips
           before,old_skips=run(baseline,"MAIN_787E9914")
           now,new_skips=run(work,"A4_HEAD")
-          assert now==before+21,(before,now,"EXPECTED_282_PRE_A4_R1_PLUS_6_REPAIR_TESTS")
+          assert now==before+24,(before,now,"EXPECTED_282_PRE_A4_R1_PLUS_6_ACCEPTANCE_PLUS_3_MUTANT_TESTS")
           assert new_skips<=old_skips,(old_skips,new_skips,"NEW_TEST_SKIPS_REFUSED")
           print(f"PYTHON_BASELINE_DELTA={now-before}; NEW_SKIPS={max(0,new_skips-old_skips)}")
           PY
