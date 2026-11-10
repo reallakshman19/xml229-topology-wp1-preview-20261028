@@ -696,6 +696,109 @@ class S3Step2BDeleteOneGuardMutants(unittest.TestCase):
                 print("MUTANT_RED:" + category + ":" + label, flush=True)
         print("MUTANT_RED:A3_R4:ALL_FOUR_GUARDS_KILLED", flush=True)
 
+    def test_A4_L1_original_named_refusals_require_distinct_checks(self):
+        from converters.psi116_topology_resolver import uxml_compare as compare
+        witness = self.scenario("test_A4_L1_original_named_psi_codes_are_preserved")
+        witness()
+        matrix = (
+            ("COMPONENT_INVALID",
+             '    _need(all(isinstance(component, dict)\n'
+             '              for component in psi_uxml["components"]),\n'
+             '          "UXML_COMPONENT_INVALID")\n'),
+            ("PRESERVE_ADAPTER_NAMED",
+             '    except UxmlPsi116Error:\n'
+             '        # Preserve all existing named PSI116 source/provenance refusals.\n'
+             '        raise\n'),
+        )
+        for label, deleted in matrix:
+            with self.subTest(guard=label):
+                mutant = self._r3_compiled_mutant(
+                    compare, compare.compare_cross_format_uxml,
+                    deleted, "", "A4_L1_" + label)
+                with mock.patch.object(compare, "compare_cross_format_uxml", mutant), \
+                     mock.patch.object(self.cases, "compare_cross_format_uxml", mutant):
+                    self.must_go_red(witness)
+                print("MUTANT_RED:A4_L1:" + label, flush=True)
+
+    def test_A4_L2_each_adapter_exception_type_is_individually_required(self):
+        from converters.psi116_topology_resolver import uxml_compare as compare
+        before = ("    except (AttributeError, KeyError, TypeError, "
+                  "OverflowError, ValueError) as exc:")
+        classes = ("AttributeError", "KeyError", "TypeError",
+                   "OverflowError", "ValueError")
+        for exception in classes:
+            with self.subTest(exception=exception):
+                witness = self.scenario(
+                    "test_A4_L2_" + exception + "_requires_mapping")
+                witness()  # GREEN named refusal, never raw Python error
+                remaining = ", ".join(item for item in classes if item != exception)
+                after = "    except (" + remaining + ") as exc:"
+                mutant = self._r3_compiled_mutant(
+                    compare, compare.compare_cross_format_uxml,
+                    before, after, "A4_L2_DELETE_" + exception)
+                with mock.patch.object(compare, "compare_cross_format_uxml", mutant), \
+                     mock.patch.object(self.cases, "compare_cross_format_uxml", mutant):
+                    self.must_go_red(witness)
+                print("MUTANT_RED:A4_L2:" + exception, flush=True)
+
+    def test_A4_L3_each_record_field_guard_mutant_is_red(self):
+        from converters.psi116_topology_resolver import uxml_compare as compare
+        witness = self.scenario("test_A4_L3_wrong_typed_psi_record_fields_are_refused")
+        witness()
+        variants = (
+            ("NODE_NAME",
+             '                (fields.get("nodeName") is None or\n'
+             '                 isinstance(fields.get("nodeName"), str)) and\n',
+             ""),
+            ("CONNECTION_TYPE",
+             '                (fields.get("connectionType") is None or\n'
+             '                 isinstance(fields.get("connectionType"), str)) and\n',
+             ""),
+            ("HAS_RESTRAINT",
+             '                isinstance(fields.get("hasRestraint"), bool),\n',
+             '                True,\n'),
+        )
+        for name, deleted, replacement in variants:
+            with self.subTest(guard=name):
+                mutant = self._r3_compiled_mutant(
+                    compare, compare.compare_cross_format_uxml,
+                    deleted, replacement, "A4_L3_" + name)
+                with mock.patch.object(compare, "compare_cross_format_uxml", mutant), \
+                     mock.patch.object(self.cases, "compare_cross_format_uxml", mutant):
+                    self.must_go_red(witness)
+                print("MUTANT_RED:A4_L3:" + name, flush=True)
+
+    def test_A4_L4_each_json_decoder_catch_family_has_red_mutant(self):
+        from converters.psi116_topology_resolver import uxml_compare as compare
+        witness = self.scenario("test_A4_L4_inprocess_json_catch_mapping_for_mutants")
+        witness()  # GREEN named refusal for deep/large/BOM/non-JSON
+        deleted = "except (UnicodeError, RecursionError, ValueError) as exc:"
+        for name, replacement in (
+            ("RECURSION", "except (UnicodeError, ValueError) as exc:"),
+            ("VALUE_ERROR", "except (UnicodeError, RecursionError) as exc:"),
+        ):
+            with self.subTest(decoder_guard=name):
+                mutant = self._r3_compiled_mutant(
+                    compare, compare._load_hub_json,
+                    deleted, replacement, "A4_L4_" + name)
+                with mock.patch.object(compare, "_load_hub_json", mutant):
+                    self.must_go_red(witness)
+                print("MUTANT_RED:A4_L4:" + name, flush=True)
+
+    def test_A4_L5_engine_failure_cannot_be_hidden_by_adapter_remap(self):
+        from converters.psi116_topology_resolver import uxml_compare as compare
+        witness = self.scenario("test_A4_L5_engine_exception_is_never_a_hub_shape_refusal")
+        witness()  # GREEN: exact ValueError from analysis must propagate
+        before = '        psi_doc = document_from_uxml(psi_uxml)\n'
+        after = (before +
+                 '        resolve_from_uxml(psi_uxml)  # MUTANT: engine inside remap\n')
+        mutant = self._r3_compiled_mutant(
+            compare, compare.compare_cross_format_uxml,
+            before, after, "A4_L5_ENGINE_INSIDE_REMAP")
+        with mock.patch.object(compare, "compare_cross_format_uxml", mutant):
+            self.must_go_red(witness)
+        print("MUTANT_RED:A4_L5:ENGINE_EXCEPTION_VISIBLE", flush=True)
+
     def test_T1_honest_source_variants_each_kill_the_matching_mutant(self):
         from converters.psi116_topology_resolver import uxml_adapter as adapter
 
