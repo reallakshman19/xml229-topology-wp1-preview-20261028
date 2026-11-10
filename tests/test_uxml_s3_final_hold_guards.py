@@ -803,6 +803,126 @@ class FinalInputXmlHoldGuards(unittest.TestCase):
                 self.exact(code, lambda: compare_cross_format_uxml(psi, self.input))
         self.assertEqual(observed, expected)
 
+    def test_A4_L1_original_named_psi_codes_are_preserved(self):
+        shapes = (
+            ("component_entry_null", "UXML_COMPONENT_INVALID",
+             lambda psi: psi["components"].__setitem__(0, None)),
+            ("record_fields_list", "UXML_PSI116_RECORD_FIELDS_MISSING",
+             lambda psi: psi["components"][0]["rawAttributes"].__setitem__(
+                 "psi116", ["bad"])),
+            ("branch_order_index", "UXML_PSI116_BRANCH_ORDER_MISMATCH",
+             lambda psi: psi["pipelines"][0]["rawAttributes"].__setitem__(
+                 "branchIndex", 999)),
+        )
+        for name, code, edit in shapes:
+            with self.subTest(named_refusal=name):
+                psi = deepcopy(self.psi)
+                edit(psi)
+                self.exact(code, lambda: compare_cross_format_uxml(psi, self.input))
+
+    def _a4_injected_adapter_exception(self, exception_type):
+        from unittest import mock
+        from converters.psi116_topology_resolver import uxml_compare as compare
+        authentic = compare.document_from_uxml
+        def injected(hub, *args, **kwargs):
+            if hub is self.psi:
+                raise exception_type("PUBLIC_SYNTHETIC_ADAPTER_FAULT")
+            return authentic(hub, *args, **kwargs)
+        with mock.patch.object(compare, "document_from_uxml", side_effect=injected):
+            self.exact("UXML_PSI116_HUB_SHAPE_INVALID",
+                       lambda: compare.compare_cross_format_uxml(self.psi, self.input))
+
+    def test_A4_L2_AttributeError_requires_mapping(self):
+        self._a4_injected_adapter_exception(AttributeError)
+
+    def test_A4_L2_KeyError_requires_mapping(self):
+        self._a4_injected_adapter_exception(KeyError)
+
+    def test_A4_L2_TypeError_requires_mapping(self):
+        self._a4_injected_adapter_exception(TypeError)
+
+    def test_A4_L2_OverflowError_requires_mapping(self):
+        self._a4_injected_adapter_exception(OverflowError)
+
+    def test_A4_L2_ValueError_requires_mapping(self):
+        self._a4_injected_adapter_exception(ValueError)
+
+    def test_A4_L3_wrong_typed_psi_record_fields_are_refused(self):
+        shapes = (
+            ("nodeName_integer", "nodeName", 7),
+            ("hasRestraint_string", "hasRestraint", "no"),
+            ("connectionType_mapping", "connectionType", {"bad": True}),
+        )
+        for name, key, value in shapes:
+            with self.subTest(malformed=name):
+                psi = deepcopy(self.psi)
+                psi["components"][0]["rawAttributes"]["psi116"][key] = value
+                self.exact("UXML_PSI116_HUB_SHAPE_INVALID",
+                           lambda: compare_cross_format_uxml(psi, self.input))
+        self.assertEqual(len(compare_cross_format_uxml(self.psi, self.input)), 13)
+
+    @staticmethod
+    def _a4_json_payloads():
+        # Entirely public synthetic data; never used as a model source.
+        return (
+            ("deeply_nested", "[" * 100000 + "0" + "]" * 100000),
+            ("oversize_integer", "9" * 5001),
+            ("utf8_bom", "\ufeff" + '{"sources":[]}'),
+            ("non_json", "{not-json"),
+        )
+
+    def test_A4_L4_real_cli_maps_pathological_json_to_named_code(self):
+        for name, malformed in self._a4_json_payloads():
+            for slot in ("psi", "input"):
+                with self.subTest(case=name, source=slot):
+                    with tempfile.TemporaryDirectory(prefix="public-a4-json-") as folder:
+                        psi = Path(folder) / "psi.json"
+                        inp = Path(folder) / "input.json"
+                        psi.write_text(json.dumps(self.psi), encoding="utf-8")
+                        inp.write_text(json.dumps(self.input), encoding="utf-8")
+                        (psi if slot == "psi" else inp).write_text(
+                            malformed, encoding="utf-8")
+                        proc = subprocess.run(
+                            [sys.executable, "-B", "-m",
+                             "converters.psi116_topology_resolver.uxml_compare",
+                             str(psi), str(inp), "--cross-format"],
+                            cwd=ROOT, capture_output=True, text=True, timeout=35)
+                        self.assertEqual(proc.returncode, 1)
+                        self.assertEqual(proc.stdout.splitlines(),
+                                         ["DIFFERENT", "ERROR: UXML_JSON_INVALID"])
+                        self.assertEqual(proc.stderr, "")
+
+    def test_A4_L4_inprocess_json_catch_mapping_for_mutants(self):
+        # This invokes the real CLI main(), so an in-memory mutation of its
+        # JSON reader is distinguishable without changing source files.
+        from contextlib import redirect_stdout, redirect_stderr
+        from converters.psi116_topology_resolver.uxml_compare import main
+        import io
+        for name, malformed in self._a4_json_payloads():
+            with self.subTest(case=name):
+                with tempfile.TemporaryDirectory(prefix="public-a4-json-main-") as folder:
+                    psi = Path(folder) / "psi.json"
+                    inp = Path(folder) / "input.json"
+                    psi.write_text(json.dumps(self.psi), encoding="utf-8")
+                    inp.write_text(malformed, encoding="utf-8")
+                    out, err = io.StringIO(), io.StringIO()
+                    with redirect_stdout(out), redirect_stderr(err):
+                        code = main([str(psi), str(inp), "--cross-format"])
+                    self.assertEqual(code, 1)
+                    self.assertEqual(out.getvalue().splitlines(),
+                                     ["DIFFERENT", "ERROR: UXML_JSON_INVALID"])
+                    self.assertEqual(err.getvalue(), "")
+
+    def test_A4_L5_engine_exception_is_never_a_hub_shape_refusal(self):
+        from unittest import mock
+        from converters.psi116_topology_resolver import uxml_compare as compare
+        with mock.patch.object(compare, "resolve_from_uxml",
+                               side_effect=ValueError("SYNTHETIC_ENGINE_FAILURE")):
+            with self.assertRaises(ValueError) as err:
+                compare.compare_cross_format_uxml(self.psi, self.input)
+        self.assertIs(type(err.exception), ValueError)
+        self.assertEqual(str(err.exception), "SYNTHETIC_ENGINE_FAILURE")
+
     def test_R3_C1_nonstring_endpoints_each_named_beyond_first_port(self):
         for port_index in (1, 7, 11):
             for shape in (["FROM"], {"endpoint": "FROM"}):
