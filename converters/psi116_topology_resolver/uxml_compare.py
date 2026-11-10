@@ -21,12 +21,14 @@ UXML_COMPONENT_INVALID                        PSI116 component entry is not a di
 UXML_PSI116_RECORD_FIELDS_MISSING              PSI116 record evidence absent/wrong type
 UXML_PSI116_BRANCH_ORDER_MISMATCH              Original PSI116 pipeline order/id disagrees
 UXML_PSI116_HUB_SHAPE_INVALID                  Otherwise unnamed PSI116 hub adapter error,
-                                              or wrong-typed nodeName/hasRestraint/connectionType
+                                              or wrong-typed componentType/rawComponentType,
+                                              nodeName/hasRestraint/connectionType
 UXML_JSON_INVALID                             Malformed, BOM-prefixed, unbounded or deeply
                                               nested JSON at the CLI
 Other named source/provenance/integrity errors from the native PSI116 and
 InputXML adapters propagate unchanged. Real analyzer exceptions are not
-reclassified as malformed hub JSON.
+reclassified as malformed hub JSON. Engine-side ValueError/TypeError/KeyError
+reach the CLI as ERROR: <engine text> by design (not HUB_SHAPE_INVALID).
 """
 from __future__ import annotations
 
@@ -140,11 +142,14 @@ def compare_cross_format_uxml(psi_uxml: dict, input_uxml: dict) -> list[str]:
     _need(all(isinstance(component, dict)
               for component in psi_uxml["components"]),
           "UXML_COMPONENT_INVALID")
-    _need(all(isinstance(component, dict) and
-              isinstance(component.get("rawAttributes"), dict)
+    # Missing rawAttributes has an existing named native refusal; only
+    # present-but-wrong-typed attributes are this boundary's shape error.
+    _need(all(("rawAttributes" not in component or
+               isinstance(component["rawAttributes"], dict))
               for component in psi_uxml["components"]),
           "UXML_PSI116_HUB_SHAPE_INVALID")
-    _need(all(isinstance(pipeline.get("rawAttributes"), dict)
+    _need(all(("rawAttributes" not in pipeline or
+               isinstance(pipeline["rawAttributes"], dict))
               for pipeline in psi_uxml["pipelines"]),
           "UXML_PSI116_HUB_SHAPE_INVALID")
     # Type-check these hub-owned fields before analysis. They were previously
@@ -152,9 +157,13 @@ def compare_cross_format_uxml(psi_uxml: dict, input_uxml: dict) -> list[str]:
     # If the whole psi116 evidence is absent, leave the existing adapter's
     # UXML_PSI116_RECORD_FIELDS_MISSING guard authoritative.
     for component in psi_uxml["components"]:
-        fields = component["rawAttributes"].get("psi116")
+        fields = component.get("rawAttributes", {}).get("psi116")
         if isinstance(fields, dict):
             _need(
+                (fields.get("componentType") is None or
+                 isinstance(fields.get("componentType"), str)) and
+                (fields.get("rawComponentType") is None or
+                 isinstance(fields.get("rawComponentType"), str)) and
                 (fields.get("nodeName") is None or
                  isinstance(fields.get("nodeName"), str)) and
                 (fields.get("connectionType") is None or
