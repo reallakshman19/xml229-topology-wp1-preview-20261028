@@ -222,7 +222,7 @@ jobs:
           test "$(grep -c '^MUTANT_RED:A4_R1:' "$RUNNER_TEMP/s3-mutants.log")" = 2
           test "$(grep -c '^MUTANT_RED:A4_R2:' "$RUNNER_TEMP/s3-mutants.log")" = 2
           test "$(grep -c '^MUTANT_RED:A4_R3:' "$RUNNER_TEMP/s3-mutants.log")" = 2
-          test "$(grep -c '^MUTANT_RED:A4_R2:' "$RUNNER_TEMP/s3-mutants.log")" = 3
+          test "$(grep -c '^MUTANT_RED:A4_R2Q:' "$RUNNER_TEMP/s3-mutants.log")" = 3
           test "$(grep -c '^MUTANT_RED:CLI:' "$RUNNER_TEMP/s3-mutants.log")" = 2
           grep -Fq 'MUTANT_RED:NATIVE_APPLY:INPUT_XML_APPLY_NOT_ENABLED' "$RUNNER_TEMP/s3-mutants.log"
           python3 -B -m unittest discover -s tests -p test_uxml_s3_final_hold_guards.py -v 2>&1 | tee "$RUNNER_TEMP/s3-final-guards.log"
