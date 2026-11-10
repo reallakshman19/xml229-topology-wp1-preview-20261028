@@ -756,7 +756,8 @@ class S3Step2BDeleteOneGuardMutants(unittest.TestCase):
              '                 isinstance(fields.get("connectionType"), str)) and\n',
              ""),
             ("HAS_RESTRAINT",
-             '                isinstance(fields.get("hasRestraint"), bool),\n',
+             '                ("hasRestraint" not in fields or\n'
+             '                 isinstance(fields.get("hasRestraint"), bool)),\n',
              '                True,\n'),
         )
         for name, deleted, replacement in variants:
@@ -867,6 +868,48 @@ class S3Step2BDeleteOneGuardMutants(unittest.TestCase):
              mock.patch.object(self.cases, "compare_cross_format_uxml", mutant):
             self.must_go_red(restraint)
         print("MUTANT_RED:A4_R3:BOOL_AS_INT", flush=True)
+
+    def test_A4_R2_Q1_lone_surrogate_validation_mutant_red(self):
+        from converters.psi116_topology_resolver import uxml_compare as compare
+        witness = self.scenario(
+            "test_A4_R2_Q1_inprocess_both_slots_surrogate_mutant_witness")
+        witness()  # GREEN: real CLI main, both JSON argument slots
+        mutant = self._r3_compiled_mutant(
+            compare, compare._load_hub_json,
+            '        json.dumps(decoded, ensure_ascii=False).encode("utf-8")\n',
+            "", "A4_R2_Q1_SURROGATE")
+        with mock.patch.object(compare, "_load_hub_json", mutant):
+            self.must_go_red(witness)
+        print("MUTANT_RED:A4_R2:Q1_SURROGATE_JSON", flush=True)
+
+    def test_A4_R2_Q2_native_missing_restraint_guard_mutant_red(self):
+        from converters.psi116_topology_resolver import uxml_compare as compare
+        witness = self.scenario(
+            "test_A4_R2_Q2_missing_hasRestraint_keeps_native_refusal")
+        witness()  # GREEN exact existing UXML_PSI116_INDEX_NEGATIVE
+        mutant = self._r3_compiled_mutant(
+            compare, compare.compare_cross_format_uxml,
+            '"hasRestraint" not in fields or\n                 ',
+            "", "A4_R2_Q2_MISSING_RESTRAINT")
+        with mock.patch.object(compare, "compare_cross_format_uxml", mutant), \
+             mock.patch.object(self.cases, "compare_cross_format_uxml", mutant):
+            self.must_go_red(witness)
+        print("MUTANT_RED:A4_R2:Q2_MISSING_RESTRAINT", flush=True)
+
+    def test_A4_R2_Q3_raw_component_integer_acceptance_mutant_red(self):
+        from converters.psi116_topology_resolver import uxml_compare as compare
+        witness = self.scenario(
+            "test_A4_R2_Q3_rawComponentType_integer_refuses_named")
+        witness()  # GREEN str-or-None, including last component
+        mutant = self._r3_compiled_mutant(
+            compare, compare.compare_cross_format_uxml,
+            'isinstance(fields.get("rawComponentType"), str)',
+            'isinstance(fields.get("rawComponentType"), (str, int))',
+            "A4_R2_Q3_ALLOW_INT")
+        with mock.patch.object(compare, "compare_cross_format_uxml", mutant), \
+             mock.patch.object(self.cases, "compare_cross_format_uxml", mutant):
+            self.must_go_red(witness)
+        print("MUTANT_RED:A4_R2:Q3_RAW_COMPONENT_INT", flush=True)
 
     def test_T1_honest_source_variants_each_kill_the_matching_mutant(self):
         from converters.psi116_topology_resolver import uxml_adapter as adapter
