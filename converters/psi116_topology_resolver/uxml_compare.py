@@ -4,6 +4,29 @@ Usage: python -m converters.psi116_topology_resolver.uxml_compare <psi116.xml> <
 Print EQUAL on matching NodeRecords, occurrences/spans, findings and CLOS
 closureBindingWitnesses. Any difference is explicit, deterministic and fails.
 No writer or original-source mutation is ever invoked.
+
+Named refusals at the comparison/CLI boundary (existing codes remain stable):
+
+Code                                          When it fires
+--------------------------------------------  ---------------------------------------
+CROSS_FORMAT_PSI116_SOURCE_REQUIRED           PSI116 source list/entry/format missing or wrong
+CROSS_FORMAT_INPUT_XML_SOURCE_REQUIRED        InputXML source list/entry/format missing or wrong
+CROSS_FORMAT_HUB_FRAME_UNVERIFIED              Unverified InputXML comparison coordinates
+CROSS_FORMAT_UNANCHORED_ABSOLUTE_FRAME_COMPARISON_REFUSED
+                                              Source-derived run is unanchored
+CROSS_FORMAT_SOURCE_ATTRIBUTES_INVALID        InputXML sourceAttributes is not a dictionary
+UXML_PSI116_PROVENANCE_MISMATCH                PSI116 provenance scope is not a dictionary
+UXML_SOURCE_RECORD_COLLECTION_INVALID         Missing/wrong PSI116 pipelines/components/ports
+UXML_COMPONENT_INVALID                        PSI116 component entry is not a dictionary
+UXML_PSI116_RECORD_FIELDS_MISSING              PSI116 record evidence absent/wrong type
+UXML_PSI116_BRANCH_ORDER_MISMATCH              Original PSI116 pipeline order/id disagrees
+UXML_PSI116_HUB_SHAPE_INVALID                  Otherwise unnamed PSI116 hub adapter error,
+                                              or wrong-typed nodeName/hasRestraint/connectionType
+UXML_JSON_INVALID                             Malformed, BOM-prefixed, unbounded or deeply
+                                              nested JSON at the CLI
+Other named source/provenance/integrity errors from the native PSI116 and
+InputXML adapters propagate unchanged. Real analyzer exceptions are not
+reclassified as malformed hub JSON.
 """
 from __future__ import annotations
 
@@ -112,6 +135,11 @@ def compare_cross_format_uxml(psi_uxml: dict, input_uxml: dict) -> list[str]:
           "UXML_SOURCE_RECORD_COLLECTION_INVALID")
     # A3-R1: validate only the PSI116 UXML comparison boundary. The native
     # PSI116 adapter/parser and legitimate-source semantics are unchanged.
+    # Preserve the original native named code for a malformed component
+    # entry; a rawAttributes-type refusal is a separate, narrower case.
+    _need(all(isinstance(component, dict)
+              for component in psi_uxml["components"]),
+          "UXML_COMPONENT_INVALID")
     _need(all(isinstance(component, dict) and
               isinstance(component.get("rawAttributes"), dict)
               for component in psi_uxml["components"]),
@@ -119,6 +147,20 @@ def compare_cross_format_uxml(psi_uxml: dict, input_uxml: dict) -> list[str]:
     _need(all(isinstance(pipeline.get("rawAttributes"), dict)
               for pipeline in psi_uxml["pipelines"]),
           "UXML_PSI116_HUB_SHAPE_INVALID")
+    # Type-check these hub-owned fields before analysis. They were previously
+    # coerced or emitted as ordinary UNEXPLAINED comparison differences.
+    # If the whole psi116 evidence is absent, leave the existing adapter's
+    # UXML_PSI116_RECORD_FIELDS_MISSING guard authoritative.
+    for component in psi_uxml["components"]:
+        fields = component["rawAttributes"].get("psi116")
+        if isinstance(fields, dict):
+            _need(
+                (fields.get("nodeName") is None or
+                 isinstance(fields.get("nodeName"), str)) and
+                (fields.get("connectionType") is None or
+                 isinstance(fields.get("connectionType"), str)) and
+                isinstance(fields.get("hasRestraint"), bool),
+                "UXML_PSI116_HUB_SHAPE_INVALID")
     _need(isinstance(input_uxml, dict) and
           isinstance(input_uxml.get("sources"), list) and
           len(input_uxml["sources"]) == 1 and
@@ -140,7 +182,6 @@ def compare_cross_format_uxml(psi_uxml: dict, input_uxml: dict) -> list[str]:
 
     try:
         psi_doc = document_from_uxml(psi_uxml)
-        psi_result = resolve_from_uxml(psi_uxml)
     except UxmlPsi116Error:
         # Preserve all existing named PSI116 source/provenance refusals.
         raise
@@ -148,6 +189,9 @@ def compare_cross_format_uxml(psi_uxml: dict, input_uxml: dict) -> list[str]:
         # Malformed hand-edited PSI116 hubs must never leak Python exception
         # text (or a CLI traceback) through this comparison-only entrypoint.
         raise UxmlPsi116Error("UXML_PSI116_HUB_SHAPE_INVALID") from exc
+    # A genuine engine/analysis failure is not a malformed hub: do not wrap
+    # resolve_from_uxml (which invokes analyze_document) in the shape handler.
+    psi_result = resolve_from_uxml(psi_uxml)
     input_result = resolve_from_uxml(input_uxml)
     config = ResolverConfig()
     diffs: list[str] = []
@@ -302,6 +346,16 @@ def compare_cross_format_uxml(psi_uxml: dict, input_uxml: dict) -> list[str]:
 
 
 
+def _load_hub_json(path: Path):
+    """Map untrusted JSON decoding failures, never analyzer failures, to one code."""
+    from .uxml_adapter import UxmlPsi116Error
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (UnicodeError, RecursionError, ValueError) as exc:
+        # Includes JSONDecodeError, Python's 4300+ integral-digit limit and BOM.
+        raise UxmlPsi116Error("UXML_JSON_INVALID") from exc
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("psi116_xml", type=Path,
@@ -312,9 +366,9 @@ def main(argv=None):
                         help="Compare same model PSI116 UXML vs CAESAR InputXML UXML")
     args = parser.parse_args(argv)
     try:
-        uxml = json.loads(args.uxml_json.read_text(encoding="utf-8"))
+        uxml = _load_hub_json(args.uxml_json)
         differences = (compare_cross_format_uxml(
-            json.loads(args.psi116_xml.read_text(encoding="utf-8")), uxml)
+            _load_hub_json(args.psi116_xml), uxml)
             if args.cross_format else compare_psi116_uxml(args.psi116_xml, uxml))
     except (OSError, ValueError, KeyError, TypeError) as exc:
         print("DIFFERENT")
