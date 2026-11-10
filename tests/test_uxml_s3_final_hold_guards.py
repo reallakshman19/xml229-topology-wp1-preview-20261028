@@ -861,6 +861,46 @@ class FinalInputXmlHoldGuards(unittest.TestCase):
                            lambda: compare_cross_format_uxml(psi, self.input))
         self.assertEqual(len(compare_cross_format_uxml(self.psi, self.input)), 13)
 
+    def test_A4_R1_componentType_nonstring_refuses_named(self):
+        psi = deepcopy(self.psi)
+        psi["components"][0]["rawAttributes"]["psi116"]["componentType"] = 7
+        self.exact("UXML_PSI116_HUB_SHAPE_INVALID",
+                   lambda: compare_cross_format_uxml(psi, self.input))
+
+    def test_A4_R1_rawComponentType_nonstring_refuses_named(self):
+        psi = deepcopy(self.psi)
+        psi["components"][0]["rawAttributes"]["psi116"]["rawComponentType"] = [1]
+        self.exact("UXML_PSI116_HUB_SHAPE_INVALID",
+                   lambda: compare_cross_format_uxml(psi, self.input))
+
+    def test_A4_R2_component_rawAttributes_absent_preserves_native_code(self):
+        psi = deepcopy(self.psi)
+        psi["components"][0].pop("rawAttributes")
+        self.exact("UXML_PSI116_RECORD_FIELDS_MISSING",
+                   lambda: compare_cross_format_uxml(psi, self.input))
+
+    def test_A4_R2_pipeline_rawAttributes_absent_preserves_native_code(self):
+        psi = deepcopy(self.psi)
+        psi["pipelines"][0].pop("rawAttributes")
+        self.exact("UXML_PSI116_BRANCH_ORDER_MISMATCH",
+                   lambda: compare_cross_format_uxml(psi, self.input))
+
+    def test_A4_R3_last_component_type_guard_is_not_first_only(self):
+        psi = deepcopy(self.psi)
+        self.assertGreater(len(psi["components"]), 1)
+        psi["components"][-1]["rawAttributes"]["psi116"]["componentType"] = 7
+        self.exact("UXML_PSI116_HUB_SHAPE_INVALID",
+                   lambda: compare_cross_format_uxml(psi, self.input))
+
+    def test_A4_R3_hasRestraint_integer_zero_and_one_refused(self):
+        for value in (0, 1):
+            with self.subTest(hasRestraint=value):
+                psi = deepcopy(self.psi)
+                psi["components"][-1]["rawAttributes"]["psi116"]["hasRestraint"] = value
+                self.assertIs(type(value), int)
+                self.exact("UXML_PSI116_HUB_SHAPE_INVALID",
+                           lambda: compare_cross_format_uxml(psi, self.input))
+
     @staticmethod
     def _a4_json_payloads():
         # Entirely public synthetic data; never used as a model source.
