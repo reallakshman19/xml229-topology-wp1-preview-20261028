@@ -880,7 +880,7 @@ class S3Step2BDeleteOneGuardMutants(unittest.TestCase):
             "", "A4_R2_Q1_SURROGATE")
         with mock.patch.object(compare, "_load_hub_json", mutant):
             self.must_go_red(witness)
-        print("MUTANT_RED:A4_R2:Q1_SURROGATE_JSON", flush=True)
+        print("MUTANT_RED:A4_R2Q:Q1_SURROGATE_JSON", flush=True)
 
     def test_A4_R2_Q2_native_missing_restraint_guard_mutant_red(self):
         from converters.psi116_topology_resolver import uxml_compare as compare
@@ -894,7 +894,7 @@ class S3Step2BDeleteOneGuardMutants(unittest.TestCase):
         with mock.patch.object(compare, "compare_cross_format_uxml", mutant), \
              mock.patch.object(self.cases, "compare_cross_format_uxml", mutant):
             self.must_go_red(witness)
-        print("MUTANT_RED:A4_R2:Q2_MISSING_RESTRAINT", flush=True)
+        print("MUTANT_RED:A4_R2Q:Q2_MISSING_RESTRAINT", flush=True)
 
     def test_A4_R2_Q3_raw_component_integer_acceptance_mutant_red(self):
         from converters.psi116_topology_resolver import uxml_compare as compare
@@ -909,7 +909,7 @@ class S3Step2BDeleteOneGuardMutants(unittest.TestCase):
         with mock.patch.object(compare, "compare_cross_format_uxml", mutant), \
              mock.patch.object(self.cases, "compare_cross_format_uxml", mutant):
             self.must_go_red(witness)
-        print("MUTANT_RED:A4_R2:Q3_RAW_COMPONENT_INT", flush=True)
+        print("MUTANT_RED:A4_R2Q:Q3_RAW_COMPONENT_INT", flush=True)
 
     def test_T1_honest_source_variants_each_kill_the_matching_mutant(self):
         from converters.psi116_topology_resolver import uxml_adapter as adapter
