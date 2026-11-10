@@ -901,6 +901,70 @@ class FinalInputXmlHoldGuards(unittest.TestCase):
                 self.exact("UXML_PSI116_HUB_SHAPE_INVALID",
                            lambda: compare_cross_format_uxml(psi, self.input))
 
+    def _a4_r2_surrogate_cli(self, slot, *, in_process=False):
+        # Genuine PUBLIC reader hubs, with one JSON-escaped lone surrogate
+        # appended to sourceText. The on-disk JSON remains valid UTF-8.
+        psi, input_hub = deepcopy(self.psi), deepcopy(self.input)
+        selected = psi if slot == "psi" else input_hub
+        selected["sources"][0]["sourceText"] += "\ud800"
+        with tempfile.TemporaryDirectory(prefix="public-a4-r2-surrogate-") as folder:
+            psi_path = Path(folder) / "psi.json"
+            input_path = Path(folder) / "input.json"
+            psi_path.write_text(json.dumps(psi), encoding="utf-8")
+            input_path.write_text(json.dumps(input_hub), encoding="utf-8")
+            altered = psi_path if slot == "psi" else input_path
+            self.assertIn(r"\ud800", altered.read_text(encoding="utf-8"))
+            args = [str(psi_path), str(input_path), "--cross-format"]
+            if in_process:
+                # Use the real CLI main with patched module loader for mutant
+                # testing; do not duplicate its exception presentation.
+                from contextlib import redirect_stdout, redirect_stderr
+                from converters.psi116_topology_resolver.uxml_compare import main
+                import io
+                stdout, stderr = io.StringIO(), io.StringIO()
+                with redirect_stdout(stdout), redirect_stderr(stderr):
+                    status = main(args)
+                output, errors = stdout.getvalue(), stderr.getvalue()
+            else:
+                result = subprocess.run(
+                    [sys.executable, "-B", "-m",
+                     "converters.psi116_topology_resolver.uxml_compare", *args],
+                    cwd=ROOT, capture_output=True, text=True, timeout=30)
+                status, output, errors = (
+                    result.returncode, result.stdout, result.stderr)
+            self.assertEqual(status, 1)
+            self.assertEqual(output.splitlines(),
+                             ["DIFFERENT", "ERROR: UXML_JSON_INVALID"])
+            self.assertEqual(errors, "")
+
+    def test_A4_R2_Q1_real_cli_psi_lone_surrogate_json_named(self):
+        self._a4_r2_surrogate_cli("psi")
+
+    def test_A4_R2_Q1_real_cli_input_lone_surrogate_json_named(self):
+        self._a4_r2_surrogate_cli("input")
+
+    def test_A4_R2_Q1_inprocess_both_slots_surrogate_mutant_witness(self):
+        for slot in ("psi", "input"):
+            with self.subTest(slot=slot):
+                self._a4_r2_surrogate_cli(slot, in_process=True)
+
+    def test_A4_R2_Q2_missing_hasRestraint_keeps_native_refusal(self):
+        # The adapter, not the comparison-only type guard, names a partial
+        # native PSI116 record whose restraint field is absent.
+        psi = deepcopy(self.psi)
+        psi["components"][0]["rawAttributes"]["psi116"] = {}
+        self.exact("UXML_PSI116_INDEX_NEGATIVE",
+                   lambda: compare_cross_format_uxml(psi, self.input))
+
+    def test_A4_R2_Q3_rawComponentType_integer_refuses_named(self):
+        for index in (0, len(self.psi["components"]) - 1):
+            with self.subTest(component=index):
+                psi = deepcopy(self.psi)
+                psi["components"][index]["rawAttributes"]["psi116"][
+                    "rawComponentType"] = 7
+                self.exact("UXML_PSI116_HUB_SHAPE_INVALID",
+                           lambda: compare_cross_format_uxml(psi, self.input))
+
     @staticmethod
     def _a4_json_payloads():
         # Entirely public synthetic data; never used as a model source.
