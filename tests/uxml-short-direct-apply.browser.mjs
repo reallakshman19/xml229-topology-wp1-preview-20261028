@@ -185,6 +185,9 @@ async function exercise(mode){
   }
   assert.equal(await page.locator('[data-select-short]').isEnabled(),true);
   await page.locator('[data-select-short]').click();
+  // This suite qualifies the historical ONE-owner route explicitly, even
+  // when A6b later defaults the new comparison toggle to grouped execution.
+  await page.locator('[data-short-independent]').uncheck();
   await page.locator('[data-select-gaskets]').click();
   assert.equal(await page.locator('[data-short-index]:checked').count(),3);
   assert.equal(await page.locator('[data-short-hub-preview]').count(),0);

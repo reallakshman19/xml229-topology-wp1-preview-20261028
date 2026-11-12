@@ -207,7 +207,7 @@ component type changed. Original sourceText and source hash are unchanged.
 Every forged case must have the exact same refusal code with memo ON and OFF.
 Replacing the provenance digest with a constant must cause a real refused-vs-
 accepted assertion failure in this sequence. Independently, removing the
-route tag must fail the behavioral **two real native transactions** count.
+route tag must fail the behavioral count of **one independently executed native-source transaction plus one independently executed UXML-derived native transaction** (two real runs, not two routes borrowing one result).
 The Python-finally mutant now runs in **short_memo's actual module globals**,
 and the unmodified function runs through the identical harness first.
 
@@ -216,7 +216,10 @@ non-consumed* component may produce EQUAL with memo ON **and** OFF because
 the selected short-drop's native operation does not consume that position.
 That equality is not a memo-specific bypass. Changing a position which the
 selected operation *does consume* must produce the same refusal with memo ON
-and OFF. The tests deliberately distinguish those cases. This does not
+and OFF. The in-repo tamper test covers the **consumed** position; a separate
+non-adjacent, non-consumed position mutation is **NOT_TESTED in-repo** and
+must not be described as an automated equivalence regression. The
+independent runner's observation remains background only. This does not
 authorize mutations to unselected source records; original-file write
 authority and sourceRefs remain unchanged.
 
@@ -235,3 +238,184 @@ for the suggested optimization. A cheaper, equally complete consumed-record
 digest is the logical *next* speed step but has **not** been designed,
 implemented or authorized in R2. Intermediate serialization/re-parse removal
 remains **NOT_DONE**. No multi-owner batching or policy/tolerance changes.
+
+
+## A6b Owner-approved batch feasibility — measurement-first (2 Nov 2026)
+
+**Owner authority:** multi-owner batching ONLY for qualified, independent
+owners; atomic batch validation, canonical UXML authority, per-owner history,
+bisect fallback on refusal, unchanged original/patch parity, release-last
+hubRevision, Cancel and parity EQUAL download. The legacy one-owner route
+retains its exact-one refusal. No CLOS/240.6mm/tolerance/policy/loss/eligibility
+or review-only changes. This is a draft feasibility checkpoint, **not** a
+claim that batch Apply exists in the product.
+
+**Instrumented pre-batch baseline:** pinned [Topology run
+#41492913935](https://github.com/reallakshman19/xml229-topology-wp1-preview-20261028/actions/runs/41492913935)
+passed 134 Python (35 default gated skips), 112 Node, pinned 9/9
+equivalence. On synthetic interconnected 60-TEE, with one owner per
+transaction:
+
+| Stage | Memo OFF, 5 owners | Memo ON, 5 owners | Memo OFF, 20 owners | Memo ON, 20 owners |
+|---|---:|---:|---:|---:|
+| Entire source+UXML per-owner workflow | 14.9554 s | 11.0170 s | 59.5356 s | 45.2770 s |
+| Real native short transactions | 25 calls / 9.7086 s | 15 calls / 4.2845 s | 100 calls / 38.7787 s | 60 calls / 17.7795 s |
+| Full \`_document_digest\` | 0 | 35 calls / 1.5930 s | 0 | 140 calls / 6.9691 s |
+| Cache deep-copy operations | 0 | 65 calls / 3.3812 s | 0 | 260 calls / 14.6317 s |
+| Garbage collections | 1,957 / 0.6389 s | 2,425 / 1.4779 s | 7,436 / 2.7856 s | 9,342 / 7.4753 s |
+
+Timing scopes **overlap**: memo get/put includes deep copies; GC overlaps
+Python stages; do not sum these clocks. Not all OFF-side copies outside the
+memo were instrumented. The observed 20-owner net speedup is approximately
+1.31x. Deep copying and GC are major costs alongside digesting; do not
+assume reducing SHA cost solves native transaction overhead.
+
+**Step 1 experimental candidate:** tests/bench_uxml_short_batch_feasibility.py
+is an explicit opt-in disposable single-tree feasibility implementation. It
+conservatively reserves every record in an owner's branch and associated
+positive-ID aliases, refuses overlapping owner zones and write sets, and
+compares one-pass XML removal+closure against the existing sequential native
+result. It measures native and *simulated* UXML reconstruction, not a genuine
+batch canonical witness or real Pyodide transaction. The test refuses any
+byte mismatch. The 5/20/89-like timing/equivalence gate and genuine Pyodide
+benchmark are separate. **Step 2 engine/Worker/UI: NOT_STARTED.**
+
+
+## A6b Step 2 — authority-grade engine and workspace comparison (2 Nov 2026)
+
+This section **supersedes the historical Step 1 status above**. The Step 1
+prototype remains disposable and must not be confused with the production
+batch path. Option A was approved by the Owner; **no separate cheaper-digest
+optimization** has been implemented.
+
+The opt-in engine is now `short_batch.py`: bounded 2–32 independent
+owners per atomic group; owner-affected record and shared-node read/write
+footprints checked before the transaction; complete native validation,
+source lineage and original-byte replay; one owner-local normalized
+evidence and SHA revision record per selected owner. A refused group
+never commits partial bytes. Its bisect fallback eventually executes
+the unchanged historical exact-one path and retains its refusal code.
+
+`short_batch_uxml.py` executes an independent UXML-derived native group
+and original-source native group; it checks one group-wide canonical
+sourceRef/loss witness and byte/receipt parity before any group can publish.
+The Worker requires explicit `topologyShortBatchExplicit:true`, limits
+groups to 32, and stays Pre-Final-only: no conversion to Final/native CII.
+A full-provenance per-job UXML resolver memo allows the initial parity
+analysis and the group canonical check to share one adapter pass, without
+ever sharing a direct/UXML transaction result.
+
+The workspace selection offers **Group independent owners** (default ON
+only after real Chromium qualification; OFF chooses the original
+one-owner path). It counts completed and in-flight **owners**, not
+groups; ETA is explicitly approximate. One group is published only after
+every owner receipt, ordered intermediate SHA, full batch validation,
+canonical UXML operation and pre-Final lineage has passed. Grouped history
+keeps distinct `ownerOperations`, `ownerEvidence` and `ownerRevision`
+per owner. Cancel discards only an in-flight group; previously validated
+group checkpoints remain. The guarded publisher removes hubRevision
+authority before work and restores it **last**, only after fresh source-bound
+analysis proves EQUAL. Download gates are unchanged.
+
+Real Chromium/Pyodide comparison on the public synthetic source, via
+the **actual workspace button** and downloaded XML bytes, with the
+pre-default-ON qualified browser run
+[#41516529232](https://github.com/reallakshman19/xml229-topology-wp1-preview-20261028/actions/runs/41516529232):
+
+| Owners | Route | Grouped UI | Serial UI | Speedup | Downloaded XML |
+|---:|---|---:|---:|---:|---|
+| 5 | Direct | 0.479 s | 0.894 s | 1.87x | EQUAL |
+| 5 | UXML | 0.698 s | 1.594 s | 2.28x | EQUAL |
+| 20 | Direct | 1.728 s | 14.060 s | 8.14x | EQUAL |
+| 20 | UXML | 2.429 s | 21.709 s | 8.94x | EQUAL |
+
+Browser tests also reject mid-group Cancel publication, preserve the
+named singleton code after forced group refusal/bisect, and refuse hub
+release while source recheck is pending. Four targeted UI source mutants
+(toggle ignored, missing owner evidence, early hubRevision release and
+Cancel accepting a stale result) must fail their own behavioral assertions.
+The historical direct-Apply browser tests explicitly choose OFF so the
+one-owner route remains continuously qualified.
+
+**Performance interpretation:** The earlier 20-owner memo baseline spent
+14.63 seconds on 260 deep copies and 7.48 seconds in GC, with overlapping
+clocks. Fewer per-owner transactions, cache copies and GC cycles explain
+much of the A6b gain, so a separate provenance-digest shortcut is
+**NOT_DONE** and its B1 safety protection remains intact. The 89-like
+native engine was qualified on public synthetic only; the Oracle alone
+runs the private Owner-model counts/timing trial. The displayed UI numbers
+are not production or Owner-file ETA guarantees. Independent non-author
+review and merge remain HOLD until all exact-head workflows are green.
+
+
+## A6b dense-model planner addendum — 3 Nov 2026
+
+**Owner-local evidence (Oracle-provided counts and native timings ONLY):**
+89/89 owners committed, final bytes EQUAL, zero refusals or bisections.
+The old input-order planner formed 65 groups: 54 singletons, eight pairs,
+one size-4, one size-7 and one size-8. Batch native 208.8 s vs serial
+243.7 s, only 1.17×. All 11 multi-owner UXML groups (35 owners) were
+EQUAL. **The new graph planner has NOT been timed on the Owner model.**
+
+**Root cause:** upon one owner-footprint intersection, the adjacent-only
+planner permanently closed the current group. Subsequent independent
+owners from other branches could never join it. This is selection-order
+fragmentation, not proof that the native footprint can be narrowed.
+
+**Safety-preserving graph fix:** an earlier conflicting owner must always
+run in an earlier group. Nonconflicting owners may commute into the
+earliest available group (up to 32 owners); unknown/ineligible owners
+create hard singleton ordering barriers. Group members are again
+pairwise checked with authoritative native owner_footprint on the
+CURRENT source by the engine, then independently sourceRef/loss/parity
+checked before publication. Bisect and the unchanged historical
+singleton remain the only refusal fallback. The reported owner census
+is presented in original selection order, without falsifying per-owner
+commit source hashes.
+
+The UI gets exact native footprint keys from a **read-only** Python
+Analyze result with the source SHA. It independently verifies full
+original branch coverage, positive node-number alias closure and
+original-position 25 mm physical-contact coverage before any
+out-of-order graph scheduling. Missing/stale/undercovered evidence
+fails closed. The legacy UI serial mode remains available; **the
+comparison toggle defaults OFF** until exact-head browser qualification.
+
+**Public dense fixture:** 24 physically separate branches, each with four
+adjacent eligible short owners; the 89-owner selection produces 132
+overlap pairs. All 132 are same-branch pairs **without shared direct
+drop/port source keys**. This directly demonstrates conservative
+whole-branch reservations, but does NOT prove those retained records
+can be excluded from the transaction's read set. Cross-branch positive
+alias and spatial-contact conflicts were zero in this public shape.
+
+| Public native qualified timing | 5 owners | 20 owners | 89 owners |
+|---|---:|---:|---:|
+| Serial native | 2.051 s | 8.066 s | 30.802 s |
+| Old adjacent-only group count | 4 | 16 | 67 |
+| Old native batch time | 1.840 s | 6.980 s | 25.338 s |
+| Conflict-graph group count | 4 | 4 | 4 |
+| Graph batch time | 1.854 s | 2.559 s | 4.496 s |
+| Final bytes / normalized evidence | EQUAL | EQUAL | EQUAL |
+| Refused owners and splits | 0 | 0 | 0 |
+
+At 89 the old public plan contained 45 singletons and 22 pairs;
+the new plan contains one 23-owner group and three 22-owner groups.
+Graph speedups are approximately 5.6× vs old planner and 6.9× vs
+serial on THIS public fixture, not on the Owner model. Five owners
+are slightly slower under graph scheduling.
+
+**Footprint narrowing: NOT_DONE.** The entire owner branch includes
+records not directly dropped or moved in this fixture. A narrower
+read/write union can only be proposed after tracing every PortModel
+read, closure movement, positive-ID alias, 25 mm contact candidate,
+transaction validation and UXML sourceRef/loss contract dependency,
+with negative mutants for retained-but-read records, alias peers and
+spatial contacts. Do NOT remove the whole-branch footprint or lower
+tolerances on this evidence alone.
+
+**Remaining:** exact-head dense browser direct/UXML graph-vs-serial,
+real Pyodide results, Cancel and bisect source mutations, unchanged skip
+counts, full CI, independent review, and Owner-model graph retiming
+(Oracle only) must be recorded separately. No CLOS/240.6mm/6-25mm,
+eligibility, policy, loss, review-only or Lane B change.

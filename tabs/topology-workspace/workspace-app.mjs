@@ -12,6 +12,49 @@ import {secondPassHTML} from './second-pass.mjs';
 import {enqueueManualFix,runManualFixQueue} from './manual-fix-queue.mjs';
 import {trialRemaining,trialGroup,trialGroupTitles,trialGroupFilters,trialValidationSummary,trialDisabledReason} from './trial-clarity.mjs';
 
+/** Audited lane-A workspace seams; exercised in Node as well as Chromium.
+ * The caller cannot swap grouped dispatch, per-owner receipt or release timing
+ * without exercising these exact production helpers.
+ */
+export function shortBulkWorkspaceEngineArgs(options) {
+  return {
+    source:options.source,shortElements:options.shortElements,
+    selectedIds:options.selectedIds,runEngine:options.runEngine,
+    hubEnabled:options.hubEnabled,
+    enableIndependentGroups:options.independentShortGroups===true,
+    shortBatchPlanning:options.shortBatchPlanning,
+    shortBatchSourceRecords:options.shortBatchSourceRecords,
+    isCurrent:options.isCurrent,
+    onCheckpoint:options.onCheckpoint,
+    onProgress:options.onProgress,
+  };
+}
+export function shortBulkWorkspaceHistoryEntry(pass,index,total,reviews,resolutions) {
+  return {
+    sourceSha256:pass.sourceSha256,fixedSha256:pass.fixedSha256,
+    actionIds:[pass.id],operations:pass.ownerOperations||pass.transaction.operations,
+    ownerEvidence:pass.ownerEvidence||null,ownerRevision:pass.ownerRevision||null,
+    canonicalEditOps:pass.canonicalEditOps,validation:pass.validation.checks,
+    reviews:index===0?reviews:{},
+    resolvedConnections:index===total-1?resolutions:[],
+  };
+}
+export function shortBulkWorkspaceNeedsAnalysis(grouped,planning) {
+  return grouped===true&&!planning;
+}
+export async function settleShortBulkPublication({
+  state,outcome,done,hubMismatch,generation,refreshEvidence,
+  renderTerminal,analysisProofCurrent,
+}) {
+  // Release is LAST: no prior cached hubRevision can survive a failed
+  // working-copy parse, fresh evidence check, or terminal presentation.
+  if(outcome.latest&&done&&!hubMismatch)await refreshEvidence();
+  renderTerminal();
+  if(state.hubEnabled&&!hubMismatch&&generation===state.epoch&&
+     state.hubParity?.status==='EQUAL'&&analysisProofCurrent())
+    state.hubRevision=state.revision;
+}
+
 async function sha256(bytes) {
   const digest=await crypto.subtle.digest('SHA-256',bytes);
   return Array.from(new Uint8Array(digest),n=>n.toString(16).padStart(2,'0')).join('');
@@ -49,9 +92,9 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
   const ownedWorker=runEngine?null:createTopologyWorkerClient();
   runEngine ||= ownedWorker.run;
   cancelEngine ||= ownedWorker?()=>ownedWorker.cancel():()=>{};
-  const state={epoch:0,source:null,original:null,revision:0,applied:0,history:[],resolutions:[],shortElements:[],shortSelection:null,scene:null,plan:null,findings:[],result:null,
+  const state={epoch:0,source:null,original:null,revision:0,applied:0,history:[],resolutions:[],shortElements:[],shortBatchPlanning:null,shortSelection:null,scene:null,plan:null,findings:[],result:null,
     selected:new Set(),search:'',filter:'all',category:'all',hubEnabled:false,hubParity:null,hubRevision:null,analysisProof:null,evidenceProofReason:'EVIDENCE_ANALYSIS_REQUIRED',opsPreview:null,opsPreviewError:null,
-     activeJob:null,shortBulkFinalizing:false,fixFinalizing:false,manualPorts:[],secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false,shortBulk:null,manualQueue:[],manualQueueRunning:false,manualQueueCheckpoint:null,manualQueueStatus:''};
+     activeJob:null,shortBulkFinalizing:false,fixFinalizing:false,manualPorts:[],secondPass:null,openRules:new Map(),openCases:new Set(),fix:null,batch:null,gapReviews:new Map(),busy:false,batchRunning:false,shortBulk:null,independentShortGroups:false,manualQueue:[],manualQueueRunning:false,manualQueueCheckpoint:null,manualQueueStatus:''};
   // The queue lives alongside Second Pass, without changing the engineering audit.
   const queuePanel=document.createElement('section');
   queuePanel.dataset.manualQueue='';
@@ -146,7 +189,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     const findings=JSON.parse(result.topologyFindingsText||'null');
     if(plan?.source?.sha256!==sourceSha||findings?.source?.sha256!==sourceSha||
        !Array.isArray(plan.actions)||!Array.isArray(findings.findings))throw Error('TOPOFIX_PLAN_SOURCE_DRIFT');
-    return {plan,findings:findings.findings,resolutions:findings.resolvedConnections||[],shortElements:findings.shortElements||[],manualPorts:findings.manualConnectionPorts||[]};
+    return {plan,findings:findings.findings,resolutions:findings.resolvedConnections||[],shortElements:findings.shortElements||[],shortBatchPlanning:findings.shortBatchPlanning||null,manualPorts:findings.manualConnectionPorts||[]};
   }
   function renderSelection() {
     const ids=[...state.selected],records=ids.map(id=>state.scene?.byId.get(id)).filter(Boolean);
@@ -470,6 +513,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
         {epoch:generation,revision,sourceRef,sourceSha256,hubEnabled});
       state.plan=current.plan;state.findings=current.findings;
       state.resolutions=current.resolutions;state.shortElements=current.shortElements;
+      state.shortBatchPlanning=current.shortBatchPlanning;
       state.manualPorts=current.manualPorts;
       return true;
     }catch(error){
@@ -719,7 +763,11 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       ' eligible under source checks. Select owners, then Apply. '+
       'Each hub transaction independently checks canonical UXML operation authority, '+
       'loss contract, original source and native validation before retaining a revision.</p>'+
-      '<p data-short-selection-count>'+p.selected.size+' selected · page '+(p.page+1)+' of '+pages+'</p>'+
+      '<label><input type="checkbox" data-short-independent '+
+        (state.independentShortGroups?'checked ':'')+
+        (state.busy||state.batchRunning?'disabled ':'')+'>'+
+        'Group independent owners (up to 32; OFF = legacy one-owner comparison)</label>'+
+       '<p data-short-selection-count>'+p.selected.size+' selected · page '+(p.page+1)+' of '+pages+'</p>'+
       '<button data-select-gaskets '+(state.busy||state.batchRunning?'disabled':'')+
         '>Select eligible gaskets (all pages)</button>'+
       '<ul>'+visible.map((r,i)=>'<li><label><input type="checkbox" data-short-index="'+(start+i)+'" '+
@@ -819,15 +867,14 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       state.scene=scene;state.plan=next.plan;state.findings=next.findings.findings;
       state.resolutions=next.findings.resolvedConnections||[];
       state.shortElements=next.findings.shortElements||[];
+      state.shortBatchPlanning=null; // previous source graph is no longer authoritative
       state.manualPorts=next.findings.manualConnectionPorts||[];
       state.secondPass=null;state.shortSelection=null;state.selected.clear();
       state.gapReviews.clear();state.openCases.clear();
       query(root,'[data-short-preview]').textContent='';
       for(const [i,pass] of applied.entries()){
-        state.history.push({sourceSha256:pass.sourceSha256,fixedSha256:pass.fixedSha256,
-          actionIds:[pass.id],operations:pass.transaction.operations,
-          canonicalEditOps:pass.canonicalEditOps,validation:pass.validation.checks,
-          reviews:i===0?reviews:{},resolvedConnections:i===applied.length-1?state.resolutions:[]});
+        state.history.push(shortBulkWorkspaceHistoryEntry(
+          pass,i,applied.length,reviews,state.resolutions));
       }
       state.revision+=applied.length;
       state.applied+=applied.length;
@@ -864,7 +911,9 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       (outcome.stopMessage?' · '+outcome.stopMessage:'')+
       (hubMismatch?' · last validated checkpoint retained; corrected downloads HELD.':
        done?' · validated XML, source-linked operations and lineage digests downloadable.':
-         ' · no XML changed.');
+         ' · no XML changed.')+
+      (done&&state.independentShortGroups?
+        ' · Another grouped Apply requires Analyze on the current XML; or switch grouping OFF.':'');
     query(root,'[data-progress]').textContent=message;
     setFixStatus(message,hubMismatch?'rejected':
       reason==='COMPLETE'&&done?'ready':done?'stopped':'rejected','drop');
@@ -873,19 +922,19 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       ' validated; '+skipped+' skipped/refused. Engineering review remains required.');
     // On a hub mismatch, do not reset the negative parity by reanalysing
     // the partially validated checkpoint until an explicit fresh Analyze.
-    if(outcome.latest&&done&&!hubMismatch)
-      await refreshPublishedEvidence(generation,state.revision,state.source);
-    // No preview heartbeat may overwrite a terminal Apply result. A later
-    // evidence mismatch is a HOLD, never an implied corrected download.
-    if(generation===state.epoch)
-      query(root,'[data-progress]').textContent=
-        state.hubEnabled&&state.hubParity?.status!=='EQUAL'?
-          message+' · HUB EVIDENCE HOLD: re-analyse before download.':message;
-    // FINAL statement. Never add any throwable UI work after hub release:
-    // even CANCELLED outcomes must finish all writes/recheck first.
-    if(state.hubEnabled&&!hubMismatch&&generation===state.epoch&&
-       state.hubParity?.status==='EQUAL'&&analysisProofCurrent())
-      state.hubRevision=state.revision;
+    await settleShortBulkPublication({
+      state,outcome,done,hubMismatch,generation,
+      refreshEvidence:()=>refreshPublishedEvidence(
+        generation,state.revision,state.source),
+      renderTerminal:()=>{
+        // Rendering and working-copy evidence remain BEFORE release.
+        if(generation===state.epoch)
+          query(root,'[data-progress]').textContent=
+            state.hubEnabled&&state.hubParity?.status!=='EQUAL'?
+              message+' · HUB EVIDENCE HOLD: re-analyse before download.':message;
+      },
+      analysisProofCurrent,
+    });
   }
 
   /** All short-bulk publication paths (finish, engine ERROR, Cancel) go here.
@@ -946,12 +995,17 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     // each ineligible/refused item with its exact current-revision reason.
     const ids=[...p.selected];
     if(!ids.length){setFixStatus('Select at least one source-qualified element.','rejected');return;}
+    if(shortBulkWorkspaceNeedsAnalysis(
+      state.independentShortGroups,state.shortBatchPlanning)){
+      setFixStatus('GROUPED_SHORT_APPLY_REANALYZE_REQUIRED: Analyze current XML to rebuild source-bound group footprints, or turn grouping OFF for the existing one-owner route.','rejected','drop');
+      return;
+    }
     const generation=state.epoch,source={...state.source};
     state.batchRunning=true;state.activeJob='short-bulk';
     state.shortBulk=null;refresh();
     const startedAt=Date.now();
     let lastCompleted=0,lastApplied=0,lastSkipped=0,bulkFinished=false,
-      itemInFlight=false;
+      inFlightOwners=0;
     const paintBulkProgress=()=>{
       if(generation!==state.epoch||!state.batchRunning||bulkFinished)return;
       const elapsed=Math.max(0,(Date.now()-startedAt)/1000);
@@ -961,25 +1015,27 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
         '~ETA '+(remaining>=60?Math.ceil(remaining/60)+' min':
           Math.max(1,remaining)+' sec')+' (approximate)';
       query(root,'[data-progress]').textContent=
-        'Applying '+Math.min(ids.length,lastCompleted+(itemInFlight?1:0))+' of '+ids.length+' · '+
+        'Applying '+Math.min(ids.length,lastCompleted+inFlightOwners)+' of '+ids.length+' · '+
         lastApplied+' validated · '+lastSkipped+' skipped · '+eta+
         ' · Cancel available; only validated working revisions retained.';
     };
     const heartbeat=setInterval(paintBulkProgress,1000);
     paintBulkProgress();
     try{
-      const outcome=await runShortBulk({
+      const outcome=await runShortBulk(shortBulkWorkspaceEngineArgs({
         source,shortElements:state.shortElements,selectedIds:ids,runEngine,
-        hubEnabled:state.hubEnabled,
+        hubEnabled:state.hubEnabled,independentShortGroups:state.independentShortGroups,
+        shortBatchPlanning:state.shortBatchPlanning,
+        shortBatchSourceRecords:state.scene?.records||null,
         isCurrent:()=>generation===state.epoch,
         onCheckpoint:checkpoint=>{if(generation===state.epoch)state.shortBulk=checkpoint;},
         onProgress:step=>{
           if(generation!==state.epoch)return;
           lastCompleted=step.completed;lastApplied=step.applied;lastSkipped=step.skipped;
-          itemInFlight=step.status==='APPLYING';
+          inFlightOwners=step.status==='APPLYING'?Math.max(1,step.inFlightOwners||1):0;
           paintBulkProgress();
         },
-      });
+      }));
       if(generation!==state.epoch)return;
       bulkFinished=true;clearInterval(heartbeat);
       state.shortBulkFinalizing=true;state.shortBulk=null;refresh();
@@ -1057,6 +1113,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       state.plan=next.plan;state.findings=next.findings.findings;
       state.resolutions=next.findings.resolvedConnections||[];
       state.shortElements=next.findings.shortElements||[];
+      state.shortBatchPlanning=null; // previous source graph is no longer authoritative
       state.manualPorts=next.findings.manualConnectionPorts||[];
       state.selected.clear();state.openCases.clear();state.gapReviews.clear();
       state.secondPass=null;state.shortSelection=null;
@@ -1353,7 +1410,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     cancelEngine();
     const generation=++state.epoch;
     state.shortBulk=null;
-    state.source=null;state.original=null;state.revision=0;state.hubParity=null;state.hubRevision=null;clearEvidenceProof('EVIDENCE_ANALYSIS_REQUIRED');state.opsPreview=null;state.opsPreviewError=null;state.applied=0;state.history=[];state.resolutions=[];state.shortElements=[];state.shortSelection=null;
+    state.source=null;state.original=null;state.shortBatchPlanning=null;state.revision=0;state.hubParity=null;state.hubRevision=null;clearEvidenceProof('EVIDENCE_ANALYSIS_REQUIRED');state.opsPreview=null;state.opsPreviewError=null;state.applied=0;state.history=[];state.resolutions=[];state.shortElements=[];state.shortSelection=null;
     const shortPanel=query(root,'[data-short-preview]');if(shortPanel)shortPanel.textContent='';
     state.manualPorts=[];state.secondPass=null;state.manualQueue=[];
     state.manualQueueCheckpoint=null;state.manualQueueRunning=false;
@@ -1403,6 +1460,7 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
       const current=acceptAnalysis(result,source.sourceSha256);
       state.plan=current.plan;state.findings=current.findings;
       state.resolutions=current.resolutions;state.shortElements=current.shortElements;
+      state.shortBatchPlanning=current.shortBatchPlanning;
       state.manualPorts=current.manualPorts;
       if(!state.hubEnabled||state.hubParity?.status==='EQUAL')
         establishCurrentAnalysisProof(result,{epoch:generation,
@@ -1557,6 +1615,14 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     else if(target.hasAttribute('data-focus'))canvas.focus(state.selected);
   };
   const changed=event=>{
+    if(event.target.matches('[data-short-independent]')){
+      if(state.busy||state.batchRunning){
+        event.target.checked=state.independentShortGroups;
+      }else{
+        state.independentShortGroups=event.target.checked;
+        renderShortSelection();
+      }
+    }
     if(event.target.matches('[data-short-index]')&&!state.busy&&!state.batchRunning){
       const p=state.shortSelection,r=state.shortElements[Number(event.target.dataset.shortIndex)];
       if(p&&r?.eligible&&p.epoch===state.epoch&&p.sha===state.source?.sourceSha256){
@@ -1618,6 +1684,8 @@ export function mountTopologyWorkspace(root, {runEngine,cancelEngine}={}) {
     selected:[...state.selected],busy:state.busy,
     hubEnabled:state.hubEnabled,hubParity:state.hubParity?.status||'OFF',
     hubRevision:state.hubRevision,activeJob:state.activeJob,
+    independentShortGroups:state.independentShortGroups,
+    historyOwnerEvidenceCount:state.history.filter(h=>h.ownerEvidence&&h.ownerRevision).length,
     shortBulkFinalizing:state.shortBulkFinalizing,fixFinalizing:state.fixFinalizing,
     queued:state.manualQueue.map(x=>({id:x.id,status:x.status})),queueBusy:state.manualQueueRunning}),load,analyze,
     dispose(){

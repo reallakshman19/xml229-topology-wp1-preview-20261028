@@ -1,0 +1,46 @@
+name: A6b real workspace UI group qualification
+on:
+  push:
+    branches:
+      - feat/uxml-short-memo-digest-20261102
+  pull_request:
+    paths:
+      - 'tabs/topology-workspace/workspace-app.mjs'
+      - 'tabs/topology-workspace/short-bulk.mjs'
+      - 'tabs/topology-workspace/short-bulk-groups.mjs'
+      - 'tests/uxml-short-batch-ui.browser.mjs'
+      - '.github/workflows/a6b-ui-check.yml'
+permissions:
+  contents: read
+jobs:
+  real-workspace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate static workspace and grouped receipt mutants
+        run: |
+          set -euo pipefail
+          node --check tabs/topology-workspace/workspace-app.mjs
+          node --test tests/short-bulk-groups.test.mjs
+      - name: Assemble pinned Pyodide and XCU runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/vendor/pyodide
+          tar --exclude='./.git' --exclude='./.github' --exclude='./dist' -cf - . | tar -xf - -C dist
+          root='https://raw.githubusercontent.com/reallakshman19/3D_Converters/cba348152faa9c2077d5c91a5f85b4b81d2e8e25'
+          curl --fail --location --retry 3 "$root/vendor/pyodide/pyodide.asm.wasm" -o dist/vendor/pyodide/pyodide.asm.wasm
+          curl --fail --location --retry 3 "$root/vendor/pyodide/python_stdlib.zip" -o dist/vendor/pyodide/python_stdlib.zip
+          test "$(git hash-object dist/vendor/pyodide/pyodide.asm.wasm)" = 27b9cadfe2f52a4f76ada365cba6d891848838bd
+          test "$(git hash-object dist/vendor/pyodide/python_stdlib.zip)" = e4c642f5824d41f36bf99aa9c761a2576620fa7c
+          bash tools/fetch-uxml-reader.sh dist
+      - name: Real Chromium grouped-vs-serial workspace and source mutants
+        run: |
+          set -euo pipefail
+          npm install --no-save --ignore-scripts --package-lock=false playwright@1.52.0
+          npx playwright install --with-deps chromium
+          node --test tests/uxml-short-batch-ui.browser.mjs
