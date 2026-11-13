@@ -104,31 +104,103 @@ Repeated XML bytes alone do not imply identical policy, route or witness.
 Memo hits still incur digest construction, defensive copying and bookkeeping.
 The actual hot spots are more useful than simply counting outer calls.
 
+## OWNER FILE (Oracle run)
+
+Oracle-supplied aggregate only, at harness head `a66c7507eb6e8ee382a426bb9b4416631d40e8fd`:
+Windows, native execution, 89/89 applied, **902.9 s total**, **10.15 s/owner**
+(unrounded 10.14494 s/owner). No private source, identifiers, paths,
+coordinates, hashes or raw receipts were obtained by this lane. No browser
+timing is implied. These measured Owner-file shares supersede the synthetic
+ranking for optimization selection; the synthetic results above remain historical.
+
+| Exclusive stage | Wall share | Approx. s/owner | Calls / owner or repeat evidence |
+|---|---:|---:|---|
+| `memo_copy` | 17.87% | 1.81 | 15 |
+| `lineage_recheck` | 16.58% | 1.68 | 5 |
+| `memo_digest` | 12.61% | 1.28 | 51 |
+| `other` | 9.52% | 0.97 | Not supplied |
+| `native_transaction_nested` | 8.87% | 0.90 | 2; 1 repeat/owner |
+| `parse` | 7.90% | 0.80 | 15; 1069 repeated fingerprints of 1336 calls |
+| `model_analyse` | 7.89% | 0.80 | 3 |
+| `uxml_reader` | 4.19% | 0.43 | Not supplied |
+| `memo_other` | 3.07% | 0.31 | Not supplied |
+| `native_transaction_direct` | 2.42% | 0.25 | Not supplied |
+| `native_transaction_export` | 2.41% | 0.24 | Not supplied |
+| `uxml_adapter` | 2.33% | 0.24 | Not supplied |
+| `canonical_rederivation` | 1.50% | 0.15 | Not supplied |
+| `canonical_export` | 1.42% | 0.14 | Not supplied |
+| validate / apply / replay / patch_back / compare / hub_parity | <0.5% each | <0.051 each | Not supplied |
+
+Percentages and durations are rounded; no unreported stage breakdown or
+repeat-duration measurements have been invented. The top three Owner-file
+stages are memo copy, lineage recheck and memo digest (47.06% combined).
+
 ## OPTIONS
 
-Ranked diagnostic targets only. Shares are measured ceilings for the named
-cost buckets, not predicted speedups or guaranteed removable fractions. No
-option is implemented. Every option retains one validated transaction and
-EQUAL hub/patch parity for each owner, in serial revision order; no batching.
+Ranked by Owner-file measured addressable cost, not by assumed achievable
+speedup. Each option below is independent, calculated from 902.9/89 s per
+owner; do not add the savings or multiply them into a browser prediction.
+The measured shares are ceilings on eligible stage cost, not proof that
+the entire cost is removable. Conditional estimates assume equal cost per
+call where only counts are known and no replacement overhead. Distinct
+digest inputs and identical lineage contexts were not counted by the
+Oracle run, so their true savings and runtime are NOT_RUN. No option is
+implemented; no change to #34.
 
-1. **Reduce defensive memo copy cost** (target `memo_copy`: 30.55% of measured wall).
-   Investigate immutable snapshots or narrowly copy-on-write witnesses so
-   consumers cannot mutate cached authority. Preserve current key, route,
-   policy, validation, independent replay and EQUAL publication gates.
-   Risk: high; aliasing or shallow copies could silently contaminate later
-   owners. Require adversarial mutation-isolation tests and exact output parity.
-2. **Optimize analyzer implementation, not the number of required checks**
-   (target `model_analyse`: 16.55% wall; the repeated-call count is not a time share).
-   Profile inner loops and improve equivalent data structures; keep every
-   independent analysis, validation, replay and per-owner EQUAL comparison.
-   Risk: medium/high; changes can alter topology order, identity or tolerance
-   behavior. Require full topology and transaction regression coverage.
-3. **Avoid redundant memo key digest construction within an immutable input**
-   (target `memo_digest`: 13.31% wall).
-   Reuse a digest only with proven unchanged bytes, witness, policy and route;
-   invalidate on every revision and preserve separate authority and all checks.
-   Risk: high if stale key identity causes false cache hits. Require stale
-   witness/source/policy/route and mutation negative tests before considering it.
+1. **Immutable memo, no defensive deep copies + one digest per distinct
+   input**. Measured addressable share **30.48%** (17.87% copy + 12.61%
+   digest; 15 copy and 51 digest calls/owner). Absolute stage-elimination
+   floor **7.05 s/owner**, not attainable if digest work remains.
+   With full elimination of the copy bucket and D distinct digest inputs
+   per owner, estimated removable share is
+   `17.87 + 12.61 * (51-D)/51` percent and expected time is
+   `(902.9/89) * (1 - share/100)`. For an explicitly illustrative D=5,
+   this is **29.24% / 7.18 s/owner**; D=5 is not measured.
+   Count actual distinct immutable inputs (source, document, hub, config,
+   policy and other digest payloads) and their costs before choosing a
+   design. Keep route/version/provenance distinctions and every owner’s
+   separate validated transaction, fresh revision, independent replay and
+   EQUAL hub/patch parity; use genuinely immutable snapshots or isolated
+   mutable materialization, never alias mutable cached state.
+   Risk: high — mutable aliasing, stale digest keys and cross-route
+   contamination; require mutation-isolation, stale-source/config/policy
+   and exact byte-parity tests. New allocation/immutability costs must be
+   included in an end-to-end benchmark.
+
+2. **Reuse lineage subcomputations on identical bytes and authority**.
+   Measured addressable share **16.58%** (5 calls/owner); absolute
+   stage-elimination floor **8.46 s/owner**. If four of five
+   equal-cost calls were safely reusable, the conditional removable
+   share would be **13.26% / 8.80 s/owner**. This is a
+   scenario, not a measured repeat count: lineage build and verification
+   are different operations and identical bytes alone do not prove
+   interchangeable evidence. Instrument exact inputs and distinct
+   semantic contexts first. Cache only pure deterministic
+   canonicalization/witness subcomputations keyed by exact source/fixed
+   bytes, operations, revision, policy/config, route and schema/code
+   version; independently verify the authoritative receipt and keep
+   every owner’s own validated transaction, independent replay and
+   EQUAL parity. Never reuse a successful verdict as a substitute for
+   independent verification. Risk: high — stale lineage, masked
+   witness/operation drift, or circular self-verification; require
+   negative lineage mutants and independent reproduction tests.
+   The nested transaction bucket (8.87%) is not added to this estimate.
+
+3. **Exact-byte parse cache**. Measured addressable share **7.90%**;
+   1069/1336 repeated fingerprints (80.01% of parse calls). Conditional
+   equal-cost estimate **6.32% / 9.50 s/owner** if
+   those repeats are all eligible and cache overhead is zero. Absolute
+   stage-elimination floor **9.34 s/owner**. The repeat count
+   is measured, but repeat time is not; parser, XML-root and clone
+   functions have different output contracts, so distinguish operation,
+   parser version/options and authority, key by exact bytes including BOM
+   and line endings, invalidate on changed bytes/revision, and return
+   immutable parse results or isolated trees. Keep each owner’s own
+   transaction, all validation/replay and EQUAL hub/patch parity; do not
+   skip a required independent parse/check merely because bytes match.
+   Risk: medium/high — shared tree mutation, stale source identity,
+   parser-mode collisions, memory pressure and new copying overhead;
+   require CRLF/BOM, changed-byte, mutation-isolation and parity tests.
 
 ## DECISIONS
 
@@ -147,10 +219,11 @@ EQUAL hub/patch parity for each owner, in serial revision order; no batching.
    account for known no-output refusals as skips and stop on unexpected drift.
 6. No private data leaves the local harness; timing JSON contains ordinal,
    counts and durations only, no source bytes, paths, IDs or hashes. Only the
-   invented aggregate is committed. Native Node CLI startup and disk I/O
+   invented aggregate and Oracle-supplied Owner-file counts/timings are committed. Native Node CLI startup and disk I/O
    differ from browser/Pyodide; the Oracle runs the private file separately.
 
 ## FAILING
 
-None. No browser or Owner-file run was attempted, by instruction.
+None in the delivered harness tests. No browser run was attempted; the Oracle's
+subsequent native Owner-file run is recorded above.
 Full repository suite not run; acceptance and targeted regressions above passed.
