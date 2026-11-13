@@ -43,7 +43,7 @@ def digest(data):
 def reader_root(value=None):
     root = Path(value or os.environ.get('XCU_UXML_ROOT', ROOT / 'dist/vendor/uxml')).resolve()
     # The same seven immutable Git blob pins as the product fetch script.
-    script = (ROOT / 'tools/fetch-uxml-reader.sh').read_text()
+    script = (ROOT / 'tools/fetch-uxml-reader.sh').read_bytes().decode('utf-8').replace('\r\n', '\n')
     pins = re.findall(r'^fetch_pinned (\S+) ([0-9a-f]{40})$', script, re.M)
     require(len(pins) == 7, 'READER_PIN_LIST_DRIFT')
     for name, expected in pins:
@@ -67,10 +67,28 @@ def read_hub(path, root):
 
 def worker_code(measured=False):
     # Execute the actual checked-in Python template, not a reimplementation.
-    js = (ROOT/'converters/xml-cii-2019-standalone/topology-integration.js').read_text()
+    js = (ROOT/'converters/xml-cii-2019-standalone/topology-integration.js').read_bytes().decode('utf-8').replace('\r\n', '\n')
     source = js.split('const TOPOLOGY_SNIPPET = `', 1)[1].split('`;\n', 1)[0]
     source = source.replace('\\\\', '\\')
     tree = ast.parse(source)
+    # Pyodide's virtual filesystem writes UTF-8/LF. On Windows, Path.write_text
+    # translates LF to CRLF after the transaction has computed its exact SHA.
+    # Adapt only scratch-file I/O in the local harness, never product code.
+    class BinaryWrites(ast.NodeTransformer):
+        def visit_Call(self, node):
+            node = self.generic_visit(node)
+            if isinstance(node.func, ast.Attribute) and node.func.attr == 'write_text':
+                require(len(node.args) == 1 and len(node.keywords) == 1 and
+                        node.keywords[0].arg == 'encoding' and
+                        isinstance(node.keywords[0].value, ast.Constant) and
+                        node.keywords[0].value.value == 'utf-8', 'WORKER_WRITE_SHAPE_DRIFT')
+                node.func.attr = 'write_bytes'
+                node.args[0] = ast.Call(func=ast.Attribute(value=node.args[0], attr='encode',
+                                                         ctx=ast.Load()),
+                                        args=[ast.Constant('utf-8')], keywords=[])
+                node.keywords = []
+            return node
+    tree = BinaryWrites().visit(tree)
     if measured:
         # The comparer is local to the template; wrap just this definition.
         for i, statement in enumerate(tree.body):
@@ -261,19 +279,40 @@ def worker_job(source, hub, row, directory, *, meter=None, compiled=None):
                 for w in ops[0]['removedWithRecord']) and
             len({(w['recordKey'],w['field']) for w in ops[0]['removedWithRecord']})==len(ops[0]['removedWithRecord']),
             'CANONICAL_OP_RECEIPT_DRIFT')
-    require(txn['source']['sha256']==validation['sourceSha256']==lineage['sourceXmlSha256']==sha and
-            txn['fixedXmlSha256']==validation['fixedXmlSha256']==lineage['fixedXmlSha256']==fixed_sha and
-            txn['schema']=='psi116-topofix-transaction/v1' and validation['schema']=='psi116-topofix-validation/v1' and
-            txn['committed'] and validation['committed'] and not txn['sourceXmlMutated'] and
-            txn['selectedActions']==[row['id']] and lineage['state']=='PRE_FINAL_ONLY' and
-            not lineage['sourceXmlMutated'] and handoff['requiresFreshWorkerBasis'] and
-            not handoff['nativeCiiReleaseAuthorized'] and not handoff['acceptedFinalTransferred'] and validation['checks'] and
-            validation['summary']['blockingFailureCount']==0 and
-            all(c['passed'] or not c['blocking'] for c in validation['checks']) and
-            findings['source']['sha256']==plan['source']['sha256']==fixed_sha and
-            isinstance(plan['actions'],list) and isinstance(findings['findings'],list) and isinstance(findings['shortElements'],list) and
-            any(o['operation']=='REMOVE_SELECTED_SHORT_ELEMENT_RECORD' for o in txn['operations']),
-            'SOURCE_LINEAGE_OR_RECHECK_DRIFT')
+    source_hashes = {'source.bytes': sha, 'txn.source.sha256': txn['source']['sha256'],
+                     'validation.sourceSha256': validation['sourceSha256'],
+                     'lineage.sourceXmlSha256': lineage['sourceXmlSha256']}
+    fixed_hashes = {'fixed.bytes': fixed_sha, 'txn.fixedXmlSha256': txn['fixedXmlSha256'],
+                    'validation.fixedXmlSha256': validation['fixedXmlSha256'],
+                    'lineage.fixedXmlSha256': lineage['fixedXmlSha256'],
+                    'findings.source.sha256': findings['source']['sha256'],
+                    'plan.source.sha256': plan['source']['sha256']}
+    checks = {
+        'source_hashes': all(v == sha for v in source_hashes.values()),
+        'fixed_hashes': all(v == fixed_sha for v in fixed_hashes.values()),
+        'txn.schema': txn['schema']=='psi116-topofix-transaction/v1',
+        'validation.schema': validation['schema']=='psi116-topofix-validation/v1',
+        'txn.committed': txn['committed'], 'validation.committed': validation['committed'],
+        'txn.sourceXmlMutated': not txn['sourceXmlMutated'],
+        'txn.selectedActions': txn['selectedActions']==[row['id']],
+        'lineage.state': lineage['state']=='PRE_FINAL_ONLY',
+        'lineage.sourceXmlMutated': not lineage['sourceXmlMutated'],
+        'handoff.requiresFreshWorkerBasis': handoff['requiresFreshWorkerBasis'],
+        'handoff.nativeCiiReleaseAuthorized': not handoff['nativeCiiReleaseAuthorized'],
+        'handoff.acceptedFinalTransferred': not handoff['acceptedFinalTransferred'],
+        'validation.checks': bool(validation['checks']),
+        'validation.blockingFailureCount': validation['summary']['blockingFailureCount']==0,
+        'validation.blockingChecks': all(c['passed'] or not c['blocking'] for c in validation['checks']),
+        'plan.actions': isinstance(plan['actions'],list),
+        'findings.findings': isinstance(findings['findings'],list),
+        'findings.shortElements': isinstance(findings['shortElements'],list),
+        'txn.removeOperation': any(o['operation']=='REMOVE_SELECTED_SHORT_ELEMENT_RECORD' for o in txn['operations']),
+    }
+    failed = [name for name, ok in checks.items() if not ok]
+    if failed:
+        details = ', '.join(f'{name}={str(value)[:12]}'
+                            for name, value in {**source_hashes, **fixed_hashes}.items())
+        raise RuntimeError('SOURCE_LINEAGE_OR_RECHECK_DRIFT: failed=' + ','.join(failed) + '; ' + details)
     return fixed, findings['shortElements']
 
 
@@ -359,9 +398,8 @@ def main():
     require(a.out.resolve()!=a.psi116.resolve(),'OUTPUT_IS_ORIGINAL_SOURCE')
     report,_=measure(a.psi116,a.owners,reader=a.xcu_root,measured=not a.measurement_off,
                      progress=lambda i,n,t:print(f'{i}/{n} {t:.3f}s',file=sys.stderr,flush=True))
-    with a.out.open('x',encoding='utf-8') as f:
-        json.dump(report,f,indent=2)
-        f.write('\n')
+    with a.out.open('xb') as f:
+        f.write((json.dumps(report,indent=2)+'\n').encode('utf-8'))
     table(report)
 
 

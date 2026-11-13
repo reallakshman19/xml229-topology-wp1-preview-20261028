@@ -48,7 +48,7 @@ class SpeedTools(unittest.TestCase):
         original = path.read_bytes()
         out = self.root/'timings.json'
         result = subprocess.run([sys.executable,'-B',str(Path(measure.__file__)),str(path),
-                                 '--owners','5','--out',str(out)],capture_output=True,text=True,timeout=180)
+                                 '--owners','5','--out',str(out)],capture_output=True,timeout=180)
         self.assertEqual(result.returncode,0,result.stderr)
         data = json.loads(out.read_bytes())
         self.assertEqual((data['requested'], data['applied'], data['skipped']),(5,5,[]))
@@ -72,9 +72,9 @@ class SpeedTools(unittest.TestCase):
             self.assertEqual(len(r['transactionCalls']),sum(r['stages'][s]['calls'] for s in measure.STAGES if s.startswith('native_transaction_')))
         self.assertAlmostEqual(sum(s['seconds'] for s in data['stages'].values()),data['wallSeconds'],places=8)
         self.assertEqual(path.read_bytes(),original)
-        self.assertNotIn('SHORT-000',out.read_text())
-        self.assertNotIn(str(path),out.read_text())
-        self.assertIn('share %',result.stdout)
+        self.assertNotIn('SHORT-000',out.read_bytes().decode('utf-8'))
+        self.assertNotIn(str(path),out.read_bytes().decode('utf-8'))
+        self.assertIn(b'share %',result.stdout)
 
     def test_T3_off_and_on_bytes_equal_independent_uninstrumented_product_calls(self):
         path = self.small()
@@ -119,6 +119,21 @@ class SpeedTools(unittest.TestCase):
         final = read_psi116_xml(off_bytes.decode('utf-8'))
         self.assertEqual(sum(len(b.nodes) for b in final.branches),50)
         self.assertEqual(sum(r['eligible'] for r in short_elements(final,cfg)),0)
+
+    def test_T4_crlf_bom_source_and_binary_worker_outputs(self):
+        from unittest.mock import patch
+        path = self.small()
+        original = b'\xef\xbb\xbf' + path.read_bytes().replace(b'\n', b'\r\n')
+        path.write_bytes(original)
+        # Reject text-mode scratch writes even on LF-only hosts; the old
+        # Worker template adapter fails this test before its SHA guard.
+        with patch.object(Path, 'write_text', side_effect=AssertionError('text-mode write')):
+            off, off_bytes = measure.measure(path,5,measured=False)
+            on, on_bytes = measure.measure(path,5)
+        self.assertEqual((off['applied'], on['applied']), (5,5))
+        self.assertEqual(on_bytes,off_bytes)
+        self.assertEqual(path.read_bytes(),original)
+        self.assertTrue(all(r['parity']=='EQUAL' for r in on['perOwner']))
 
 
 if __name__=='__main__':
