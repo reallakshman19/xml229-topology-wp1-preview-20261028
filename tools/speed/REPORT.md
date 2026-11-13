@@ -446,3 +446,49 @@ introduced. T4 is not all-green; a separately authorized replacement of the
 legacy mutant is required before claiming unchanged suite PASS. S2 delivered
 for Owner/Oracle review under the three-tries rule. No other observed
 test failure.
+
+
+### S2 follow-up — Oracle-authorized isolation mutant replacement
+
+Parent: `55efb0908e8e7b4104ad438b41ce8c028a2b2b4c`. The historical T4 failure above is resolved by
+the test-only change below; the original measurement and test receipts remain
+as historical evidence. No product or harness code changed.
+
+- Retained the name
+  `test_uxml_short_memo.ShortMemoSafety.test_mutant_without_deepcopy_fails_clean_evidence_assertion`
+  for continuity. It now runs the same clean-evidence assertion against a
+  normal memo session (GREEN) and a fresh session whose snapshot **and**
+  restore boundaries are replaced with identity (RED). Both paths commit
+  and demonstrate at least two actual transaction cache hits. The mutant
+  returns mutable shared evidence; poisoning the first hit makes the next
+  hit fail the exact `MEMO_CLEAN_EVIDENCE_REQUIRED` assertion. An unrelated
+  assertion failure cannot satisfy the expected RED. No deletion or skip.
+
+- Fresh targeted run (pinned reader, default opt-in flags):
+  `PYTHONPATH=tests:converters python3 -B -m unittest test_short_memo_cheap.CheapMemoSafety test_uxml_short_memo test_uxml_short_memo_stage_profile -v`.
+  12 passed / 14 discovered, 2 skipped, 0 failed; replacement mutant
+  GREEN/RED verified. The two full-fixture tests T1 and T5 are unchanged
+  (test file blob `2787bd5b7060bdfade1436a235331f1be0030500`,
+  product memo blob `c43c67a862e197dd3272209a0bdf654669f1b747`);
+  their PASS results are carried forward from the delivered 89-owner
+  execution at the parent, also covered by the Oracle run. They were not
+  rerun for this test-only change. Combined qualification for the three
+  requested files: **14/16 PASS, 2 skipped, 0 FAIL**.
+
+- The two default skips are unchanged opt-in tests:
+  1. `test_uxml_short_memo.ShortMemoSafety.test_explicit_five_and_twenty_owner_memo_equivalence`:
+     requires `UXML_SHORT_MEMO_EQUIVALENCE=1` and the pinned reader via
+     `XCU_UXML_ROOT`. It exercises 5- and 20-owner memo ON/OFF equivalence
+     and route/provenance mutants.
+  2. `test_uxml_short_memo_stage_profile.MemoStageProfile.test_one_source_660_records_full_direct_export_patch`:
+     requires `UXML_SHORT_MEMO_STAGE_PROFILE=1` and the pinned reader via
+     `XCU_UXML_ROOT`. It profiles the 660-record full direct/export/patch path.
+  Both opt-ins passed at the parent with their flags explicitly enabled;
+  neither was rerun here. Their default skip gates were not changed.
+
+- DECISIONS: retain historical test name; require the specific contamination
+  assertion under the equivalent mutant; carry forward unchanged long-run
+  evidence and explicitly distinguish it from fresh tests.
+- Touched files: `tests/test_uxml_short_memo.py`, `tools/speed/REPORT.md`.
+- FAILING: none in this follow-up's fresh default tests. The two skips
+  remain intentional. No new Owner-file or browser measurement.

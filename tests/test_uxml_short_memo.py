@@ -188,23 +188,41 @@ class ShortMemoSafety(unittest.TestCase):
                 print("MEMO_MUTANT_KILLED:memo-key-ignores-input-bytes")
 
     def test_mutant_without_deepcopy_fails_clean_evidence_assertion(self):
+        # Retain the historical test name; S2 isolates via immutable snapshots.
         source=fixture()
         before,policy,cfg=selected_request(source)
-        with memo.memo_session("copy-mutation"):
-            self.assertTrue(apply_topofix_transaction(
-                before,policy=policy,config=cfg).committed)
-            with patch.object(memo,"deepcopy",side_effect=lambda value:value):
+
+        def mutate_and_read_again():
+            with memo.memo_session("copy-mutation"):
+                self.assertTrue(apply_topofix_transaction(
+                    before,policy=policy,config=cfg).committed)
                 cached=apply_topofix_transaction(
                     before,policy=policy,config=cfg)
+                self.assertTrue(cached.committed)
                 cached.checks[0].details["SYNTHETIC_MUTATION"]="poisoned"
-                with self.assertRaises(AssertionError) as killed:
-                    next_result=apply_topofix_transaction(
-                        before,policy=policy,config=cfg)
-                    self.assertNotIn("SYNTHETIC_MUTATION",
-                                     next_result.checks[0].details)
-        print("MUTANT_RED:shared-result-no-deepcopy:AssertionError:"+
-              str(killed.exception).replace("\\n"," | "))
-        print("MEMO_MUTANT_KILLED:shared-result-no-deepcopy")
+                next_result=apply_topofix_transaction(
+                    before,policy=policy,config=cfg)
+                self.assertTrue(next_result.committed)
+                self.assertGreaterEqual(memo.stats().get("transaction_hit",0),2)
+                return next_result
+
+        def assert_clean_evidence(result):
+            self.assertNotIn("SYNTHETIC_MUTATION",result.checks[0].details,
+                             "MEMO_CLEAN_EVIDENCE_REQUIRED")
+
+        assert_clean_evidence(mutate_and_read_again())
+        print("MUTANT_GREEN:immutable-snapshot-isolation-control=PASS")
+        # Break both custody boundaries before populating a fresh cache.
+        # Store and return the original mutable result without isolation.
+        with patch.object(memo,"_snapshot",side_effect=lambda value:value), \
+             patch.object(memo,"_restore",side_effect=lambda value:value):
+            contaminated=mutate_and_read_again()
+            with self.assertRaisesRegex(AssertionError,
+                                        "MEMO_CLEAN_EVIDENCE_REQUIRED") as killed:
+                assert_clean_evidence(contaminated)
+        print("MUTANT_RED:shared-result-no-snapshot:AssertionError:"+
+              str(killed.exception).replace("\n"," | "))
+        print("MEMO_MUTANT_KILLED:shared-result-no-snapshot")
         # The old patch(clear_memo) test called its own patched method,
         # proving only the mock. Actual Python finally and Worker/Error/
         # Cancel cleanup mutants are now executed by separate path tests.
