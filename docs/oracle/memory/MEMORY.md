@@ -1,0 +1,3 @@
+- [Agent names with URLs](agent-links-with-names.md) — always show each agent's name with its chat URL and current PR/issue link
+- [TopoFix stand-in mode](topofix-owner-stand-in.md) — make routine TopoFix calls myself; merges/acceptance/HOLDs/2nd repair stay the Owner's
+- [Staged onboarding is default](staged-agent-onboarding-default.md) — new/replacement agents get 3-5 checked prompts then the task; add to skill when the Owner says go

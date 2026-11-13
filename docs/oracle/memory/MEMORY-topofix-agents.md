@@ -1,0 +1,2 @@
+- [Buddy handover at checkpoint](buddy-handover-at-checkpoint.md) — near a chat limit, the successor does one mini task with the outgoing coder before it retires
+- [Vertical split of coders](vertical-split-coders.md) — lanes A fix flow, B formats, C property transfer; each owns its files
