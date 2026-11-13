@@ -63,6 +63,9 @@ class SpeedTools(unittest.TestCase):
             for label in ('direct','export','validate','apply','replay'):
                 self.assertEqual(r['stages']['native_transaction_'+label]['calls'],1)
             self.assertEqual(r['stages']['patch_back_compare']['calls'],1)
+            custody = sum(v for k,v in r['memoDelta'].items() if k.endswith(('_store','_hit')))
+            self.assertGreater(custody,0)
+            self.assertEqual(r['stages']['memo_copy']['calls'],custody)
             self.assertEqual(r['stages']['hub_parity']['calls'],2)
             self.assertGreater(r['stages']['lineage_recheck']['calls'],0)
             self.assertGreater(r['stages']['model_analyse']['calls'],0)

@@ -215,6 +215,8 @@ def instrumentation(meter):
         ('short_memo','_document_digest','memo_digest',None),
         ('short_memo','_digest','memo_digest',None),
         ('short_memo','deepcopy','memo_copy',None),
+        ('short_memo','_snapshot','memo_copy',None),
+        ('short_memo','_restore','memo_copy',None),
         ('short_memo','source_resolve','resolve',None),
         ('short_memo','uxml_resolve','memo_other',lambda hub,*a,**kw: hub['sources'][0]['hash']),
     ]

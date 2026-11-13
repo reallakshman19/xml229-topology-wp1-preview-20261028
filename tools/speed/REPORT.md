@@ -713,3 +713,117 @@ No test failures or skips. Owner performance remains NOT_RUN for round 2;
 the per-call Windows slowdown is not fully explained by the measured
 synthetic probes. The model_analyse stage is slightly slower on the
 fresh synthetic comparison. No further card or merge authorization.
+
+
+# L4-S2b — review test gaps and honest custody meter
+
+Base: `8603aa311f7211abbd9247cc69c6c81fb771dda2` (merged PR #38). Owner/Oracle supplied the
+post-merge EF-05 results: 902.9 s → 638.7 s memo-on (29.26% lower),
+1316.4 s memo-off, byte-identical final output and EQUAL 89/89; fresh
+review PASS 88, no correctness defect. These are supplied historical
+results, not a new private-file run by this lane.
+
+## Changes
+
+- T3 now inserts a slot containing a dead weak reference and another
+  document's stale canonical fragments under a live document's tuple-id
+  key. The uncached, freshly recomputed witness must equal the returned
+  bytes.
+- T3 also constructs a list nested in a BranchRecord's nodes field,
+  with the outer branches tuple intact. It must be rejected for geometry
+  sharing; the stored result is restored independently, its list cleared,
+  and a second restoration must retain the original list. The original
+  input must also remain intact.
+- The native diagnostic meter wraps both _snapshot and _restore as
+  memo_copy, retaining the deepcopy hook. T5 counts real custody work:
+  calls must equal the sum of actual memo hits and stores for each owner,
+  be positive, and be at most 15. The earlier ceiling of two counted
+  only deepcopy and would be invalid for the expanded definition.
+  The digest ceiling of six and all transaction, parity, lineage and
+  patch-back checks are unchanged. The five-owner speed-tools test
+  also checks the custody count against actual counters.
+- Product changes are three comments only: session caches are not
+  thread-safe (serial callers today); object.__setattr__ on shared frozen
+  models is outside the contract; digest compute is a test seam for the
+  same SHA-256 operation over exact canonical bytes, not a key dimension.
+  No algorithm, cache policy, authority, key or production behavior changed.
+
+## Exact review mutants
+
+Both executed individually against T3 on the final test file, with
+only the indicated temporary source mutation. Clean control PASS.
+Both runs failed at the intended assertion (exit 1); the clean
+product blob was restored and hash-verified before regression runs.
+
+| Mutation | Result | Assertion |
+|---|---|---|
+| Replace `previous is not None and all(...)` with `previous is None or all(...)` | RED | DEAD_GEOMETRY_SLOT_REUSED_STALE_BYTES |
+| Replace `if kind is tuple:` with `if kind in (tuple, list):` in recursive immutability check | RED | NESTED_MUTABLE_GEOMETRY_SHARED |
+
+Neither mutant is committed.
+
+## Fresh test evidence
+
+Exact merged-base files reconstructed from the supplied pre-S1 archive
+and verified changed Git blobs; pinned reader verified against all seven
+blob hashes (XCU commit 9f51bfcaf98af4041ec0c0615dc67c9c357b0632).
+Python 3.13.5, Node 22.16.0; invented fixtures only.
+
+- Python memo: **16/16 PASS**, including full 89-owner byte-identical
+  comparison and T5 meter/check ceilings, the T3 clean control, and
+  all legacy memo and stage-profile tests. Both opt-ins enabled
+  (`UXML_SHORT_MEMO_EQUIVALENCE=1`, `UXML_SHORT_MEMO_STAGE_PROFILE=1`);
+  14 non-full-fixture tests also passed independently in 83.641 s.
+- Speed-tools: **5/5 PASS** (11.669 s), including CLI counter equality,
+  final-out parity, CRLF+BOM and non-overwrite.
+- Node memo: **13/13 PASS** (`node --test tests/short-memo-*.test.mjs`).
+- **34/34 distinct fresh tests PASS**, no skips; two additional expected
+  mutant failures are not counted as clean test failures.
+
+Reproduction from repository root, with the pinned reader environment
+set to its local directory:
+
+```sh
+XCU_UXML_ROOT=<pinned-reader> UXML_SHORT_MEMO_EQUIVALENCE=1 UXML_SHORT_MEMO_STAGE_PROFILE=1 PYTHONPATH=tests:converters python3 -B -m unittest test_short_memo_cheap test_uxml_short_memo test_uxml_short_memo_stage_profile -v
+XCU_UXML_ROOT=<pinned-reader> python3 -B -m unittest discover -s tools/speed -p test_speed_tools.py -v
+node --test tests/short-memo-*.test.mjs
+```
+
+Fresh invented full-fixture memo-on: 89/89 EQUAL, zero skips,
+325.677 s (3.659 s/owner). Memo-off also 89/89 EQUAL, zero skips;
+final bytes identical. The newly inclusive custody definition records
+1335 calls (exactly 15 each owner), 16.302 s exclusive total; all 89
+owners' counts match the hit/store counters. Memo digest: 446 calls,
+max six per owner, 0.564 s exclusive total. Lineage rechecks 445,
+hub comparisons 178, patch-back comparisons 89. The previous
+deepcopy-only zero measurement and this expanded custody measurement
+are not directly comparable. Concurrent ON/OFF runs and additional
+tests introduce timing contention; these diagnostics do not claim a
+new performance gain or regression for the unchanged product.
+
+## DECISIONS (S2b)
+
+1. Extend existing T3 rather than introduce artificial test-only product
+   hooks; kill the exact review mutants on temporary source and restore.
+2. Expand memo_copy to actual custody and keep T5 meaningful through
+   positive per-owner counter equality and the observed 15-call ceiling;
+   retain existing six-digest and independent check ceilings.
+3. Keep exact byte digest keys unchanged: both internal compute paths
+   hash the same bytes with SHA-256. Document the serial/thread and
+   frozen-object contracts without changing behavior.
+4. Record fresh invented-fixture and supplied Owner results separately;
+   do not rerun private Owner data or infer a new speed improvement.
+
+## Touched files (S2b)
+
+- converters/psi116_topology_resolver/short_memo.py (comments only)
+- tests/test_short_memo_cheap.py
+- tools/speed/measure.py (meter only)
+- tools/speed/test_speed_tools.py
+- tools/speed/README.md
+- tools/speed/REPORT.md
+
+## FAILING (S2b)
+
+None. No browser or private-file rerun; the two requested mutations
+are RED by design. No merge or further behavior change authorized.

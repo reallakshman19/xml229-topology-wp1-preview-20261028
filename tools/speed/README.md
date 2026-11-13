@@ -100,8 +100,9 @@ and repeats. `memoDelta` reports real cache hit/miss/store increments.
   call), `patch_back`, `patch_back_compare` and `lineage_recheck` are separate.
 - `memo_digest`: actual document/key digest computations; under S2 the
   canonicalization and cache lookup work outside those computations is timed
-  in its enclosing stage. `memo_copy`: actual memo deep copies (not snapshot
-  serialization or isolated mutable-evidence materialization). `other`: remaining wall (e.g. JSON
+  in its enclosing stage. `memo_copy`: snapshot/restore custody work (and any legacy memo deepcopy).
+  S2b counts actual store/hit materializations; the historical S1/S2 copy
+  counts are not comparable to this expanded definition. `other`: remaining wall (e.g. JSON
   serialization, short-row selection, file I/O and probe overhead).
 - `repeatedInputCalls` counts repeated input-byte fingerprints within an owner
   for named parse/analyse/resolve calls, or the same bytes/policy/route for

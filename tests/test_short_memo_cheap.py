@@ -185,6 +185,42 @@ class CheapMemoSafety(unittest.TestCase):
             self.assertIsNot(active.geometry(changed.document), first_entry)
             self.assertNotEqual(original_witness, memo._document_bytes(changed))
 
+            # Dead weakref under a LIVE graph's key: stale fragments belong
+            # to a different document. Recompute independently without memo.
+            import weakref
+            stale_entry = active.geometry(changed.document)
+            memo._document_bytes(changed)
+            stale_bytes = stale_entry[1]
+            self.assertIsNotNone(stale_bytes)
+            self.assertNotEqual(stale_bytes, active.geometry(before.document)[1])
+            class Dead:
+                pass
+            dead = Dead()
+            dead_ref = weakref.ref(dead)
+            del dead
+            self.assertIsNone(dead_ref())
+            live_key = tuple(map(id, memo._geometry_fields(before.document)))
+            with memo.memo_session('fresh-dead-slot-control', enabled=False):
+                fresh = memo._document_bytes(before)
+            active.geometry_cache[live_key] = [dead_ref, stale_bytes]
+            self.assertEqual(memo._document_bytes(before), fresh,
+                             'DEAD_GEOMETRY_SLOT_REUSED_STALE_BYTES')
+
+            # Outer topology tuples are valid; the list is nested INSIDE a
+            # BranchRecord. A shallow immutable check must not share it.
+            mutable = replace(before.document, branches=(
+                replace(branch, nodes=list(branch.nodes)),)+before.document.branches[1:])
+            self.assertFalse(memo._verified_document(mutable),
+                             'NESTED_MUTABLE_GEOMETRY_SHARED')
+            active.put('source_resolve', ('nested-mutable',), mutable)
+            restored = active.get('source_resolve', ('nested-mutable',))
+            self.assertIsNot(restored, mutable)
+            self.assertIsNot(restored.branches[0].nodes, mutable.branches[0].nodes)
+            restored.branches[0].nodes.clear()
+            self.assertEqual(active.get('source_resolve', ('nested-mutable',)).branches[0].nodes,
+                             list(branch.nodes))
+            self.assertEqual(mutable.branches[0].nodes, list(branch.nodes))
+
 
     def lineage_contract(self):
         before, policy, cfg = selected_request(fixture())
@@ -257,7 +293,13 @@ class CheapMemoFullFixture(unittest.TestCase):
         for r in self.on['perOwner']:
             with self.subTest(owner=r['ownerOrdinal']):
                 s = r['stages']
-                self.assertLessEqual(s['memo_copy']['calls'], 2)
+                # Snapshot/restore custody is real work: count every
+                # store and hit, not just the obsolete deepcopy hook.
+                custody = sum(v for k, v in r['memoDelta'].items()
+                              if k.endswith(('_store', '_hit')))
+                self.assertEqual(s['memo_copy']['calls'], custody)
+                self.assertGreater(custody, 0)
+                self.assertLessEqual(custody, 15)
                 self.assertLessEqual(s['memo_digest']['calls'], 6)
                 for name in ('direct','export','validate','apply','replay'):
                     self.assertEqual(s['native_transaction_'+name]['calls'], 1)

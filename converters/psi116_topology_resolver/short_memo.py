@@ -23,7 +23,7 @@ from .models import (Psi116Document, BranchRecord, NodeRecord, Position,
                      ComponentOccurrence, RouteSpan, ResolverConfig)
 
 CODE_VERSION = "uxml-short-memo-v4-frozen-geometry-20261113"
-_active = None
+_active = None  # Session caches are not thread-safe; current callers are serial.
 
 
 def _digest(data: bytes) -> str:
@@ -72,6 +72,7 @@ def _key(kind, source_bytes, policy, config, source_name="", provenance=""):
 
 # These frozen dataclasses are the large geometry graph. Never share a value
 # merely because its outer dataclass is frozen: verify its entire graph.
+# Contract: object.__setattr__ on shared frozen models is forbidden.
 _GEOMETRY = (Psi116Document, BranchRecord, NodeRecord, Position,
              ComponentOccurrence, RouteSpan, ResolverConfig)
 
@@ -188,6 +189,7 @@ class ShortMemo:
         return entry
 
     def digest(self, data, compute=None):
+        # Both internal compute functions hash the same canonical bytes with SHA-256; compute is a test seam, not a key dimension.
         if data in self.digests:
             self.digests.move_to_end(data)
             return self.digests[data]
