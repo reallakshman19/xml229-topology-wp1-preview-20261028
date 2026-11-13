@@ -26,10 +26,25 @@ initial row order, refreshing each request from the last verified revision.
 Named no-output owner refusals and no-longer-eligible rows are accounted as
 skips, never applied; any other failure stops. Source bytes are never written.
 A private temporary directory holds successive copies and sidecars and is
-removed when the run ends. Only the timing JSON is saved; it must be a new file.
+removed when the run ends. By default only the timing JSON is saved; it must be a new file.
 The progress lines contain only ordinal, count and time. Share only counts and
 timings from private runs; do not share source files, console tracebacks,
-paths, IDs or hashes. There is no corrected-file download or CII/Final release.
+paths, IDs or hashes. There is no CII/Final release.
+
+For a local, independent memo ON/OFF byte comparison (S2 round 2):
+
+```sh
+python3 -B tools/speed/measure.py /local/path/to/model.xml --owners 89 --out /local/path/to/on.json --final-out /local/path/to/on.xml
+python3 -B tools/speed/measure.py /local/path/to/model.xml --owners 89 --memo-off --out /local/path/to/off.json --final-out /local/path/to/off.xml
+python3 -B -c "from pathlib import Path; assert Path('/local/path/to/on.xml').read_bytes() == Path('/local/path/to/off.xml').read_bytes(); print('BYTE EQUAL')"
+```
+
+`--final-out` writes the exact final PSI116 bytes in binary mode, only after
+all selected owners applied with EQUAL parity. All output paths must be new;
+the final path must differ from the original source and timing JSON paths.
+Keep the generated XML local/private: it is a diagnostic corrected revision,
+not an authorized Final/CII publication. `--memo-off` disables the actual
+memo, not the measurement probes. Every Worker check remains enabled.
 
 Invented benchmark and acceptance tests:
 
@@ -83,8 +98,10 @@ and repeats. `memoDelta` reports real cache hit/miss/store increments.
   the fifth short transaction (pre-Final); nested closure calls are separate.
   `canonical_export`, `canonical_rederivation` (the independent `_validate_ops`
   call), `patch_back`, `patch_back_compare` and `lineage_recheck` are separate.
-- `memo_digest`: full document digest and individual key digest calls;
-  `memo_copy`: actual memo deep copies. `other`: remaining wall (e.g. JSON
+- `memo_digest`: actual document/key digest computations; under S2 the
+  canonicalization and cache lookup work outside those computations is timed
+  in its enclosing stage. `memo_copy`: actual memo deep copies (not snapshot
+  serialization or isolated mutable-evidence materialization). `other`: remaining wall (e.g. JSON
   serialization, short-row selection, file I/O and probe overhead).
 - `repeatedInputCalls` counts repeated input-byte fingerprints within an owner
   for named parse/analyse/resolve calls, or the same bytes/policy/route for

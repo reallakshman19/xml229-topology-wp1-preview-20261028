@@ -316,7 +316,7 @@ def worker_job(source, hub, row, directory, *, meter=None, compiled=None):
     return fixed, findings['shortElements']
 
 
-def measure(path, owners=None, *, reader=None, measured=True, progress=None):
+def measure(path, owners=None, *, reader=None, measured=True, progress=None, memo_enabled=True):
     root = reader_root(reader)
     path = Path(path)
     original = path.read_bytes()
@@ -331,7 +331,8 @@ def measure(path, owners=None, *, reader=None, measured=True, progress=None):
     skipped = []
     fixed = original
     compiled = worker_code(measured)
-    with tempfile.TemporaryDirectory(prefix='topofix-speed-') as temp, memo_session('l4-s1'):
+    session = memo_session('l4-s1') if memo_enabled else memo_session('l4-s1', enabled=False)
+    with tempfile.TemporaryDirectory(prefix='topofix-speed-') as temp, session:
         directory = Path(temp)
         source = directory/'current.xml'
         source.write_bytes(original)
@@ -394,12 +395,23 @@ def main():
     p.add_argument('--out',type=Path,default=Path('timings.json'))
     p.add_argument('--xcu-root',type=Path)
     p.add_argument('--measurement-off',action='store_true')
+    p.add_argument('--memo-off',action='store_true', help='disable memo, keep every Worker check')
+    p.add_argument('--final-out',type=Path, help='write final PSI116 bytes to a new local file')
     a=p.parse_args()
     require(a.out.resolve()!=a.psi116.resolve(),'OUTPUT_IS_ORIGINAL_SOURCE')
-    report,_=measure(a.psi116,a.owners,reader=a.xcu_root,measured=not a.measurement_off,
+    if a.final_out is not None:
+        require(a.final_out.resolve() not in (a.psi116.resolve(), a.out.resolve()),
+                'FINAL_OUTPUT_PATH_COLLISION')
+        require(not a.final_out.exists(), 'FINAL_OUTPUT_EXISTS')
+    report,fixed=measure(a.psi116,a.owners,reader=a.xcu_root,measured=not a.measurement_off,
+                     memo_enabled=not a.memo_off,
                      progress=lambda i,n,t:print(f'{i}/{n} {t:.3f}s',file=sys.stderr,flush=True))
     with a.out.open('xb') as f:
         f.write((json.dumps(report,indent=2)+'\n').encode('utf-8'))
+    if a.final_out is not None:
+        require(report['applied']==report['requested'] and not report['skipped'], 'FINAL_OUTPUT_INCOMPLETE')
+        with a.final_out.open('xb') as f:
+            f.write(fixed)
     table(report)
 
 

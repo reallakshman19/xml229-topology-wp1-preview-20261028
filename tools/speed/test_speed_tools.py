@@ -136,5 +136,36 @@ class SpeedTools(unittest.TestCase):
         self.assertTrue(all(r['parity']=='EQUAL' for r in on['perOwner']))
 
 
+    def test_T5_final_out_memo_on_off_binary_and_non_overwrite(self):
+        path = self.small()
+        original = b'\xef\xbb\xbf' + path.read_bytes().replace(b'\n', b'\r\n')
+        path.write_bytes(original)
+        command = [sys.executable, '-B', str(Path(measure.__file__)), str(path), '--owners', '5']
+        outputs = []
+        for enabled in (True, False):
+            suffix = 'on' if enabled else 'off'
+            out = self.root/(suffix+'.json')
+            final = self.root/(suffix+'.xml')
+            result = subprocess.run(command+['--out', str(out), '--final-out', str(final)]
+                                    +([] if enabled else ['--memo-off']), capture_output=True, timeout=180)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            data = json.loads(out.read_bytes())
+            self.assertEqual((data['requested'], data['applied'], data['skipped']), (5,5,[]))
+            self.assertTrue(all(r['parity']=='EQUAL' for r in data['perOwner']))
+            self.assertEqual(bool(data['perOwner'][0]['memoDelta']), enabled)
+            outputs.append(final.read_bytes())
+        self.assertEqual(outputs[0], outputs[1])
+        self.assertNotEqual(outputs[0], original)
+        for target in (path, self.root/'collision.json', self.root/'on.xml'):
+            out = self.root/'collision.json'
+            result = subprocess.run(command+['--out', str(out), '--final-out', str(target)],
+                                    capture_output=True, timeout=180)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(b'FINAL_OUTPUT_', result.stderr)
+            self.assertFalse(out.exists())
+        self.assertEqual(path.read_bytes(), original)
+        self.assertEqual((self.root/'on.xml').read_bytes(), outputs[0])
+
+
 if __name__=='__main__':
     unittest.main()

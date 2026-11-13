@@ -18,10 +18,11 @@ from dataclasses import fields, is_dataclass, replace
 from hashlib import sha256
 import json
 from pathlib import Path
+from weakref import ref
 from .models import (Psi116Document, BranchRecord, NodeRecord, Position,
                      ComponentOccurrence, RouteSpan, ResolverConfig)
 
-CODE_VERSION = "uxml-short-memo-v3-immutable-snapshot-20261113"
+CODE_VERSION = "uxml-short-memo-v4-frozen-geometry-20261113"
 _active = None
 
 
@@ -90,36 +91,64 @@ def _immutable(value, seen):
     return False
 
 
+# One class per module, not one class per hit/store. Dynamically created
+# subclasses have class/closure cycles which keep geometry alive until GC;
+# collections can then land inside unrelated parser/analyzer timers.
+class _SnapshotWriter(pickle.Pickler):
+    def __init__(self, buffer):
+        super().__init__(buffer, protocol=pickle.HIGHEST_PROTOCOL)
+        self.shared = []
+        self.indexes = {}
+
+    def persistent_id(self, obj):
+        if type(obj) is Psi116Document:
+            index = self.indexes.get(id(obj))
+            if index is not None:
+                return index
+            if _verified_document(obj):
+                index = len(self.shared)
+                self.indexes[id(obj)] = index
+                self.shared.append(obj)
+                return index
+        return None
+
+
+class _SnapshotReader(pickle.Unpickler):
+    def __init__(self, buffer, shared):
+        super().__init__(buffer)
+        self.shared = shared
+
+    def persistent_load(self, index):
+        return self.shared[index]
+
+
 def _snapshot(value):
-    # Pickle is only an in-process serialization of internally computed Python
-    # values; no pickle is accepted from a file, UXML or other external input.
-    # Keep the large verified-frozen geometry by reference, serialize mutable
-    # receipt fields (including policy, checks and findings) to immutable bytes.
-    shared = []
-    indexes = {}
-    class Writer(pickle.Pickler):
-        def persistent_id(self, obj):
-            if type(obj) is Psi116Document:
-                index = indexes.get(id(obj))
-                if index is not None:
-                    return index
-                if _immutable(obj, set()):
-                    index = len(shared)
-                    indexes[id(obj)] = index
-                    shared.append(obj)
-                    return index
-            return None
+    # Internal trusted serialization only; mutable evidence stays isolated.
     buffer = io.BytesIO()
-    Writer(buffer, protocol=pickle.HIGHEST_PROTOCOL).dump(value)
-    return buffer.getvalue(), tuple(shared)
+    writer = _SnapshotWriter(buffer)
+    writer.dump(value)
+    return buffer.getvalue(), tuple(writer.shared)
 
 
 def _restore(snapshot):
     payload, shared = snapshot
-    class Reader(pickle.Unpickler):
-        def persistent_load(self, index):
-            return shared[index]
-    return Reader(io.BytesIO(payload)).load()
+    return _SnapshotReader(io.BytesIO(payload), shared).load()
+
+
+def _geometry_fields(document):
+    return (document.branches, document.occurrences, document.spans)
+
+
+def _verified_document(document):
+    # All metadata is immutable too; do not share a subclass or a document
+    # with malformed/mutable fields. The three topology tuples may be shared
+    # by dataclasses.replace when only source_path is rebound.
+    if type(document) is not Psi116Document or any(type(getattr(document, name)) is not str
+            for name in ('source_path', 'source_text', 'source_sha256', 'namespace')):
+        return False
+    if _active is None:
+        return _immutable(document, set())
+    return _active.geometry(document) is not None
 
 
 class ShortMemo:
@@ -130,6 +159,33 @@ class ShortMemo:
         self.counts = Counter()
         self.digests = OrderedDict()
         self.digest_bytes = 0
+        # Weak ownership: the optimization must not keep old model graphs
+        # alive beyond the existing result stores. The weak reference and
+        # exact tuple identity check guard recycled ids. Only recursively
+        # verified frozen graphs qualify; mutable evidence never does.
+        self.geometry_cache = OrderedDict()
+
+    def geometry(self, document):
+        if type(document) is not Psi116Document:
+            return None
+        values = _geometry_fields(document)
+        key = tuple(map(id, values))
+        entry = self.geometry_cache.get(key)
+        if entry is not None:
+            previous = entry[0]()
+            if previous is not None and all(a is b for a, b in zip(_geometry_fields(previous), values)):
+                # Keep the latest live representative, not a strong graph ref.
+                entry[0] = ref(document)
+                self.geometry_cache.move_to_end(key)
+                return entry
+        if not all(type(v) is tuple for v in values) or not _immutable(values, set()):
+            return None
+        entry = [ref(document), None]
+        self.geometry_cache[key] = entry
+        self.geometry_cache.move_to_end(key)
+        while len(self.geometry_cache) > 6:
+            self.geometry_cache.popitem(last=False)
+        return entry
 
     def digest(self, data, compute=None):
         if data in self.digests:
@@ -157,8 +213,12 @@ class ShortMemo:
         store = self.stores[kind]
         store[key] = _snapshot(value)
         store.move_to_end(key)
-        # Bound original+derived source memories on long owner selections.
-        while len(store) > (6 if kind != "uxml_resolve" else 2):
+        # The sequential owner path needs at most two transaction routes,
+        # three source revisions (current and two derived), and one UXML
+        # witness. Eviction can only cause a fresh computation. Retaining
+        # older full geometry graphs increases generational-GC scan cost.
+        limit = {"transaction": 2, "source_resolve": 3, "uxml_resolve": 1}[kind]
+        while len(store) > limit:
             store.popitem(last=False)
         self.counts[kind + "_store"] += 1
 
@@ -206,10 +266,27 @@ def _document_bytes(before):
     proof that a UXML-fed document contains identical semantic records.
     """
     payload = {f.name: getattr(before, f.name) for f in fields(before)}
-    payload["document"] = {f.name: getattr(before.document, f.name)
-                           for f in fields(before.document)
-                           if f.name not in ("source_text", "source_sha256", "source_path")}
-    return _json(payload)
+    document = before.document
+    # Reuse canonical bytes of the verified frozen topology only. Never
+    # cache findings, actions, connections, policy or arbitrary UXML dicts
+    # by identity: callers can legally mutate those witnesses in place.
+    entry = (_active.geometry(document) if _active is not None and
+             type(document) is Psi116Document and type(document.namespace) is str else None)
+    if entry is None:
+        payload["document"] = {f.name: getattr(document, f.name)
+                               for f in fields(document)
+                               if f.name not in ("source_text", "source_sha256", "source_path")}
+        return _json(payload)
+    if entry[1] is None:
+        entry[1] = tuple(_json(v) for v in _geometry_fields(document))
+    branches, occurrences, spans = entry[1]
+    # Exact canonical JSON: sorted field names, original separators and
+    # escaping. Namespace remains a separate current value; source metadata
+    # stays outside this witness just as in the original key.
+    document_bytes = (b'{"branches":' + branches + b',"namespace":' + _json(document.namespace) +
+                      b',"occurrences":' + occurrences + b',"spans":' + spans + b'}')
+    return b'{' + b','.join(_json(k) + b':' + (document_bytes if k == 'document' else _json(v))
+                            for k, v in sorted(payload.items())) + b'}'
 
 
 def _document_digest(before):

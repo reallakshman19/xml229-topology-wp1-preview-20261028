@@ -235,7 +235,7 @@ Full repository suite not run; acceptance and targeted regressions above passed.
 
 Base: `815ee7b7193c81988462307a726e69e9e03eff49`. Owner picked option (a) only.
 No batch work, no parse cache, no lineage reuse, no changes to main or #34.
-Status: T1/T2/T3/T5 PASS; T4 has one legacy implementation-specific failure.
+Historical status at 55efb090: T1/T2/T3/T5 PASS; the T4 legacy mutant failure was resolved at fb10b507 and freshly verified in round 2 below.
 Not a merge recommendation; Owner/Oracle qualification is separate.
 
 ## MEASURED — invented 89-owner fixture
@@ -431,7 +431,7 @@ Call-site audit (no changes needed):
 - tests/test_short_memo_cheap.py (new T1–T5 acceptance/mutation tests)
 - tools/speed/REPORT.md (this append; S1 history retained)
 
-## FAILING (S2)
+## HISTORICAL FAILING (S2 at 55efb090; resolved at fb10b507)
 
 **T4 FAIL**: unchanged
 `test_uxml_short_memo.ShortMemoSafety.test_mutant_without_deepcopy_fails_clean_evidence_assertion`
@@ -492,3 +492,224 @@ as historical evidence. No product or harness code changed.
 - Touched files: `tests/test_uxml_short_memo.py`, `tools/speed/REPORT.md`.
 - FAILING: none in this follow-up's fresh default tests. The two skips
   remain intentional. No new Owner-file or browser measurement.
+
+
+---
+
+# L4-S2 round 2 — remove residual memo cost (13 Nov)
+
+Parent: `fb10b507ab259165e9825c20dfcf3354e3ac6ba1`.
+Sole product change is `short_memo.py`. No change to parser, analyzer,
+transaction validation, lineage, hub parity, source selection, policy,
+tolerances, Final/CII authority or #34. This is the last requested round.
+
+## OWNER FILE (Oracle S2 run)
+
+Oracle reported Windows native, S2 `55efb090` versus S1 `a66c7507`:
+89/89 EQUAL both, 902.9 → 812.1 s (-10.06%; target ~-30% not met),
+10.15 → 9.12 s/owner. Counts/timings only, no Owner data received.
+
+| Stage | S1 s | S2 s | Calls where supplied |
+|---|---:|---:|---|
+| memo_copy | 161.3 | 0.0 | 15/owner → 0 |
+| memo_digest | 113.8 | 3.9 | 51/owner → 446 total (~5/owner) |
+| parse | 71.3 | 88.3 | 1336 both |
+| model_analyse | 71.2 | 93.4 | 268 both |
+| memo_other | 27.7 | 40.8 | 267 both |
+| lineage_recheck | 149.7 | 146.0 | unchanged |
+| other | 86.0 | 85.7 | unchanged |
+
+The two named memo buckets save 271.2 s, but total wall saves only 90.8 s;
+parse/analyse/memo_other rise by 52.3 s together. The other unreported
+stages account for the remaining net difference; no guessed breakdown.
+
+## WHERE THE TIME GOES / diagnosis
+
+The existing meter encloses actual parse/analyze calls. Snapshot creation
+and mutable-evidence restoration are outside those functions; the direct
+memo cost is not literally nested inside those clocks. However the S2
+implementation created a new Pickler/Unpickler class per store/hit. These
+classes close over `shared`, forming cyclic references retaining the full
+geometry after caller references are dropped. A controlled weak-reference
+probe with automatic GC temporarily disabled (test only) demonstrated:
+parent document alive before explicit full collection, released after;
+round 2 document released immediately before collection. This is a real
+lifetime defect and a mechanism for GC pauses to be charged to subsequent
+parser/analyzer stages. No product GC settings are changed.
+
+The S2 `_document_bytes` also reconstructed the full canonical geometry
+JSON on every transaction key request. A five-owner probe on the full
+invented fixture showed 35 document serializations in both versions,
+2.656 → 1.387 s inclusive document serialization; all JSON serialization
+3.248 → 1.646 s; snapshot construction 0.857 → 0.536 s; restore
+0.266 → 0.294 s. Probe wall 19.761 → 18.749 s, EQUAL 5/5. This probe
+used temporary local wrappers (not product changes); after probe overlapped
+other testing. GC time within parse was 0.256 → 0.289 s, within analysis
+0.098 → 0.096 s. It does not prove that all of the Windows per-call
+increase is caused by GC, or that the private slowdown has been eliminated.
+
+A separate five-owner retention probe forced a full collection outside
+each timed owner interval. Mean retained geometry graph identities
+7.6 → 4; mean live NodeRecords after collection 14,193.2 → 8,250;
+mean forced full-GC wall 0.11228 → 0.11242 s. Both 5/5 EQUAL.
+This demonstrates less retained geometry, but not a reduction in full-GC
+duration in the small probe. No forced collection in product or in the
+89-owner benchmark.
+
+## Implementation
+
+- Module-level codec classes remove the transient class/closure cycles.
+  Verified frozen geometry stays shared; mutable policy, findings,
+  action, check and operation evidence still materialize independently
+  from internally generated immutable pickle bytes. No external pickle input.
+- Six-entry weak geometry-projection LRU: certify the entire topology
+  graph recursively once per live immutable tuple identity. A weak
+  reference must still resolve and all three topology tuple identities
+  must match; stale/recycled identity misses and re-verifies. Cache only
+  canonical JSON fragments of `branches`, `occurrences`, `spans`;
+  namespace and every mutable evidence field are serialized freshly.
+  Reconstruct exactly the previous canonical JSON bytes; source bytes,
+  source path, route, policy, config, document and UXML provenance retain
+  their distinct key dimensions. Digest cache still keyed by exact bytes,
+  not object identity. Full 1,654-record witness independently matched
+  original asdict-based canonical encoding byte-for-byte (5,417,953 bytes).
+- Tighten existing result LRU limits to 2 transaction / 3 source / 1 UXML
+  entries for the common serial path; eviction is a fresh computation,
+  never a bypass. Fresh fixture retains all original hit/miss counts.
+  Geometry certificate weak refs do not prolong live model lifetimes;
+  canonical fragments are bounded by entry count, not a new byte budget.
+  Other workloads can incur extra cache misses, and memory tradeoffs need
+  Owner/Oracle qualification. CODE_VERSION bumped for changed custody.
+- No changes to actual parse/analyze implementation, no parse cache,
+  no lineage reuse, and no cross-owner merging. The measured residual
+  saving is chiefly in the transaction-key construction stages, not
+  a guarantee of improved parse/analyse wall on Windows.
+
+## MEASURED — fresh paired invented 89-owner fixture
+
+Fresh parent control uses verified parent memo blob
+`c43c67a862e197dd3272209a0bdf654669f1b747` and parent measure blob
+`0acb6c285a157db0a0ea60366e02c503aefa2bfd`. Same seed 116, 41 branches,
+1,654 records, 89 eligible short GASK owners, pinned reader 7/7, native
+same sandbox. The new ON and old ON processes execute one after the other,
+each alongside the independent new memo-OFF process; some short tests ran
+concurrently. This is a fresh same-host comparison, not a randomized or
+isolated timing study. Both ON runs 89/89 EQUAL, no skips. The historical
+S2 fixture run is shown separately for transparency. Stage time is exclusive.
+
+- Fresh parent 340.553 s (3.826 s/owner); round 2 301.578 s (3.389 s/owner), 11.44% lower wall.
+- Historical S2 334.111 s; round 2 9.74% lower versus that prior run.
+
+| Stage | Historical S2 s | Fresh parent s | Round 2 s | Calls parent → round 2 |
+|---|---:|---:|---:|---:|
+| `parse` | 24.331 | 24.250 | 23.221 | 1336 → 1336 |
+| `model_analyse` | 79.499 | 81.259 | 81.768 | 268 → 268 |
+| `resolve` | 6.754 | 7.207 | 6.541 | 623 → 623 |
+| `native_transaction_direct` | 24.444 | 27.090 | 17.359 | 89 → 89 |
+| `native_transaction_export` | 24.165 | 24.229 | 16.582 | 89 → 89 |
+| `native_transaction_validate` | 7.953 | 8.151 | 2.728 | 89 → 89 |
+| `native_transaction_apply` | 7.714 | 8.100 | 2.567 | 89 → 89 |
+| `native_transaction_replay` | 7.557 | 7.873 | 2.339 | 89 → 89 |
+| `native_transaction_nested` | 24.549 | 25.008 | 23.569 | 178 → 178 |
+| `uxml_reader` | 20.025 | 20.352 | 20.291 | 89 → 89 |
+| `uxml_adapter` | 6.294 | 6.491 | 6.296 | 89 → 89 |
+| `canonical_export` | 4.445 | 4.727 | 4.839 | 89 → 89 |
+| `canonical_rederivation` | 4.790 | 4.851 | 4.471 | 89 → 89 |
+| `patch_back` | 1.001 | 1.045 | 0.998 | 89 → 89 |
+| `patch_back_compare` | 0.305 | 0.310 | 0.309 | 89 → 89 |
+| `hub_parity` | 4.116 | 4.206 | 4.197 | 178 → 178 |
+| `lineage_recheck` | 30.754 | 31.581 | 30.462 | 445 → 445 |
+| `memo_digest` | 0.552 | 0.546 | 0.557 | 446 → 446 |
+| `memo_copy` | 0.000 | 0.000 | 0.000 | 0 → 0 |
+| `memo_other` | 13.560 | 13.781 | 13.479 | 267 → 267 |
+| `other` | 41.304 | 39.496 | 39.007 | 89 → 89 |
+| TOTAL | 334.111 | 340.553 | 301.578 | — |
+
+Both memo-ON runs preserve 1,336 parses, 268 model analyses, 267 transaction
+hits, 178 transaction misses, 445 lineage rechecks and 178 hub comparisons.
+Round 2 maximum digest calls per owner 6 (446 total); zero deep-copy calls.
+All five outer transaction calls and two nested calls remain per owner,
+plus one patch-back comparison. No stage sum drift; exact final output
+matches the previously delivered invented output. Fresh independent
+memo-OFF 89/89 EQUAL: 758.728 s, 8.525 s/owner, byte-identical to
+round-2 memo-ON. No S2 round-2 Owner-file or browser timing is claimed.
+
+Parse improves 1.029 s and memo_other 0.302 s versus fresh parent;
+model_analyse increases 0.509 s. The requested elimination of the Owner
+per-call slowdown has not been demonstrated. The measured 11.44% overall
+fixture saving is real for these runs but should not be extrapolated
+to a private model. No claim that the ~7.2 s/owner Owner target is met.
+
+## Local final-byte qualification
+
+The diagnostic CLI now supports actual memo disable (independent of the
+measurement toggle) and binary final output. For the Oracle, replace
+paths with local private paths; do not send XML back to this lane:
+
+```sh
+python3 -B tools/speed/measure.py /local/path/to/model.xml --owners 89 --out /local/path/to/on.json --final-out /local/path/to/on.xml
+python3 -B tools/speed/measure.py /local/path/to/model.xml --owners 89 --memo-off --out /local/path/to/off.json --final-out /local/path/to/off.xml
+python3 -B -c "from pathlib import Path; assert Path('/local/path/to/on.xml').read_bytes() == Path('/local/path/to/off.xml').read_bytes(); print('BYTE EQUAL')"
+```
+
+All files must be new; final output cannot alias source or report, and
+is written only after every selected owner applied with EQUAL. No
+Final/CII release is authorized. Timing JSON remains counts/timings only.
+
+## Tests (all fresh)
+
+`XCU_UXML_ROOT=<pinned-reader> UXML_SHORT_MEMO_EQUIVALENCE=1 UXML_SHORT_MEMO_STAGE_PROFILE=1 PYTHONPATH=tests:converters python3 -B -m unittest test_short_memo_cheap test_uxml_short_memo test_uxml_short_memo_stage_profile -v`:
+**16/16 PASS in 836.056 s, zero skipped, zero failed**. Both formerly
+skipped opt-ins explicitly executed. Full 89-owner ON/OFF byte comparison
+and per-owner digest/copy/check ceilings PASS. Five/twenty-owner opt-in
+ON/OFF times 4.7351/9.8277 s and 17.9622/39.3519 s; 660-record stage
+profile ON/OFF 760.004/1688.487 ms, exact receipt and byte equivalence.
+The lifetime assertion was added after launching the full suite and was
+also executed freshly in the final test-file safety class (4/4 PASS);
+the two full-fixture tests and all other definitions were unchanged.
+No prior-run test result carried forward.
+
+The historically named
+`test_mutant_without_deepcopy_fails_clean_evidence_assertion` **PASS**
+in this fresh run; the snapshot/restore identity mutant at fb10b507
+produces `MUTANT_RED:shared-result-no-snapshot` and the unmutated
+control is GREEN. No skip, no old deepcopy-only assertion.
+M1/M2/M3 and independent policy/source/route/provenance/cleanup mutants
+RED. Added mutable witness, namespace, changed frozen graph, malformed
+mutable geometry, deliberately misdirected identity and snapshot
+lifetime assertions PASS.
+
+Additional fresh tests: speed-tools **5/5 PASS** (including new
+CRLF+BOM final-out memo ON/OFF exact bytes, source/output collision
+refusal and no overwrite); `node --test tests/short-memo-*.test.mjs`
+**13/13 PASS**. No browser or private file run.
+
+## DECISIONS (round 2)
+
+- Fix the demonstrated reference lifetime defect, without changing
+  product GC settings or moving stage clocks.
+- Cache only verified immutable geometry projections, preserve mutable
+  evidence recanonicalization and exact-byte digest equality.
+- Reduce result retention for the common serial path; accept safe
+  recomputation on eviction. Keep the old mutant name and new mechanism.
+- Add diagnostic-only local binary output and explicit memo-off; preserve
+  default measurement and every independent Worker check.
+- Use fresh same-host full fixture comparison plus separate diagnostic
+  probes; disclose concurrent load, unproven Owner attribution and the
+  small model_analyse regression.
+
+## Touched files (round 2)
+
+- converters/psi116_topology_resolver/short_memo.py (sole product change)
+- tests/test_short_memo_cheap.py (additional safety assertions)
+- tools/speed/measure.py (CLI options)
+- tools/speed/test_speed_tools.py (binary final-output test)
+- tools/speed/README.md (Oracle local comparison instructions)
+- tools/speed/REPORT.md (this report and historical-status clarification)
+
+## FAILING (round 2)
+
+No test failures or skips. Owner performance remains NOT_RUN for round 2;
+the per-call Windows slowdown is not fully explained by the measured
+synthetic probes. The model_analyse stage is slightly slower on the
+fresh synthetic comparison. No further card or merge authorization.

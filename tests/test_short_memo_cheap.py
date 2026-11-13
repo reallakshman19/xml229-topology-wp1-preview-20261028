@@ -82,6 +82,29 @@ class CheapMemoSafety(unittest.TestCase):
         value['evidence'][0]['nodes'].append(4)
         self.assertEqual(store.get('transaction', ('invented',)),
                          {'evidence': [{'nodes': [1, 2]}]})
+        # Regression: the former per-call Pickler/Unpickler classes closed
+        # over the entire document, retaining it until cyclic collection.
+        # A weak geometry certificate and a module-level codec must not
+        # extend its lifetime after all actual snapshot references are gone.
+        import gc
+        import weakref
+        from psi116_topology_resolver import read_psi116_xml
+        gc.collect()
+        was_enabled = gc.isenabled()
+        gc.disable()
+        try:
+            with memo.memo_session('geometry-lifetime'):
+                document = read_psi116_xml(fixture())
+                witness = weakref.ref(document)
+                snapshot = memo._snapshot(document)
+                restored = memo._restore(snapshot)
+                self.assertIs(restored, document)
+                del document, snapshot, restored
+                self.assertIsNone(witness(), 'MEMO_SNAPSHOT_EXTENDED_DOCUMENT_LIFETIME')
+        finally:
+            if was_enabled:
+                gc.enable()
+
 
     def digest_contract(self):
         a = bytes(bytearray(b'one\r\n'))
@@ -130,6 +153,38 @@ class CheapMemoSafety(unittest.TestCase):
             self.assertNotEqual(key[4], memo.transaction_key(before, policy,
                 replace(cfg, short_span_threshold_mm=5.0))[4])
             self.assertNotEqual(key[-2], memo.transaction_key(before, policy, cfg, route='uxml')[-2])
+            # Geometry projection caching must not authorize modified mutable
+            # witnesses or a different graph with the same claimed source SHA.
+            original_witness = memo._document_bytes(before)
+            before.findings[0].details['SYNTHETIC_MUTATION'] = {'nested': [1]}
+            self.assertNotEqual(original_witness, memo._document_bytes(before))
+            before.findings[0].details.pop('SYNTHETIC_MUTATION')
+            self.assertEqual(original_witness, memo._document_bytes(before))
+            rebound = replace(before, document=replace(before.document, source_path='other.xml'))
+            self.assertEqual(original_witness, memo._document_bytes(rebound))
+            changed = replace(before, document=replace(before.document, namespace='urn:invented'))
+            self.assertNotEqual(original_witness, memo._document_bytes(changed))
+            branch = before.document.branches[0]
+            altered = replace(branch, nodes=(replace(branch.nodes[0], raw_xml='forged'),)+branch.nodes[1:])
+            changed = replace(before, document=replace(before.document,
+                branches=(altered,)+before.document.branches[1:]))
+            self.assertNotEqual(original_witness, memo._document_bytes(changed))
+            # Reject a nominally frozen dataclass containing a mutable list.
+            mutable = replace(before.document, branches=list(before.document.branches))
+            self.assertFalse(memo._verified_document(mutable))
+            snapshot = memo._snapshot(mutable)
+            restored = memo._restore(snapshot)
+            restored.branches.clear()
+            self.assertEqual(memo._restore(snapshot).branches, list(before.document.branches))
+            # Digest/key reuse is byte exact even if an identity slot is
+            # forced to point at another live document (recycled-id mutant).
+            active = memo._active
+            first_entry = active.geometry(before.document)
+            slot = tuple(map(id, memo._geometry_fields(changed.document)))
+            active.geometry_cache[slot] = first_entry
+            self.assertIsNot(active.geometry(changed.document), first_entry)
+            self.assertNotEqual(original_witness, memo._document_bytes(changed))
+
 
     def lineage_contract(self):
         before, policy, cfg = selected_request(fixture())
